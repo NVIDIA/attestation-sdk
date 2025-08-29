@@ -1,0 +1,40 @@
+{
+  "SWITCH-0": {
+    "x-nvidia-switch-bios-rim-fetched": true,
+    "x-nvidia-switch-bios-rim-signature-verified": true,
+    "x-nvidia-switch-attestation-report-cert-chain-fwid-match": true,
+    "x-nvidia-switch-attestation-report-signature-verified": true,
+    "x-nvidia-switch-bios-rim-version-match": true,
+    "x-nvidia-switch-attestation-report-parsed": true,
+    "iss": "https://nras.attestation-stg.nvidia.com",
+    "eat_nonce": "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb",
+    "x-nvidia-switch-attestation-report-nonce-match": true,
+    "x-nvidia-switch-attestation-report-cert-chain": {
+      "x-nvidia-cert-status": "valid",
+      "x-nvidia-cert-ocsp-status": "good",
+      "x-nvidia-cert-expiration-date": "9999-12-31T23:59:59Z",
+      "x-nvidia-cert-revocation-reason": null
+    },
+    "exp": 1751158660,
+    "iat": 1751155060,
+    "ueid": "694931143880983876767046803400974855445978836716",
+    "jti": "1012d8b1-b52d-4870-9b9e-6ef6b05ba7f2",
+    "x-nvidia-switch-arch-check": true,
+    "secboot": true,
+    "x-nvidia-switch-bios-rim-schema-validated": true,
+    "x-nvidia-switch-bios-rim-cert-chain": {
+      "x-nvidia-cert-status": "valid",
+      "x-nvidia-cert-ocsp-status": "good",
+      "x-nvidia-cert-expiration-date": "2026-05-20T17:59:06Z",
+      "x-nvidia-cert-revocation-reason": null
+    },
+    "x-nvidia-attestation-warning": null,
+    "nbf": 1751155060,
+    "hwmodel": "LS_10 A01 FSP BROM",
+    "dbgstat": "disabled",
+    "x-nvidia-switch-bios-rim-measurements-available": true,
+    "oemid": null,
+    "measres": "success",
+    "x-nvidia-switch-bios-version": "96.10.55.00.01"
+  }
+}

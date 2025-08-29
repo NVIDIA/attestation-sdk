@@ -1,0 +1,1230 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef _NVAT_H_
+#define _NVAT_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+// === Package Version ===
+
+#define NVAT_VERSION_STRING "@PROJECT_VERSION@" 
+#define NVAT_VERSION_MAJOR  @PROJECT_VERSION_MAJOR@
+#define NVAT_VERSION_MINOR  @PROJECT_VERSION_MINOR@
+#define NVAT_VERSION_PATCH  @PROJECT_VERSION_PATCH@
+
+// === Error Handling ===
+
+/** @defgroup return_codes Return Codes
+ *
+ * The NVIDIA Attestation SDK uses return codes to communicate error
+ * information. 
+ * All SDK functions that can fail return a value of type @ref nvat_rc_t, 
+ * with @ref NVAT_RC_OK (0) indicating successful operation.
+ *
+ * Error code ranges (inclusive):
+ * - 0          : Success / OK
+ * - 1 to 99    : General errors  
+ * - 100 to 199 : RIM service errors
+ * - 200 to 299 : OCSP errors
+ * - 300 to 399 : Relying party policy errors
+ * - 400 to 499 : SPDM errors
+ * - 500 to 599 : GPU errors
+ * - 600 to 699 : NVSwitch errors
+ * - 700 to 800 : NRAS errors
+ * - 800 to 899 : Certificate errors
+ * - 900 to 999 : Reserved for future use
+ *
+ * **Important**: Callers must assume that newer versions of the SDK will return codes not
+ * yet defined below.
+ * This ensures that adding additional error codes does not break ABI-compatibility.
+ * 
+ * @{
+ */
+
+/**
+ * @brief Return code type for NVIDIA Attestation SDK functions.
+ */
+typedef uint16_t nvat_rc_t;
+
+/**
+ * @brief Convert the given return code into a human-readable error message.
+ */
+const char* nvat_rc_to_string(nvat_rc_t rc);
+
+/// @brief Indicates success (no error).
+#define NVAT_RC_OK                             (0)
+/// @brief Indicates an unknown error occurred. 
+#define NVAT_RC_UNKNOWN                        (1)
+/// @brief Indicates a generic failure in the attestation SDK.
+#define NVAT_RC_INTERNAL_ERROR                 (2)
+/// @brief Indicates the SDK was used before nvat_sdk_init() was called.
+#define NVAT_RC_NOT_INITIALIZED                (3)
+/// @brief Indicates an invalid argument (usually a nullptr) was passed.
+#define NVAT_RC_BAD_ARGUMENT                   (4)
+/// @brief Indicates a memory allocation failed. Callers should consider this a fatal error and gracefully terminate if possible.
+#define NVAT_RC_ALLOC_FAILED                   (5)
+/// @brief Indicates that the caller attempted to use a feature that was not enabled when the SDK was compiled.
+#define NVAT_RC_FEATURE_NOT_ENABLED            (6)
+/// @brief Indicates a failure to initialize the required libXML or xmlsec libraries.
+#define NVAT_RC_XML_INIT_FAILED                (7)
+/// @brief Indicates an error when parsing XML.
+#define NVAT_RC_LIBXML2_ERROR                  (10)
+/// @brief Indicates that a relying party policy rejected some or all of the supplied attestation results.
+#define NVAT_RC_RP_POLICY_MISMATCH             (11)
+/// @brief Indicates an error with JSON serialization/deserialization.
+#define NVAT_RC_JSON_SERIALIZATION_ERROR       (12)
+/// @brief Indicates the client is not authorized to call the NVIDIA RIM service.
+#define NVAT_RC_RIM_FORBIDDEN                  (101)
+/// @brief Indicates an HTTP internal error occurred when calling the NVIDIA RIM service.
+#define NVAT_RC_RIM_INTERNAL_ERROR             (102)
+/// @brief Indicates a connection error occurred when calling the NVIDIA RIM service.
+#define NVAT_RC_RIM_CONNECTION_ERROR           (103)
+/// @brief Indicates no RIM was found with a given id.
+#define NVAT_RC_RIM_NOT_FOUND                  (104)
+/// @brief Indicates a signature verification error occurred when validating a RIM.
+#define NVAT_RC_RIM_INVALID_SIGNATURE          (105)
+/// @brief Indicates a schema validation error occurred when validating a RIM.
+#define NVAT_RC_RIM_INVALID_SCHEMA             (106)
+/// @brief Indicates a measurement was not found in a RIM.
+#define NVAT_RC_RIM_MEASUREMENT_NOT_FOUND      (107)
+/// @brief Indicates a measurement conflict occurred when validating a RIM.
+#define NVAT_RC_RIM_MEASUREMENT_CONFLICT       (108)
+/// @brief Indicates a non-recoverable error was encountered when calling the configured OCSP server.
+#define NVAT_RC_OCSP_INVALID_RESPONSE          (201)
+/// @brief Indicates the configured OCSP server responded with a code indicating an internal error.
+#define NVAT_RC_OCSP_SERVER_ERROR              (202)
+/// @brief Indicates the configured OCSP server rejected an OCSP request.
+#define NVAT_RC_OCSP_INVALID_REQUEST           (203)
+/// @brief Indicates an error occurred when the OCSP response status was not good.
+#define NVAT_RC_OCSP_STATUS_NOT_GOOD           (204)
+/// @brief Indicates an error occurred when attempting to apply a relying party policy to a set of claims.
+#define NVAT_RC_POLICY_EVALUATION_ERROR        (301)
+/// @brief Indicates a general error while parsing an SPDM transcript.
+#define NVAT_RC_SPDM_PARSE_ERROR               (401)
+/// @brief Indicates an error was encountered while parsing the opaque data section of an SPDM transcript.
+#define NVAT_RC_SPDM_OPAQUE_DATA_PARSE_ERROR   (402)
+/// @brief Indicates an error was encountered while parsing the measurements section of an SPDM transcript.
+#define NVAT_RC_SPDM_MSR_PARSE_ERROR           (403)
+/// @brief Indicates an error was encountered while parsing the SPDM request section of an SPDM transcript.
+#define NVAT_RC_SPDM_REQUEST_PARSE_ERROR       (404)
+/// @brief Indicates a required entry in the SDPM response opaque data was expected but no present.
+#define NVAT_RC_SPDM_FIELD_NOT_FOUND           (405)
+/// @brief Indicates a failure to initialize the NVIDIA Management Library (NVML).
+#define NVAT_RC_NVML_INIT_FAILED               (500)
+/// @bried Indicates a generic failure in the NVML library while performing a management operation.
+#define NVAT_RC_NVML_ERROR                     (501)
+/// @brief Indicates the system has at least one GPU connected that does not support attestation.
+#define NVAT_RC_GPU_ARCHITECTURE_NOT_SUPPORTED (502)
+/// @brief Indicates that the GPU evidence is invalid. Could be due to different reasons (for e.g evidence parsing failed, nonce mismatch, etc.)
+#define NVAT_RC_GPU_EVIDENCE_INVALID             (503)
+/// @brief Indicates the nonce in the gpu evidence does not match the nonce in the gpu attestation report.
+#define NVAT_RC_GPU_EVIDENCE_NONCE_MISMATCH    (504)
+/// @brief Indicates the driver RIM version from the RIM file does not match the driver RIM version in the GPU attestation report.
+#define NVAT_RC_GPU_EVIDENCE_DRIVER_RIM_VERSION_MISMATCH (505)
+/// @brief Indicates the VBios RIM version from the RIM file does not match the VBios RIM version in the GPU attestation report.
+#define NVAT_RC_GPU_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH (506)
+/// @brief Indicates the FWID in the GPU evidence does not match the expected FWID.
+#define NVAT_RC_GPU_EVIDENCE_FWID_MISMATCH (507)
+/// @brief Indicates a signature verification error occurred when validating GPU evidence.
+#define NVAT_RC_GPU_EVIDENCE_INVALID_SIGNATURE (508)
+// TODO: Consider condensing GPU and switch error codes into fewer, more general error codes
+/// @brief Indicates a failure to initialize NSCQ.
+#define NVAT_RC_NSCQ_INIT_FAILED               (600)
+/// @brief Indicates a generic error when invoking NSCQ.
+#define NVAT_RC_NSCQ_ERROR                     (601)
+/// @brief Indicates an error occurred when fetching the list of connected switch UUIDs.
+#define NVAT_RC_NSCQ_UUID_ERROR                (602)
+/// @brief Indicates an error occurred when fetching the certificate chains of connected switches.
+#define NVAT_RC_NSCQ_CERT_CHAIN_ERROR          (603)
+/// @brief Indicates an error occurred when fetching the attestation reports of connected switches.
+#define NVAT_RC_NSCQ_ATTESTATION_REPORT_ERROR  (604)
+/// @brief Indicates an error occurred when fetching or interpreting a switch architecture.
+#define NVAT_RC_NSCQ_ARCHITECTURE_ERROR        (605)
+/// @brief Indivates an error fetching the TNVL status of a switch.
+#define NVAT_RC_NSCQ_TNVL_ERROR                (606)
+/// @brief Indicates the nonce in the switch evidence does not match the nonce in the switch attestation report.
+#define NVAT_RC_SWITCH_EVIDENCE_NONCE_MISMATCH (607)
+/// @brief Indicates the VBIOS RIM version from the RIM file does not match the VBIOS RIM version in the switch attestation report.
+#define NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH (608)
+/// @brief Indicates the FWID in the switch evidence does not match the expected FWID.
+#define NVAT_RC_SWITCH_EVIDENCE_FWID_MISMATCH (609)
+/// @brief Indicates a signature verification error occurred when validating switch evidence.
+#define NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE (610)
+/// @brief Indicates an error occurred when calling the NVIDIA Remote Attestation Service.
+#define NVAT_RC_NRAS_ATTESTATION_ERROR         (700)
+/// @brief Indicates an error occurred when verifying a token from the NVIDIA Remote Attestation Service.
+#define NVAT_RC_NRAS_TOKEN_INVALID             (701)
+/// @brief Indicates a given GPU device certificate did not contain a require firmware id.
+#define NVAT_RC_CERT_FWID_NOT_FOUND            (800)
+/// @brief Indicates an internal error occurred when traversing a certificate chain.
+#define NVAT_RC_CERT_NOT_FOUND                 (801)
+/// @brief Indicates a certificate chain verification failure.
+#define NVAT_RC_CERT_CHAIN_VERIFICATION_FAILURE (802)
+
+/** @} return_codes */
+
+// === Core SDK ===
+
+/** 
+ * @defgroup nvat_string NVAT String
+ * 
+ * @brief Utilities for working with strings produced by the SDK.
+ * 
+ * @{
+ */
+
+typedef struct nvat_str_st* nvat_str_t;
+
+/**
+ * @brief Get the length of the given string.
+ */
+nvat_rc_t nvat_str_length(const nvat_str_t str, size_t* out_length);
+
+/**
+ * @brief Get the data of the given string.
+ * 
+ * **Ownership**: The ownership of the data is not transferred to the caller.
+ * The caller should not free the data.
+ */
+nvat_rc_t nvat_str_get_data(const nvat_str_t str, char** out_data);
+
+/**
+ * @brief Free the given string.
+ */
+void nvat_str_free(nvat_str_t* str);
+
+/** @} nvat_string */
+
+/**
+ * @defgroup options SDK Configuration
+ * 
+ * @brief Common configuration for the attestation SDK.
+ * 
+ * @{
+ */
+
+/**
+ * @brief Options used to initialize the NVIDIA Attestation SDK.
+ */
+typedef struct nvat_sdk_opts_st* nvat_sdk_opts_t;
+
+/**
+ * @brief Pluggable logger for the attestation SDK.
+ */
+typedef struct nvat_logger_st* nvat_logger_t;
+
+/**
+ * @brief Common configuration for HTTP clients.
+ */
+typedef struct nvat_http_options_st* nvat_http_options_t;
+
+/**
+ * @brief Enum indicating possible log levels.
+ * 
+ * A log message is emitted if its log level is greater than or 
+ * equal to the logger's configured minimum level.
+ */
+typedef enum {
+    NVAT_LOG_LEVEL_OFF   = 0,
+    NVAT_LOG_LEVEL_TRACE = 1,
+    NVAT_LOG_LEVEL_DEBUG = 2,
+    NVAT_LOG_LEVEL_INFO  = 3,
+    NVAT_LOG_LEVEL_WARN  = 4,
+    NVAT_LOG_LEVEL_ERROR = 5
+} nvat_log_level_t;
+
+/**
+ * @brief Bitmap indicating the set of NVIDIA devices to attest on a system.
+ * Valid bits include:
+ * - @ref NVAT_DEVICE_GPU
+ * - @ref NVAT_DEVICE_NVSWITCH
+ * Multiple device types can be enabled.
+ */
+ typedef uint32_t nvat_devices_t;
+
+ #define NVAT_DEVICE_GPU      (1<<1)
+ #define NVAT_DEVICE_NVSWITCH (1<<2)
+ #define NVAT_DEVICE_IS_SET(devices, device) (((devices) & (device)) != 0)
+
+/**
+ * @brief Allocate a new @ref nvat_sdk_opts_t on the heap.
+ * 
+ * **Ownership**: On success, the caller assumes ownership of the 
+ *                allocated options.
+ */
+nvat_rc_t nvat_sdk_opts_create(nvat_sdk_opts_t* out_opts);
+
+void nvat_sdk_opts_free(nvat_sdk_opts_t* sdk_opts);
+
+/**
+ * @brief Sets the logger in the given options. 
+ *        Note that the logger is not installed until @ref nvat_sdk_init
+ *        is called.
+ * 
+ * **Ownership**: Ownership of `logger` is transferred to the @ref nvat_sdk_opts_t.
+ *                For safety, the `logger` pointer is set to NULL.
+ */
+void nvat_sdk_opts_set_logger(nvat_sdk_opts_t opts, nvat_logger_t* logger);
+
+/**
+ * @brief Selects a set of device drivers to enable.
+ *
+ * Valid bits:
+ * - `NVAT_DEVICE_GPU` will initialize NVML on SDK init.
+ * - `NVAT_DEVICE_NVSWITCH` will initialize NSCQ on SDK init.
+ *
+ * Callers must enable the associated device drivers for local evidence collection.
+ */
+void nvat_sdk_opts_set_enabled_device_drivers(nvat_sdk_opts_t opts, const nvat_devices_t enabled_device_drivers);
+
+/**
+ * @brief Initialize the NVIDIA Attestation SDK with the given options.
+ * 
+ * **Ownership**: Ownership of `opts` is transferred to the global context.
+ *                @ref nvat_sdk_shutdown will free resources added to the options.
+ *                For safety, the `opts` pointer is set to NULL on success.
+ * **Safety**: Callers should ensure the following:
+ * - Initialization should only be attempted once, from the main application thread.
+ * - Callers should not attempt to recover in case initialization fails.
+ *   Behavior of the SDK and the state of the underlying dependencies after a failure
+ *   is currently not defined.
+ */
+nvat_rc_t nvat_sdk_init(nvat_sdk_opts_t* opts);
+
+/**
+ * @brief Shutdown the NVIDIA Attestation SDK.
+ * 
+ * This operation will shutdown any dependencies initialized as part
+ * of @ref nvat_sdk_init and free any resources owned by the active
+ * @ref nvat_sdk_opts_t.
+ */
+void nvat_sdk_shutdown();
+
+/**
+ * @brief Create a new SPDLog Logger backend with the given name and
+ *        log level.
+ *        Logger will write to stdout.
+ * 
+ * **Ownership**: On success, the caller assumes ownership of the allocated
+ *                @ref nvat_logger_t.
+ */
+nvat_rc_t nvat_logger_spdlog_create(
+    nvat_logger_t* out_logger,
+    const char* name,
+    nvat_log_level_t level
+);
+
+/**
+ * @brief Logging callback to determine whether logging is enabled for the given level.
+ * This called prior to each logging statement to avoid string formatting when it is
+ * not necessary.
+ * If the SDK is used across multiple threads, the implementation of this callback must be thread safe.
+ * @param level The level of the pending log message
+ * @param filename The name of the file in the source from which the log was emitted
+ * @param function The name of the function in the source from which the log was emitted
+ * @param line_number The line_number in the source from which the log was emitted
+ * @param user_data Pointer to user-defined data
+ */
+typedef bool (*nvat_should_log_callback_t)(
+    nvat_log_level_t level,
+    const char* filename,
+    const char* function,
+    int line,
+    void* user_data
+);
+
+/**
+ * @brief Logging callback to write messages to a custom log system.
+ * If the SDK is used across multiple threads, the implementation of this callback must be thread safe.
+ * @param level The level of the incoming log message
+ * @param message The formatted log message
+ * @param filename The name of the file in the source from which the log was emitted
+ * @param function The name of the function in the source from which the log was emitted
+ * @param line_number The line_number in the source from which the log was emitted
+ * @param user_data Pointer to user-defined data
+ */
+typedef void (*nvat_log_callback_t)(
+    nvat_log_level_t level,
+    const char* message,
+    const char* filename,
+    const char* function,
+    int line,
+    void* user_data
+);
+
+/**
+ * @brief Flush callback to force immediate writing of any buffered log messages.
+ * This is called by the SDK at critical points to ensure log persistence.
+ * Implementations should handle errors internally and continue operating.
+ * @param user_data Pointer to user-defined data
+ */
+ typedef void (*nvat_flush_callback_t)(void* user_data);
+
+/**
+ * @brief Create a custom logging implementation through callbacks.
+ * See @ref nvat_should_log_callback_t and @ref nvat_log_callback_t for details on
+ * the required callbacks.
+ * `user_data` is a nullable pointer to user-defined data that should be passed to each
+ * invocation of both the `should_log_callback` and `log_callback`.
+ * `user_data` should be a pointer to any user defined data structures required to support
+ * the custom logging implementation.
+ * The caller is responsible for safe interaction with `user_data`, including thread safety
+ * if the SDK is used from multiple threads.
+ * @param log_callback Nullable callback to write log messages. If NULL, all messages are dropped.
+ * @param should_log_callback Nullable callback to filter log messages. If NULL, no filtering is applied.
+ * @param flush_callback Nullable callback to signal a request to flush buffered messages. If NULL, the callback is not invoked.
+ * @param user_data Nullable pointer to user-defined data
+ */
+nvat_rc_t nvat_logger_callback_create(
+    nvat_logger_t* out_logger,
+    nvat_log_callback_t log_callback,
+    nvat_should_log_callback_t should_log_callback,
+    nvat_flush_callback_t flush_callback,
+    void* user_data
+);
+
+void nvat_logger_free(nvat_logger_t* logger);
+
+#define NVAT_HTTP_DEFAULT_RETRY_COUNT               (5)
+#define NVAT_HTTP_DEFAULT_BASE_BACKOFF_MS         (100) // 100 ms
+#define NVAT_HTTP_DEFAULT_MAX_BACKOFF_MS        (30000) // 30 seconds
+#define NVAT_HTTP_DEFAULT_CONNECTION_TIMEOUT_MS  (5000) // 5 seconds
+#define NVAT_HTTP_DEFAULT_REQUEST_TIMEOUT_MS    (30000) // 30 seconds
+
+/** @brief Create a new set of HTTP options with default values. */
+nvat_rc_t nvat_http_options_create_default(nvat_http_options_t* http_options);
+/** @brief Sets the maximum number of retries on a failed HTTP request. At most `max(max_retries, 0) + 1` attempts will be made. */
+void nvat_http_options_set_max_retry_count(nvat_http_options_t http_options, long max_retries);
+/** @brief Sets the base backoff time, in milliseconds. A base backoff of 0 disables backoff between retries (not recommended). */
+void nvat_http_options_set_base_backoff_ms(nvat_http_options_t http_options, long base_backoff_ms);
+/** @brief Sets the maximum backoff time, in milliseconds. */
+void nvat_http_options_set_max_backoff_ms(nvat_http_options_t http_options, long max_backoff_ms);
+/** @brief Sets the connection timeout for each HTTP request. */
+void nvat_http_options_set_connection_timeout_ms(nvat_http_options_t http_options, long connection_timeout_ms);
+/** @brief Sets the overall request timeout of an HTTP request. */
+void nvat_http_options_set_request_timeout_ms(nvat_http_options_t http_options, long request_timeout_ms);
+void nvat_http_options_free(nvat_http_options_t* http_options);
+
+/** @} options */
+
+
+/**
+ * @defgroup ocsp_client OCSP Client
+ * 
+ * @brief OCSP client to check the revocation status of RIM and device identity
+ *        certificate chains.
+ * @{
+ */
+ // TODO(p2): auth
+typedef struct nvat_ocsp_client_st* nvat_ocsp_client_t;
+
+/**
+ * @brief Create an OCSP client with default settings.
+ * 
+ * **Ownership**: On success, the caller assumes ownership of the allocated
+ *                @ref nvat_ocsp_client_t handle.
+ *                The client is refcounted and safe to share between multiple
+ *                verifier components.
+ * @param base_url If NULL, the default base URL of the NVIDIA OCSP Response is used.
+ * @param http_options If NULL, default HTTP options will be used.
+ */
+nvat_rc_t nvat_ocsp_client_create_default(
+    nvat_ocsp_client_t* out_client,
+    const char* base_url,
+    const nvat_http_options_t http_options
+);
+void nvat_ocsp_client_free(nvat_ocsp_client_t* ocsp_client);
+
+/** @} ocsp_client */
+
+/**
+ * @defgroup rim_store RIM Store
+ * 
+ * @brief Utilities for fetching Remote Integrity Manifest (RIM) files
+ *        from various sources.
+ * @{
+ */
+typedef struct nvat_rim_store_st* nvat_rim_store_t;
+
+/**
+ * @brief Create a remote RIM store backed by the [NVIDIA RIM service](https://docs.nvidia.com/attestation/api-docs-rim/latest/rim_api.html).
+ * 
+ * If the `base_url` is empty, 
+ * the RIM store will use the default NVIDIA RIM service base URL to fetch RIMs.
+ *
+ * **Ownership**: On success, the caller assumes ownership of the allocated
+ *                @ref nvat_rim_store_t.
+ *                The client is refcounted and safe to share between multiple
+ *                verifier components.
+ *
+ * @param base_url If NULL, the default base URL of the NVIDIA RIM Service is used.
+ * @param http_options If NULL, default HTTP options will be used.
+ */
+ // TODO(p2): auth
+nvat_rc_t nvat_rim_store_create_remote(
+    nvat_rim_store_t* out_store,
+    const char* base_url,
+    const nvat_http_options_t http_options
+);
+
+// TODO(p0): add docs on the folder layout
+/**
+ * @brief Create a RIM store backed by the local filesystem.
+ *
+ * **Ownership**: On success, the caller assumes ownership of the allocated
+ *                @ref nvat_rim_store_t.
+ *                The client is refcounted and safe to share between multiple
+ *                verifier components.
+ */
+nvat_rc_t nvat_rim_store_create_filesystem(nvat_rim_store_t* out_store, const char* base_path);
+
+void nvat_rim_store_free(nvat_rim_store_t* rim_store);
+
+/** @} rim_store */
+
+// === Evidence Collection ===
+
+/**
+ * @brief A variable-length nonce.
+ */
+typedef struct nvat_nonce_st* nvat_nonce_t;
+
+/**
+ * @brief Generate a secure random nonce with the given length.
+ * 
+ * Note that the required nonce length may vary by device.
+ *
+ * System must have access to a trusted entropy source.
+ * @see <a href="https://docs.openssl.org/3.3/man3/RAND_bytes/">OpenSSL RAND_bytes</a>.
+ */
+nvat_rc_t nvat_nonce_create(nvat_nonce_t* out_nonce, size_t length);
+
+/**
+ * @brief Get the number of bytes in the given nonce.
+ */
+size_t nvat_nonce_get_length(const nvat_nonce_t nonce);
+
+/**
+ * @brief Encode the given nonce as a C-string.
+ *
+ * @param nonce The nonce to encode.
+ * @param out_str *out_str will point to a heap allocated `nvat_str_t`. See @ref nvat_str_t.
+ * 
+ */
+nvat_rc_t nvat_nonce_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str);
+
+void nvat_nonce_free(nvat_nonce_t* nonce);
+
+/**
+ * @defgroup gpu_evidence GPU Evidence
+ * 
+ * @brief Utilities to collect evidence from NVIDIA GPUs starting in the Hopper generation.
+ * 
+ * @{
+ */
+
+/** 
+ * @brief A single piece of GPU evidence, generally an SPDM transcript.
+ */
+typedef struct nvat_gpu_evidence_st* nvat_gpu_evidence_t;
+/**
+ * @brief Interface for collecting or reading switch evidence.
+ */
+typedef struct nvat_gpu_evidence_source_st* nvat_gpu_evidence_source_t;
+/**
+ * @brief Collection of GPU evidence.
+ */
+typedef struct nvat_gpu_evidence_collection_st* nvat_gpu_evidence_collection_t;
+
+/**
+ * @defgroup gpu_evidence_source GPU Evidence Source
+ * @ingroup gpu_evidence
+ * 
+ * Functions for creating GPU evidence sources.
+ * @{
+ */
+/**
+ * @brief Create a @ref nvat_gpu_evidence_source that will collect evidence from all GPUs accessible on
+ *        the system via NVML.
+ */
+nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_source);
+
+/**
+ * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
+ *        source file. The source file must be a JSON file with the following schema: 
+ * ```json
+ * {
+ *   "$schema": "https://json-schema.org/draft/2020-12/schema",
+ *   "type": "array",
+ *   "items": {
+ *     "type": "object",
+ *     "properties": {
+ *       "version": {
+ *         "type": "string",
+ *         "description": "The version of the evidence format.",
+ *         "enum": ["1.0"]
+ *       },
+ *       "arch": {
+ *         "type": "string",
+ *         "description": "The GPU architecture of the evidence.",
+ *         "enum": ["Hopper", "Blackwell"]
+ *       },
+ *       "nonce": {
+ *         "type": "string",
+ *         "description": "The nonce used to collect the evidence.",
+ *         "format": "hex"
+ *       },
+ *       "vbios_version": {
+ *         "type": "string",
+ *         "description": "The version of the BIOS.",
+ *         "format": "hex"
+ *       },
+ *       "driver_version": {    
+ *         "type": "string",
+ *         "description": "The version of the driver.",
+ *         "format": "hex"
+ *       },
+ *       "evidence": {
+ *         "type": "string",
+ *         "description": "The base64-encoded evidence.",
+ *         "format": "base64"
+ *       },
+ *       "certificate": {
+ *         "type": "string",
+ *         "description": "The base64-encoded certificate chain.",
+ *         "format": "base64"
+ *       }
+ *     }
+ *   }
+ * }
+ * ```
+ * @param out_source A pointer to the evidence source that will return the evidence from the file.
+ * @param file_path The path to the file to deserialize the evidence from.
+ */
+// TODO: should this be a buffer instead?
+nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* out_source, const char* file_path);
+
+void      nvat_gpu_evidence_source_free(nvat_gpu_evidence_source_t* gpu_evidence_source);
+
+/** @} gpu_evidence_source */
+
+/**
+ * @defgroup gpu_evidence_collection GPU Evidence Collection
+ * @ingroup gpu_evidence
+ * 
+ * Functions for collecting GPU evidence.
+ * @{
+ */
+size_t    nvat_gpu_evidence_collection_get_length(const nvat_gpu_evidence_collection_t collection);
+nvat_gpu_evidence_t nvat_gpu_evidence_collection_get_evidence(const nvat_gpu_evidence_collection_t collection, size_t index);
+void      nvat_gpu_evidence_collection_free(nvat_gpu_evidence_collection_t* gpu_evidence_collection);
+
+/**
+ * @brief Collect GPU evidence from the given source.
+ *
+ * If the the supplied nonce is `NULL`, a nonce appropriate for the GPU will be generated.
+ */
+nvat_rc_t nvat_gpu_evidence_collect(
+    const nvat_gpu_evidence_source_t source,
+    const nvat_nonce_t nonce,
+    nvat_gpu_evidence_collection_t* out_collection
+);
+
+/** @} gpu_evidence_collection */
+
+/**
+ * @defgroup gpu_evidence_serialize GPU Evidence Serialize
+ * @ingroup gpu_evidence
+ * 
+ * Functions for serializing GPU evidence.
+ * @{
+ */
+/**
+ * @brief Serialize the given GPU evidence to JSON.
+ *
+ * On success, `out_serialized_evidence` will point to a newly allocated 
+ * nvat_string_t that contains the serialized evidence in JSON format.
+ * 
+ * The caller assumes ownership of the `out_serialized_evidence`
+ * See @ref nvat_string
+ */
+nvat_rc_t nvat_gpu_evidence_serialize_json(
+    const nvat_gpu_evidence_collection_t collection, 
+    nvat_str_t* out_serialized_evidence
+);
+
+/** @} gpu_evidence_serialize */
+
+/** @} gpu_evidence */
+
+/**
+ * @defgroup switch_evidence NVSwitch Evidence
+ * 
+ * @brief Utilities to collect evidence from the NVSwitch.
+ * 
+ * @{
+ */
+
+/** 
+ * @brief A single piece of NVSwitch evidence, generally an SPDM transcript.
+ */
+typedef struct nvat_switch_evidence_st* nvat_switch_evidence_t;
+/**
+ * @brief Interface for collecting or reading switch evidence.
+ */
+typedef struct nvat_switch_evidence_source_st* nvat_switch_evidence_source_t;
+/**
+ * @brief Collection of NVSwitch evidence.
+ */
+typedef struct nvat_switch_evidence_collection_st* nvat_switch_evidence_collection_t;
+
+/**
+ * @defgroup switch_evidence_source Switch Evidence Source
+ * @ingroup switch_evidence
+ * 
+ * Functions for creating switch evidence sources.
+ * @{
+ */
+/**
+ * @brief Create a @ref nvat_switch_evidence_source that will collect evidence from all NVSwitches 
+ * accessible from the system via NSCQ.
+ */
+nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t* out_source);
+
+/**
+ * @brief Create a @ref nvat_switch_evidence_source that will read existing evidence from the given
+ *        source file. The source file must be a JSON file with the following schema: 
+ * ```json
+ * {
+ *   "$schema": "https://json-schema.org/draft/2020-12/schema",
+ *   "type": "array",
+ *   "items": {
+ *     "type": "object",
+ *     "properties": {
+ *       "version": {
+ *         "type": "string",
+ *         "description": "The version of the evidence format.",
+ *         "enum": ["1.0"]
+ *       },
+ *       "arch": {
+ *         "type": "string",
+ *         "description": "The switch architecture of the evidence.",
+ *         "enum": ["LS10"]
+ *       },
+ *       "nonce": {
+ *         "type": "string",
+ *         "description": "The nonce used to collect the evidence.",
+ *         "format": "hex"
+ *       },
+ *       "evidence": {
+ *         "type": "string",
+ *         "description": "The base64-encoded evidence.",
+ *         "format": "base64"
+ *       },
+ *       "certificate": {
+ *         "type": "string",
+ *         "description": "The base64-encoded certificate chain.",
+ *         "format": "base64"
+ *       }
+ *     }
+ *   }
+ * }
+ * ```
+ * @param out_source A pointer to the evidence source that will return the evidence from the file.
+ * @param file_path The path to the file to deserialize the evidence from.
+ */
+// TODO: should this be a buffer instead?
+nvat_rc_t nvat_switch_evidence_source_from_json_file(nvat_switch_evidence_source_t* out_source, const char* file_path);
+
+void      nvat_switch_evidence_source_free(nvat_switch_evidence_source_t* switch_evidence_source);
+
+/** @} switch_evidence_source */
+
+/**
+ * @defgroup switch_evidence_collection Switch Evidence Collection
+ * @ingroup switch_evidence
+ * 
+ * Functions for collecting switch evidence.
+ * @{
+ */
+size_t    nvat_switch_evidence_collection_get_length(const nvat_switch_evidence_collection_t collection);
+nvat_switch_evidence_t nvat_switch_evidence_collection_get_evidence(const nvat_switch_evidence_collection_t collection, size_t index);
+void      nvat_switch_evidence_collection_free(nvat_switch_evidence_collection_t* switch_evidence_collection);
+
+/**
+ * @brief Collect switch evidence from the given source.
+ *
+ * If the the supplied nonce is `NULL`, a nonce appropriate for the switch will be generated.
+ */
+nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t source, const nvat_nonce_t nonce, nvat_switch_evidence_collection_t* out_collection);
+
+/** @} switch_evidence_collection */
+
+/**
+ * @defgroup switch_evidence_serialize Switch Evidence Serialize
+ * @ingroup switch_evidence
+ * 
+ * Functions for serializing switch evidence.
+ * @{
+ */
+/**
+ * @brief Serialize the given switch evidence to JSON.
+ *
+ * On success, `buffer` will contain a null-terminated string.
+ * On failure, caller must not make assumptions about the contents of
+ * `buffer`.
+ */
+nvat_rc_t nvat_switch_evidence_serialize_json(
+    const nvat_switch_evidence_collection_t collection, 
+    nvat_str_t* out_serialized_evidence
+);
+
+/** @} switch_evidence_serialize */
+
+/** @} switch_evidence */
+
+// === Evidence Verification ===
+
+/**
+ * @brief Claims describing the properties of submitted evidence.
+ */
+ typedef struct nvat_claims_st* nvat_claims_t;
+/**
+ * @brief Claims describing the properties of submitted evidence.
+ * 
+ * \verbatim embed:rst:leading-asterisk
+ * See for more info :ref:`Claims schema <claims-schema>` :ref:`Relying party policy <configuring-relying-part-policy>`.
+ * \endverbatim
+ */
+typedef struct nvat_claims_collection_st* nvat_claims_collection_t;
+
+void nvat_claims_collection_free(nvat_claims_collection_t* claims_collection);
+
+/**
+ * @brief Serialize the given claims collection to JSON.
+ */
+nvat_rc_t nvat_claims_collection_serialize_json(const nvat_claims_collection_t claims, nvat_str_t* out_serialized_claims);
+
+
+/**
+ * @defgroup evidence_policy Evidence Policy
+ * 
+ * @brief Settings to modify the behavior of a verifier. 
+ *
+ * @{
+ */
+
+/**
+ * @brief Settings to customize evidence verification.
+ */
+typedef struct nvat_evidence_policy_st* nvat_evidence_policy_t;
+
+#define NVAT_GPU_CLAIMS_VERSION_V2 (2)
+#define NVAT_GPU_CLAIMS_VERSION_V3 (3)
+typedef uint8_t nvat_gpu_claims_version_t;
+
+#define NVAT_SWITCH_CLAIMS_VERSION_V3 (3)
+typedef uint8_t nvat_switch_claims_version_t;
+
+
+/**
+ * @brief Allocates a default evidence appraisal policy.
+ *
+ * The default evidence policy requires that: 
+ * - OCSP status must be "good"
+ * - OCSP nonce must match between the OCSP request and response
+ */
+nvat_rc_t nvat_evidence_policy_create_default(nvat_evidence_policy_t* policy);
+
+void nvat_evidence_policy_free(nvat_evidence_policy_t* evidence_policy);
+
+/**
+ * @brief Whether to allow certificate hold revocations.
+ * 
+ * RIM certifates revoked with the reason CERTIFICATE_HOLD indicate that the
+ * corresponding driver and/or firmware is a early-access software.
+ */
+void nvat_evidence_policy_set_ocsp_allow_cert_hold(nvat_evidence_policy_t policy, bool allow_cert_hold);
+
+/**
+ * @brief Whether to check OCSP nonces.
+ *
+ * An OCSP nonce is used to guarantee the freshness of the revocation status
+ * returned by an OCSP server.
+ * Disabling the nonce is available for high-performance use cases that rely
+ * on cached OCSP responses.
+ * 
+ * Enabling OCSP over HTTPS is highly recommended if the nonce is disabled as
+ * this can partially mitigate the risk of OCSP replay attacks.
+ */
+void nvat_evidence_policy_set_ocsp_check_nonce(nvat_evidence_policy_t policy, bool check_nonce);
+
+/**
+ * @brief Set the expected claims version for GPU attestation results.
+ */
+nvat_rc_t nvat_evidence_policy_set_gpu_claims_version(nvat_evidence_policy_t policy, const nvat_gpu_claims_version_t version);
+
+/**
+ * @brief Set the expected claims version for switch attestation results.
+ */
+nvat_rc_t nvat_evidence_policy_set_switch_claims_version(nvat_evidence_policy_t policy, const nvat_switch_claims_version_t version);
+
+/** @} evidence_policy */
+
+/**
+ * @defgroup gpu_verifier GPU Evidence Verification
+ * 
+ * @brief Components used to perform GPU evidence verification and
+ *        produce attestation results (claims) for a relying party.
+ * @{
+ */
+
+/**
+ * @brief Evaluates GPU evidence to produce attestation results (claims)
+ *        indicating the validity of submitted evidence.
+ */
+typedef struct nvat_gpu_verifier_st* nvat_gpu_verifier_t;
+typedef struct nvat_gpu_nras_verifier_st* nvat_gpu_nras_verifier_t;
+typedef struct nvat_gpu_local_verifier_st* nvat_gpu_local_verifier_t;
+
+/**
+ * @brief Create a remote verifier that uses NVIDIA Remote Attestation Service
+ *        to appraise evidence.
+ *
+ * @param base_url If `NULL`, will use the default NRAS production base URL
+ * @param http_options If `NULL`, will use default HTTP options
+ */
+nvat_rc_t nvat_gpu_nras_verifier_create(
+    nvat_gpu_nras_verifier_t* out_verifier,
+    const char* base_url,
+    const nvat_http_options_t http_options
+);
+
+/**
+ * @brief Create a local verifier to appraise evidence in the current process.
+ *
+ * Verify evidence in the current process.
+ * The local verifier should be used either in:
+ * - a TEE connected to the attester
+ * - a remote attestation service running in a secure cloud environment
+ * 
+ * Local verification outside of these use cases is not recommended
+ * as the verification process can be compromised by malicious actors
+ * with elevated privileges on the host.
+ */
+nvat_rc_t nvat_gpu_local_verifier_create(
+    nvat_gpu_local_verifier_t* out_verifier, 
+    nvat_rim_store_t rim_store,
+    nvat_ocsp_client_t ocsp_client
+);
+
+/**
+ @brief Verify GPU evidence against a given evidence policy.
+ */
+nvat_rc_t nvat_verify_gpu_evidence(
+    const nvat_gpu_verifier_t verifier,
+    const nvat_gpu_evidence_collection_t evidence,
+    const nvat_evidence_policy_t policy,
+    nvat_claims_collection_t* out_claims
+);
+
+nvat_gpu_verifier_t nvat_gpu_local_verifier_upcast(nvat_gpu_local_verifier_t verifier);
+nvat_gpu_verifier_t nvat_gpu_nras_verifier_upcast(nvat_gpu_nras_verifier_t verifier);
+void nvat_gpu_verifier_free(nvat_gpu_verifier_t* gpu_verifier);
+
+/** @} gpu_verifier */
+
+/**
+ * @defgroup switch_verifier NVSwitch Evidence Verification
+ * 
+ * @brief Components used to perform switch evidence verification and
+ *        produce attestation results (claims) for a relying party.
+ * @{
+ */
+
+/**
+ * @brief Evaluates switch evidence to produce attestation results (claims)
+ *        indicating the validity of submitted evidence.
+ */
+typedef struct nvat_switch_verifier_st* nvat_switch_verifier_t;
+typedef struct nvat_switch_nras_verifier_st* nvat_switch_nras_verifier_t;
+typedef struct nvat_switch_local_verifier_st* nvat_switch_local_verifier_t;
+
+/**
+ * @brief Create a remote verifier that uses NVIDIA Remote Attestation Service
+ *        to appraise evidence.
+ *
+ * @param base_url If `NULL`, will use the default NRAS production base URL
+ * @param http_options If `NULL`, will use default HTTP options
+ */
+nvat_rc_t nvat_switch_nras_verifier_create(
+    nvat_switch_nras_verifier_t* out_verifier,
+    const char* base_url,
+    const nvat_http_options_t http_options
+);
+
+/**
+ * @brief Create a local verifier to appraise evidence in the current process.
+ *
+ * Verify evidence in the current process.
+ * The local verifier should be used either in:
+ * - a TEE connected to the attester
+ * - a remote attestation service running in a secure cloud environment
+ * 
+ * Local verification outside of these use cases is not recommended
+ * as the verification process can be compromised by malicious actors
+ * with elevated privileges on the host.
+ */
+nvat_rc_t nvat_switch_local_verifier_create(
+    nvat_switch_local_verifier_t* out_verifier,
+    nvat_rim_store_t rim_store,
+    nvat_ocsp_client_t ocsp_client
+);
+
+/**
+ @brief Verify switch evidence against a given evidence policy.
+ */
+nvat_rc_t nvat_verify_switch_evidence(
+    const nvat_switch_verifier_t verifier,
+    const nvat_switch_evidence_collection_t evidence,
+    const nvat_evidence_policy_t policy,
+    nvat_claims_collection_t* out_claims
+);
+
+nvat_switch_verifier_t nvat_switch_local_verifier_upcast(nvat_switch_local_verifier_t verifier);
+nvat_switch_verifier_t nvat_switch_nras_verifier_upcast(nvat_switch_nras_verifier_t verifier);
+void nvat_switch_verifier_free(nvat_switch_verifier_t* switch_verifier);
+
+/** @} switch_verifier */
+
+// === Attestation ===
+
+/**
+  * @defgroup rp_policy Relying Party Policy
+  * @{
+  */
+
+/**
+ * @brief Evalutes attestation results to determine whether the source attesters
+ *        are trustworthy.
+ *
+ * The PR policy will be attestation results from every attested device type at the end of 
+ * an @ref atttest call.
+ */
+typedef struct nvat_relying_party_policy_st* nvat_relying_party_policy_t;
+
+/**
+ * @brief Create a default relying party policy.
+ * Also see @ref nvat_relying_party_policy_create_rego_from_str() for creating a relying party policy from a custom rego policy.
+ * \verbatim embed:rst:leading-asterisk
+ * See for more info about the default policy: :ref:`Configuring attestation <configuring-relying-part-policy>`.
+ * \endverbatim
+ */
+nvat_rc_t nvat_relying_party_policy_create_default(nvat_relying_party_policy_t* rp_policy);
+
+/**
+ * @brief Create a Rego relying party (RP) policy backed by [regorus](https://github.com/microsoft/regorus).
+ * see @ref nvat_claims_collection_st for the format of the input to the policy
+ */
+nvat_rc_t nvat_relying_party_policy_create_rego_from_str(nvat_relying_party_policy_t* rp_policy, const char* rego_str);
+
+/**
+ * @brief Evaluate the given claims collection against a relying party policy.
+ * 
+ * @param claims The claims collection to evaluate.
+ * @param policy The relying party policy to evaluate the claims against.
+ * 
+ * Returns NVAT_RC_OK if the claims match the policy, NVAT_RC_RELYING_PARTY_POLICY_MISMATCH if the claims do not match the policy.
+ */
+nvat_rc_t nvat_apply_relying_party_policy(nvat_relying_party_policy_t policy, const nvat_claims_collection_t claims);
+
+void nvat_relying_party_policy_free(nvat_relying_party_policy_t* relying_party_policy);
+
+/** @} rp_policy */
+
+/**
+ * @defgroup attest Attestation
+ * 
+ * @brief Utilities to perform end-to-end attestation of all NVIDIA devices
+ * connected to a system. @ref nvat_attest_system() is the main function used 
+ * for this. 
+ * 
+ * See @ref nvat_attestation_ctx_st for available options.
+ *
+ * @{
+ */
+
+/**
+ * @brief Context required to perform system attestation.
+ * Settings included in the context:
+ * - evidence source for each device type (Default: NVML for GPU, NSCQ for NVSwtich)
+ * - verifiers for each device type (Default: Local)
+ * - evidence policy 
+ * - relying party policy
+ * 
+ * 
+ * functions beginning with nvat_attestation_ctx_* are used to set 
+ * these options
+ */
+typedef struct nvat_attestation_ctx_st* nvat_attestation_ctx_t;
+
+
+/**
+ * @brief Integer indicating a verifier backend to use.
+ * Valid values include:
+ * - @ref NVAT_VERIFY_LOCAL
+ * - @ref NVAT_VERIFY_REMOTE
+ */
+typedef uint8_t nvat_verifier_type_t;
+
+#define NVAT_VERIFY_LOCAL  0
+#define NVAT_VERIFY_REMOTE 1
+
+/**
+ * @brief Create a new attestation context with default settings for all
+ *        enabled devices.
+ *
+ * Defaults to local evidence collection and verification.
+ */
+nvat_rc_t nvat_attestation_ctx_create(nvat_attestation_ctx_t* ctx, nvat_devices_t enabled_devices);
+
+/**
+ * @brief Sets the verifier type for all enabled devices in this context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_verifier_type(nvat_attestation_ctx_t ctx, nvat_verifier_type_t verifier_type);
+
+/**
+ * @brief Set the default NRAS url to use when using NVIDIA Remote Attestation Service as the remote verifier.
+ * Note that this setting does **not** change the NRAS url of any verifiers
+ * previously set in the context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_default_nras_url(nvat_attestation_ctx_t ctx, const char * nras_url);
+
+/**
+ * @brief Set the effective evidence policy for this context.
+ * @param evidence_policy if NULL, the existing policy is cleared and a default policy will be set.
+ *
+ * **Ownership**: On success, ownership of the evidence policy is transferred to the attestation context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_evidence_policy(nvat_attestation_ctx_t ctx, nvat_evidence_policy_t* evidence_policy);
+
+/**
+ * @brief Set the effective relying party policy for this context.
+ * @param rp_policy if NULL, the existing policy is cleared and a default policy will be set.
+ */
+nvat_rc_t nvat_attestation_ctx_set_relying_party_policy(nvat_attestation_ctx_t ctx, nvat_relying_party_policy_t rp_policy);
+
+/**
+ * @brief Change the default OCSP url to use when initializing local verifiers.
+ * Note that this setting does **not** change the OCSP client of any verifiers
+ * previously set in the context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_default_ocsp_url(nvat_attestation_ctx_t ctx, const char * ocsp_url);
+
+/**
+ * @brief Change the default OCSP client to use when initializing local verifiers.
+ * Note that this setting does **not** change the OCSP client of any verifiers
+ * previously set in the context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_default_ocsp_client(nvat_attestation_ctx_t ctx, nvat_ocsp_client_t ocsp_client);
+
+
+/**
+ * @brief Change the default RIM url to use when initializing local verifiers.
+ * Note that this setting does **not** change the RIM store of any verifiers
+ * previously set in the context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_default_rim_store_url(nvat_attestation_ctx_t ctx, const char * rim_store_url);
+
+/**
+ * @brief Change the default RIM store to use when initializing local verifiers.
+ * 
+ * Note that this setting does **not** change the RIM store of any verifiers
+ * previously set in the context.
+ */
+nvat_rc_t nvat_attestation_ctx_set_default_rim_store(nvat_attestation_ctx_t ctx, nvat_rim_store_t rim_store);
+
+/**
+ * @brief Set the GPU evidence source to use a JSON file. See @ref nvat_gpu_evidence_source_from_json_file() for 
+ * the expected format of the JSON file.
+ */
+nvat_rc_t nvat_attestation_ctx_set_gpu_evidence_source_json_file(nvat_attestation_ctx_t ctx, const char* file_path);
+
+/**
+ * @brief Set the switch evidence source to use a JSON file. See @ref nvat_switch_evidence_source_from_json_file() for 
+ * the expected format of the JSON file.
+ */
+nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attestation_ctx_t ctx, const char* file_path);
+
+void nvat_attestation_ctx_free(nvat_attestation_ctx_t* attestation_ctx);
+
+/**
+ * @brief Run end-to-end attestation on the current system using settings
+ *        in the @ref nvat_attestation_ctx_t.
+ *
+ * This operation will:
+ * - collect evidence from each configured device type (GPU, switch, etc)
+ *   using the configured evidence collectors
+ * - evaluate every piece of evidence collected using the configured
+ *   verifiers and produce attestation results in the form of claims
+ * - evalute the final set of attestation results using the
+ *   configured relying party policy
+ *
+ * On success, the pointer `out_claims` is updated to point
+ * to a claims collection allocated on the heap. See @ref nvat_claims_collection_serialize_json_to_buffer()
+ * and @ref nvat_claims_collection_free() for more information.
+ * 
+ * The attestation process can be configured by environment variables:
+ * 
+ * If using a remote rim store, the URL can be set using `NVAT_RIM_STORE_BASE_URL`
+ * If using remote OCSP, the URL can be set using `NVAT_OCSP_BASE_URL`
+ * If using remote verifier, the URL can be set using `NVAT_NRAS_BASE_URL`
+ * 
+ * @return 
+ *   - @ref NVAT_RC_OK if the system is trustyworthy according to
+ *          the RP policy.
+ *   - @ref NVAT_RC_RP_POLICY_MISMATCH if the RP policy rejected the
+ *          attestation results.
+ *   - Other internal errors depending on the implementations supplied
+ *     to the @ref nvat_attestation_ctx_t.
+ * 
+ * \verbatim embed:rst:leading-asterisk
+ * See for more info about configuring the attestation process: :ref:`Configuring attestation <configuring-relying-part-policy>`.
+ * See here for claims schema: :ref:`Claims schema <claims-schema>`
+ * \endverbatim
+ */
+nvat_rc_t nvat_attest_system(
+    const nvat_attestation_ctx_t ctx,
+    const nvat_nonce_t nonce,
+    nvat_claims_collection_t* out_claims
+);
+
+/** @} attest */
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // _NVAT_H_
