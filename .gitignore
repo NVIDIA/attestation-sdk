@@ -1,0 +1,8 @@
+*/env/*
+*/target/*
+.vscode
+.idea
+.DS_Store
+*/build/*
+*_build*
+*_repo*

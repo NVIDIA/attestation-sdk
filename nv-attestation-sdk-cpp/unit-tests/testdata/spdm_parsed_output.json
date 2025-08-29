@@ -1,0 +1,419 @@
+{
+    "SPDMVersion": "0x11",
+    "RequestResponseCode": "0x60",
+    "Param1": "0x00",
+    "Param2": "0x00",
+    "NumberOfBlocks": 64,
+    "MeasurementRecordLength": 3520,
+    "Nonce": "0xb4b8a06aaaa35542839388e159d447a5d6f6194998fd86513e2d591ccf640985",
+    "OpaqueLength": 422,
+    "Signature": "0x90d679ad2c04147eb31f4a99ff8f4f8ad1bce8f750e1bb75f266506c88a84150e8671ed5513b7718f5808e5b222661b21aa90dae6c655e652959c8046b5f81feb7b00db3fe1ae97e81d50b02ec9cc64c96f8d0dd5f3be286f82eb98fe07e67d0",
+    "MeasurementRecord": {
+        "NumberOfBlocks": 64,
+        "MeasurementBlocks": {
+            "1": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "2": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x8048dfd18fe229bf16eb9d30cca0f11a24dafe6eb731de1462984645a0b189b77c4e4e17de727a5e19e3d07de51da338"
+            },
+            "3": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x164f445c3e282ca8e4ab07c2179b8e02c8e3a2ceb83f9fae8dddaee70aa57207d87792d1481b46c02f9dba6e1fe1e77e"
+            },
+            "4": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x73bbf35822549e28ba8fb2671fb7b58f46424a0069205b3ecf1d0fa762adef90b538cc9d692eb5c050147f2f1e8214ab"
+            },
+            "5": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x568b89291a34cece03b12aaa352d9afe273610307525b8443e90faa78d82ecfa9c7827d8f7915c35b2fab972e1086686"
+            },
+            "6": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xc9e4fe668e9dc269a4657146b5e28a22347cde18a4b0e79d8146532f27ebc386f304400ea5d4bf4159b5a6916dd4564e"
+            },
+            "7": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x6850b0a82e7e77c0f51e0e6732163866003390c4eb286d8dfb26a72f711a9c8bcdf402a1fd4e5d70b97708107a785efc"
+            },
+            "8": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x80161aac5e7509f038a6457b111e048207d1dc0e78edbb8c172fca4139c1d5f29cda67ecdd261fdc9203b76387f7389f"
+            },
+            "9": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "10": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x059b32e712a153f490dbfb7976a9e275d789e28bd4803c357def2b6123327c430526bfaecc200f496d4e149fc5eade03"
+            },
+            "11": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "12": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x413d008cedd5526a79455a178154328ce960af252bdb06e7fe4080049add412488cac39ecf3d80efbdc6bdd363861773"
+            },
+            "13": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "14": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "15": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "16": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "17": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "18": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "19": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "20": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "21": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "22": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x68454d4bb5545a74e478e288469a6548bb4d4aa8556a512f9ddd41b0337a602b3f050a469578139c6cea0e0f7c9861c8"
+            },
+            "23": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xcf98e425ebfb0c20532162d772d5b355bbabc68b0876a3c91a676769a3d6e8460e01be987669f8196ec63b7b6a8d8581"
+            },
+            "24": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "25": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "26": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xb718948c035092ebd0c7d6f069141e6bd0cd40d8ddd436aa0d1a705afedfe67c12891d239e6ddf30ea09775d1056ac1a"
+            },
+            "27": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x6dbc7f8e23ac6f69c4bf3cb4c61566d7957fce2f0f16a499ac1f724bacb0935eefa5be16f548ba5141449f43555f240c"
+            },
+            "28": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x2191a06d9fad030cb8a707391f2e51838d8ca1e17109325b155f774ddcb2bf704ca023ba711a282c93a1afcd590ce20b"
+            },
+            "29": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "30": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x1d040fdc3c8de3d8afbcebb79bf3a9ec09a277651b7ace16627f6201c90414d9917b57a7bd67482b1929c9ec0bd1a15d"
+            },
+            "31": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x1bd45c8a34c33ac6a316050cb0752aa648ac4c6cd26af165cec416557468d21f7a61b6c5c7c4ea6d131be92706593939"
+            },
+            "32": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xa0d52c35704f13bf52745f27f16285292a7d8e9b8011320c18a58effd1a7934abb414ef99809ec9852568552904d361e"
+            },
+            "33": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x9f976e82fa30fcc6f82bce2c942ad4707c3df6b76e6295ce4c95cf9bb62a08392571e9fb787f19b31bf0f3f04ba887a6"
+            },
+            "34": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x198b81d9c0cefe0b33ad65de3fad238a5461d8ee32487bf70fc1926041408cb114624b8ca6b0d5fc97028b58d9cdb78d"
+            },
+            "35": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x07bbc504d3327cb76d4c4f3b3f1daf8779e40cc31d60826cb11dcc5d09dc59a83bf693f0fb9b1f0b5e58ed4cdc3a580f"
+            },
+            "36": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xc0962ed90316ecea959dd0b6632d0c4f4d3bfbf72c4cd9031efe48154ed9ca59b41cd20ce06a7f9ca5cd8b0687cf1258"
+            },
+            "37": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x10570f642e274cfc2b9f1c955fab0aa56b6193d5c5ea271a74eb9764334865695921456dc1ca383d7edf9e67760937ca"
+            },
+            "38": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xfccd6efa76267f5b43fc4a7647ce843a3912f0944a9bcc907456408c368ad5e85bec4512d9d9aedebab31c3b80950627"
+            },
+            "39": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0xc7ea135dca389918789454861bb593095dc44f8ad39035665daa81fa02cf6fbd3a18227b6224dced70288b9fd3161cc0"
+            },
+            "40": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x5d7a8a08deeeeef3df07828dafeb112bd2372504d324eff2f4eb43893315fe331428c9afbc52fcc06159d406f0ca90af"
+            },
+            "41": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x9d2c6389c070dde430ffd510cad0c546fb9a73b9ee7a478fa804d2ab14c674487abdc7aa12d90215ced4f3678f2765fa"
+            },
+            "42": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "43": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "44": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "45": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "46": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "47": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "48": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "49": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "50": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "51": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "52": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "53": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "54": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "55": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "56": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "57": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "58": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "59": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "60": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "61": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "62": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "63": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "64": {
+                "DMTFSpecMeasurementValueType": 1,
+                "DMTFSpecMeasurementValueSize": 48,
+                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            }
+        }
+    },
+    "OpaqueData": {
+        "OpaqueDataField": {
+            "OPAQUE_FIELD_ID_BOARD_ID": "0xb1030000",
+            "OPAQUE_FIELD_ID_CHIP_SKU": "0x383832000000000000",
+            "OPAQUE_FIELD_ID_CHIP_SKU_MOD": "0x3000000000",
+            "OPAQUE_FIELD_ID_CPRINFO": "0x00c00100",
+            "OPAQUE_FIELD_ID_DRIVER_VERSION": "0x3535302e39302e303700",
+            "OPAQUE_FIELD_ID_FWID": "0xf5c384aebb579217a2c66b17ed0f28e6a9b8d639041acd7b4721cec004f7275494ba94bb5cdfdb3055ee051762b1f75d",
+            "OPAQUE_FIELD_ID_GPU_INFO": "0x8001000000000000",
+            "OPAQUE_FIELD_ID_MSRSCNT": [
+                0,
+                1,
+                4,
+                1,
+                1,
+                1,
+                1,
+                1,
+                0,
+                1,
+                0,
+                130,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                2,
+                2,
+                0,
+                0,
+                1,
+                1,
+                1,
+                0,
+                1,
+                1,
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            ],
+            "OPAQUE_FIELD_ID_NVDEC0_STATUS": "0x55",
+            "OPAQUE_FIELD_ID_PROJECT": "0x3130313000",
+            "OPAQUE_FIELD_ID_PROJECT_SKU": "0x3032303000",
+            "OPAQUE_FIELD_ID_PROJECT_SKU_MOD": "0x0000",
+            "OPAQUE_FIELD_ID_PROTECTED_PCIE_STATUS": "0x55",
+            "OPAQUE_FIELD_ID_VBIOS_VERSION": "0x009f009601000000"
+        }
+    }
+}

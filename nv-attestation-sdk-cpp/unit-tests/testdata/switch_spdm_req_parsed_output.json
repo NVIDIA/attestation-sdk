@@ -1,0 +1,8 @@
+{
+    "SPDMVersion": "0x11",
+    "RequestResponseCode": "0xe0",
+    "Param1": "0x01",
+    "Param2": "0xff",
+    "Nonce": "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb",
+    "SlotIDParam": "0x00"
+}

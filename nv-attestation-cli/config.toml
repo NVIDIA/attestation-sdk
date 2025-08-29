@@ -1,0 +1,13 @@
+# Each section corresponds to a subcommand.  The [default] section 
+# holds global options and constants that apply to all subcommands,
+# or are used as application-wide configuration values.
+
+## Display version information
+[version]
+
+[attest]
+device = "gpu"
+verifier = "local"
+gpu-evidence = ""
+switch-evidence = ""
+relying-party-policy = ""

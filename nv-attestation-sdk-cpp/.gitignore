@@ -1,0 +1,11 @@
+.vscode
+*.code-workspace
+build/
+.cache/
+.cmake/
+CMakeFiles/
+CMakeUserPresets.json
+CMakePresets.json
+CMakeCache.txt
+docs/
+out/
