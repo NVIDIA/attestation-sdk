@@ -96,6 +96,7 @@ TEST_F(CliTest, GPULocalCommand) { //integration + unit
     std::string cmd = nvattest_bin + " attest --device gpu --verifier local";
     if (g_cli_env->test_mode == "unit") {
         cmd += " --gpu-evidence " + gpu_evidence_path;
+        cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
     } else {
         cmd += " --rim-url https://rim.attestation-stg.nvidia.com";
         cmd += " --ocsp-url https://ocsp.ndis-stg.nvidia.com";
@@ -125,6 +126,7 @@ TEST_F(CliTest, GPURemoteCommand) { //integration + unit
     std::string cmd = nvattest_bin + " attest --device gpu --verifier remote";
     if (g_cli_env->test_mode == "unit") {
         cmd += " --gpu-evidence " + gpu_evidence_path;
+        cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
     } else {
         cmd += " --rim-url https://rim.attestation-stg.nvidia.com";
         cmd += " --ocsp-url https://ocsp.ndis-stg.nvidia.com";
@@ -155,6 +157,7 @@ TEST_F(CliTest, SwitchLocalCommand) { //integration + unit
     std::string cmd = nvattest_bin + " attest --device nvswitch --verifier local";
     if (g_cli_env->test_mode == "unit") {
         cmd += " --switch-evidence " + switch_evidence_path;
+        cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
     }
     cmd += " --rim-url https://rim.attestation-stg.nvidia.com";
     cmd += " --ocsp-url https://ocsp.ndis-stg.nvidia.com";
@@ -183,6 +186,7 @@ TEST_F(CliTest, SwitchRemoteCommand) { //integration + unit
     std::string cmd = nvattest_bin + " attest --device nvswitch --verifier remote";
     if (g_cli_env->test_mode == "unit") {
         cmd += " --switch-evidence " + switch_evidence_path;
+        cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
     }
     cmd += " --rim-url https://rim.attestation-stg.nvidia.com";
     cmd += " --ocsp-url https://ocsp.ndis-stg.nvidia.com";
@@ -210,7 +214,8 @@ TEST_F(CliTest, GPULocalWithPolicy) {
     std::string rim_url = ""; 
     std::string ocsp_url = "";
     std::string nras_url = "";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -223,7 +228,8 @@ TEST_F(CliTest, GPULocalNoPolicy) {
     std::string rim_url = "";
     std::string ocsp_url = ""; 
     std::string nras_url = "";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -231,12 +237,13 @@ TEST_F(CliTest, GPURemoteWithPolicy) {
     std::vector<std::string> devices = {"gpu"};
     std::string verifier = "remote";
     std::string gpu_evidence_file = "../../../common-test-data/serialized_test_evidence/hopper_evidence.json";
-    std::string switch_evidence_file = "";
+    std::string switch_evidence_file = "../../../common-test-data/serialized_test_evidence/switch_evidence_ls10.json";
     std::string relying_party_policy_file = "../../../common-test-data/relying_party_policy.rego";
     std::string rim_url = "";
     std::string ocsp_url = ""; 
     std::string nras_url = "";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -249,7 +256,8 @@ TEST_F(CliTest, GPURemoteNoPolicy) {
     std::string rim_url = ""; 
     std::string ocsp_url = "";
     std::string nras_url = "";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -262,7 +270,8 @@ TEST_F(CliTest, SwitchLocalWithPolicy) {
     std::string rim_url = "https://rim.attestation-stg.nvidia.com";
     std::string ocsp_url = "https://ocsp.ndis-stg.nvidia.com";
     std::string nras_url = "https://nras.attestation-stg.nvidia.com";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -275,7 +284,8 @@ TEST_F(CliTest, SwitchLocalNoPolicy) {
     std::string rim_url = "https://rim.attestation-stg.nvidia.com";
     std::string ocsp_url = "https://ocsp.ndis-stg.nvidia.com";
     std::string nras_url = "https://nras.attestation-stg.nvidia.com";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce,devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -288,7 +298,8 @@ TEST_F(CliTest, SwitchRemoteWithPolicy) {
     std::string rim_url = "https://rim.attestation-stg.nvidia.com";
     std::string ocsp_url = "https://ocsp.ndis-stg.nvidia.com";
     std::string nras_url = "https://nras.attestation-stg.nvidia.com";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }
 
@@ -301,6 +312,7 @@ TEST_F(CliTest, SwitchRemoteNoPolicy) {
     std::string rim_url = "https://rim.attestation-stg.nvidia.com";
     std::string ocsp_url = "https://ocsp.ndis-stg.nvidia.com";
     std::string nras_url = "https://nras.attestation-stg.nvidia.com";
-    int result = nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
+    std::string nonce = "0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
+    int result = nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence_file, switch_evidence_file, relying_party_policy_file, rim_url, ocsp_url, nras_url);
     ASSERT_EQ(result, NVAT_RC_OK);
 }

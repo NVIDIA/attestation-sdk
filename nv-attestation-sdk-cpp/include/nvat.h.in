@@ -93,8 +93,10 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_LIBXML2_ERROR                  (10)
 /// @brief Indicates that a relying party policy rejected some or all of the supplied attestation results.
 #define NVAT_RC_RP_POLICY_MISMATCH             (11)
+/// @brief Indicates the overall attestation result was false.
+#define NVAT_RC_OVERALL_RESULT_FALSE           (12)
 /// @brief Indicates an error with JSON serialization/deserialization.
-#define NVAT_RC_JSON_SERIALIZATION_ERROR       (12)
+#define NVAT_RC_JSON_SERIALIZATION_ERROR       (13)
 /// @brief Indicates the client is not authorized to call the NVIDIA RIM service.
 #define NVAT_RC_RIM_FORBIDDEN                  (101)
 /// @brief Indicates an HTTP internal error occurred when calling the NVIDIA RIM service.
@@ -204,6 +206,9 @@ nvat_rc_t nvat_str_length(const nvat_str_t str, size_t* out_length);
 
 /**
  * @brief Get the data of the given string.
+ * 
+ * The returned pointer refers to a buffer that may contain binary data and NUL (\0) bytes.
+ * Do not assume it is a null-terminated C-string. Use @ref nvat_str_length for the size.
  * 
  * **Ownership**: The ownership of the data is not transferred to the caller.
  * The caller should not free the data.
@@ -533,7 +538,18 @@ size_t nvat_nonce_get_length(const nvat_nonce_t nonce);
  * @param out_str *out_str will point to a heap allocated `nvat_str_t`. See @ref nvat_str_t.
  * 
  */
-nvat_rc_t nvat_nonce_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str);
+nvat_rc_t nvat_nonce_to_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str);
+
+/**
+ * @brief Create a nonce from a hex-encoded string.
+ *
+ * Accepts optional "0x" or "0X" prefix. The hex string must contain an even
+ * number of hex digits and decode to at least 32 bytes.
+ *
+ * @param out_nonce On success, set to a newly allocated nonce. Caller owns it; free with nvat_nonce_free().
+ * @param hex_string The hex-encoded string representation of the nonce.
+ */
+nvat_rc_t nvat_nonce_from_hex(nvat_nonce_t* out_nonce, const char* hex_string);
 
 void nvat_nonce_free(nvat_nonce_t* nonce);
 
@@ -553,10 +569,6 @@ typedef struct nvat_gpu_evidence_st* nvat_gpu_evidence_t;
  * @brief Interface for collecting or reading switch evidence.
  */
 typedef struct nvat_gpu_evidence_source_st* nvat_gpu_evidence_source_t;
-/**
- * @brief Collection of GPU evidence.
- */
-typedef struct nvat_gpu_evidence_collection_st* nvat_gpu_evidence_collection_t;
 
 /**
  * @defgroup gpu_evidence_source GPU Evidence Source
@@ -631,26 +643,18 @@ void      nvat_gpu_evidence_source_free(nvat_gpu_evidence_source_t* gpu_evidence
 /** @} gpu_evidence_source */
 
 /**
- * @defgroup gpu_evidence_collection GPU Evidence Collection
- * @ingroup gpu_evidence
- * 
- * Functions for collecting GPU evidence.
- * @{
- */
-size_t    nvat_gpu_evidence_collection_get_length(const nvat_gpu_evidence_collection_t collection);
-nvat_gpu_evidence_t nvat_gpu_evidence_collection_get_evidence(const nvat_gpu_evidence_collection_t collection, size_t index);
-void      nvat_gpu_evidence_collection_free(nvat_gpu_evidence_collection_t* gpu_evidence_collection);
-
-/**
  * @brief Collect GPU evidence from the given source.
  *
- * If the the supplied nonce is `NULL`, a nonce appropriate for the GPU will be generated.
+ * The `nonce` must not be `NULL`. .
  */
 nvat_rc_t nvat_gpu_evidence_collect(
     const nvat_gpu_evidence_source_t source,
     const nvat_nonce_t nonce,
-    nvat_gpu_evidence_collection_t* out_collection
+    nvat_gpu_evidence_t** out_gpu_evidence_array,
+    size_t* out_num_evidences
 );
+
+void nvat_gpu_evidence_array_free(nvat_gpu_evidence_t** gpu_evidence_array, size_t num_evidences);
 
 /** @} gpu_evidence_collection */
 
@@ -671,7 +675,8 @@ nvat_rc_t nvat_gpu_evidence_collect(
  * See @ref nvat_string
  */
 nvat_rc_t nvat_gpu_evidence_serialize_json(
-    const nvat_gpu_evidence_collection_t collection, 
+    const nvat_gpu_evidence_t* gpu_evidence_array,
+    size_t num_evidences,
     nvat_str_t* out_serialized_evidence
 );
 
@@ -695,10 +700,6 @@ typedef struct nvat_switch_evidence_st* nvat_switch_evidence_t;
  * @brief Interface for collecting or reading switch evidence.
  */
 typedef struct nvat_switch_evidence_source_st* nvat_switch_evidence_source_t;
-/**
- * @brief Collection of NVSwitch evidence.
- */
-typedef struct nvat_switch_evidence_collection_st* nvat_switch_evidence_collection_t;
 
 /**
  * @defgroup switch_evidence_source Switch Evidence Source
@@ -763,22 +764,11 @@ void      nvat_switch_evidence_source_free(nvat_switch_evidence_source_t* switch
 /** @} switch_evidence_source */
 
 /**
- * @defgroup switch_evidence_collection Switch Evidence Collection
- * @ingroup switch_evidence
- * 
- * Functions for collecting switch evidence.
- * @{
- */
-size_t    nvat_switch_evidence_collection_get_length(const nvat_switch_evidence_collection_t collection);
-nvat_switch_evidence_t nvat_switch_evidence_collection_get_evidence(const nvat_switch_evidence_collection_t collection, size_t index);
-void      nvat_switch_evidence_collection_free(nvat_switch_evidence_collection_t* switch_evidence_collection);
-
-/**
  * @brief Collect switch evidence from the given source.
  *
- * If the the supplied nonce is `NULL`, a nonce appropriate for the switch will be generated.
+ * The `nonce` must not be `NULL`. 
  */
-nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t source, const nvat_nonce_t nonce, nvat_switch_evidence_collection_t* out_collection);
+nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t source, const nvat_nonce_t nonce, nvat_switch_evidence_t** out_switch_evidence_array, size_t* out_num_evidences);
 
 /** @} switch_evidence_collection */
 
@@ -797,10 +787,12 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
  * `buffer`.
  */
 nvat_rc_t nvat_switch_evidence_serialize_json(
-    const nvat_switch_evidence_collection_t collection, 
+    const nvat_switch_evidence_t* switch_evidence_array,
+    size_t num_evidences,
     nvat_str_t* out_serialized_evidence
 );
 
+void nvat_switch_evidence_array_free(nvat_switch_evidence_t** switch_evidence_array, size_t num_evidences);
 /** @} switch_evidence_serialize */
 
 /** @} switch_evidence */
@@ -811,6 +803,7 @@ nvat_rc_t nvat_switch_evidence_serialize_json(
  * @brief Claims describing the properties of submitted evidence.
  */
  typedef struct nvat_claims_st* nvat_claims_t;
+
 /**
  * @brief Claims describing the properties of submitted evidence.
  * 
@@ -820,6 +813,7 @@ nvat_rc_t nvat_switch_evidence_serialize_json(
  */
 typedef struct nvat_claims_collection_st* nvat_claims_collection_t;
 
+nvat_rc_t nvat_claims_collection_extend(nvat_claims_collection_t nvat_claims_collection, const nvat_claims_collection_t other_claims_collection);
 void nvat_claims_collection_free(nvat_claims_collection_t* claims_collection);
 
 /**
@@ -827,6 +821,16 @@ void nvat_claims_collection_free(nvat_claims_collection_t* claims_collection);
  */
 nvat_rc_t nvat_claims_collection_serialize_json(const nvat_claims_collection_t claims, nvat_str_t* out_serialized_claims);
 
+
+/**
+ * @param claims - The claims collection to get the detached EAT from.
+ * @param private_key_pem - The private key to use to sign the detached EAT. If NULL, the EAT will not be signed. 
+ * Must be genrated using ES384 algorithm.
+ * @param issuer - The issuer to use for the detached EAT. If NULL, will be set to "NVAT-LOCAL-VERIFIER".
+ * @param kid - The kid to use for the detached EAT. If NULL, the kid header claim will not be set.
+ * @param out_detached_eat - out parameter, will point to detached EAT, which is a NULL terminated JSON string
+ */
+nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, const char* private_key_pem, const char* issuer, const char* kid, nvat_str_t* out_detached_eat);
 
 /**
  * @defgroup evidence_policy Evidence Policy
@@ -945,7 +949,8 @@ nvat_rc_t nvat_gpu_local_verifier_create(
  */
 nvat_rc_t nvat_verify_gpu_evidence(
     const nvat_gpu_verifier_t verifier,
-    const nvat_gpu_evidence_collection_t evidence,
+    const nvat_gpu_evidence_t* gpu_evidence_array,
+    size_t num_evidences,
     const nvat_evidence_policy_t policy,
     nvat_claims_collection_t* out_claims
 );
@@ -1008,7 +1013,8 @@ nvat_rc_t nvat_switch_local_verifier_create(
  */
 nvat_rc_t nvat_verify_switch_evidence(
     const nvat_switch_verifier_t verifier,
-    const nvat_switch_evidence_collection_t evidence,
+    const nvat_switch_evidence_t* switch_evidence_array,
+    size_t num_evidences,
     const nvat_evidence_policy_t policy,
     nvat_claims_collection_t* out_claims
 );
@@ -1034,15 +1040,6 @@ void nvat_switch_verifier_free(nvat_switch_verifier_t* switch_verifier);
  * an @ref atttest call.
  */
 typedef struct nvat_relying_party_policy_st* nvat_relying_party_policy_t;
-
-/**
- * @brief Create a default relying party policy.
- * Also see @ref nvat_relying_party_policy_create_rego_from_str() for creating a relying party policy from a custom rego policy.
- * \verbatim embed:rst:leading-asterisk
- * See for more info about the default policy: :ref:`Configuring attestation <configuring-relying-part-policy>`.
- * \endverbatim
- */
-nvat_rc_t nvat_relying_party_policy_create_default(nvat_relying_party_policy_t* rp_policy);
 
 /**
  * @brief Create a Rego relying party (RP) policy backed by [regorus](https://github.com/microsoft/regorus).
@@ -1202,11 +1199,22 @@ void nvat_attestation_ctx_free(nvat_attestation_ctx_t* attestation_ctx);
  * If using remote OCSP, the URL can be set using `NVAT_OCSP_BASE_URL`
  * If using remote verifier, the URL can be set using `NVAT_NRAS_BASE_URL`
  * 
+ * @param ctx - The attestation context to use.
+ * @param nonce - The nonce to use for the attestation. If NULL, a nonce will be generated.
+ * @param out_detached_eat - Pointer to store the detached EAT, which 
+ * is a NULL terminated JSON string. If NULL, the detached EAT will be discarded.
+ * @param out_claims - Pointer to store the claims collection, which is a 
+ * NULL terminated JSON string. If NULL, the claims collection will be discarded.
+ * 
  * @return 
  *   - @ref NVAT_RC_OK if the system is trustyworthy according to
- *          the RP policy.
+ *          the RP policy (if RP policy is not set, this indicates that the `x-nvidia-overall-result` claim
+ *          in the detached EAT is true)
+ *   - @ref NVAT_RC_OVERALL_RESULT_FALSE if the `x-nvidia-overall-result` claim is false in the detached EAT
+ *          (only if RP policy is not set)
  *   - @ref NVAT_RC_RP_POLICY_MISMATCH if the RP policy rejected the
- *          attestation results.
+ *          attestation results. (only if RP policy is set)
+ *   - @ref NVAT_RC_INTERNAL_ERROR if an internal error occurs.
  *   - Other internal errors depending on the implementations supplied
  *     to the @ref nvat_attestation_ctx_t.
  * 
@@ -1218,6 +1226,7 @@ void nvat_attestation_ctx_free(nvat_attestation_ctx_t* attestation_ctx);
 nvat_rc_t nvat_attest_system(
     const nvat_attestation_ctx_t ctx,
     const nvat_nonce_t nonce,
+    nvat_str_t* out_detached_eat,
     nvat_claims_collection_t* out_claims
 );
 

@@ -55,6 +55,7 @@ int main(void) {
 
 nvat_rc_t attest(nvat_attestation_ctx_t* ctx) {
   nvat_rc_t err;
+  char * buf = NULL;
 
   nvat_sdk_opts_t opts;
   err = nvat_sdk_opts_create(&opts);
@@ -71,12 +72,17 @@ nvat_rc_t attest(nvat_attestation_ctx_t* ctx) {
 
   err = nvat_attestation_ctx_create(ctx, NVAT_DEVICE_GPU);
   if (err != NVAT_RC_OK) {
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
     return err;
   }
 
   nvat_relying_party_policy_t rp_policy;
   err = nvat_relying_party_policy_create_rego_from_str(&rp_policy, REGO_RP_POLICY);
   if (err != NVAT_RC_OK) {
+    nvat_attestation_ctx_free(ctx);
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
     return err;
   }
 
@@ -85,23 +91,53 @@ nvat_rc_t attest(nvat_attestation_ctx_t* ctx) {
   nvat_attestation_ctx_set_verifier_type(*ctx, NVAT_VERIFY_LOCAL);
 
   nvat_claims_collection_t claims;
-  err = nvat_attest_system(*ctx, NULL, &claims);
+  nvat_str_t detached_eat;
+  err = nvat_attest_system(*ctx, NULL, &detached_eat, &claims);
   if (err != NVAT_RC_OK) {
+    nvat_attestation_ctx_free(ctx);
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
     return err;
   }
 
-  nvat_str_t json_str;
-  err = nvat_claims_collection_serialize_json(claims, &json_str);
-  nvat_claims_collection_free(&claims);
+  char * detached_buf = NULL;
+  err = nvat_str_get_data(detached_eat, &detached_buf);
   if (err != NVAT_RC_OK) {
+    nvat_attestation_ctx_free(ctx);
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
+    nvat_claims_collection_free(&claims);
+    nvat_str_free(&detached_eat);
     return err;
   }
-  char * buf = NULL;
+  fprintf(stdout, "%s\n", detached_buf);
+  nvat_str_free(&detached_eat);
+
+  nvat_str_t json_str;
+  err = nvat_claims_collection_serialize_json(claims, &json_str);
+  if (err != NVAT_RC_OK) {
+    nvat_attestation_ctx_free(ctx);
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
+    nvat_claims_collection_free(&claims);
+    return err;
+  }
   err = nvat_str_get_data(json_str, &buf);
   if (err != NVAT_RC_OK) {
+    nvat_attestation_ctx_free(ctx);
+    nvat_sdk_opts_free(&opts);
+    nvat_sdk_shutdown();
+    nvat_claims_collection_free(&claims);
+    nvat_str_free(&json_str);
     return err;
   }
   fprintf(stdout, "%s\n", buf);
+
+  nvat_str_free(&json_str);
+  nvat_attestation_ctx_free(ctx);
+  nvat_sdk_opts_free(&opts);
+  nvat_sdk_shutdown();
+  nvat_claims_collection_free(&claims);
 
   return NVAT_RC_OK;
 }

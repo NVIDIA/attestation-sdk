@@ -49,11 +49,6 @@ class IClaimsEvaluator {
  */
 class ClaimsEvaluatorFactory {
     public:
-        /**
-         * @brief Creates a default claims evaluator.
-         * 
-        */
-        static std::shared_ptr<IClaimsEvaluator> create_default_claims_evaluator();
 
         /**
          * @brief Creates a claims evaluator that uses a Rego policy.

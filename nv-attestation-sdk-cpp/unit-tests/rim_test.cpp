@@ -100,6 +100,14 @@ TEST_F(RimDocumentFixture, GetVersion) {
     EXPECT_EQ(version, "550.144.03");
 }
 
+// manufacturer id valid test
+TEST_F(RimDocumentFixture, GetManufacturerId) {
+    std::string manufacturer_id;
+    Error error = m_rim_document.get_manufacturer_id(manufacturer_id);
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_EQ(manufacturer_id, "5703");
+}
+
 // cert chain valid test
 TEST_F(RimDocumentFixture, VerifyCertificateChain) {
     X509CertChain cert_chain;

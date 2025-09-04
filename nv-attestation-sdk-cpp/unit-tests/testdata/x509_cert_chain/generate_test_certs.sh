@@ -125,9 +125,20 @@ rm "${LEAF_NO_FWID_CSR}" "${LEAF_NO_FWID_CSR_CNF}" "${LEAF_NO_FWID_SIGN_CNF}"
 rm "${LEAF_WITH_FWID_CSR}" "${LEAF_WITH_FWID_CSR_CNF}" "${LEAF_WITH_FWID_SIGN_CNF}"
 rm "${ROOT_CA_CNF}" # remove root CA config
 
+EC_PRIV="${CERT_DIR}/ec_p384_private.pem"
+EC_PUB="${CERT_DIR}/ec_p384_public.pem"
+
+if [ ! -f "${EC_PRIV}" ] || [ ! -f "${EC_PUB}" ]; then
+  echo "Generating ES384 (secp384r1) keypair for tests..."
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${EC_PRIV}"
+  openssl pkey -in "${EC_PRIV}" -pubout -out "${EC_PUB}"
+fi
+
 echo "Certificates generated in ${CERT_DIR}"
 echo "Root CA: ${ROOT_CERT}"
 echo "Leaf without FWID: ${LEAF_CERT_WITHOUT_FWID}"
 echo "Leaf with FWID: ${LEAF_CERT_WITH_FWID}"
 echo "Leaf Key (not directly used by test after generation): ${LEAF_KEY}"
-echo "Root Key (not directly used by test after generation): ${ROOT_KEY}" 
+echo "Root Key (not directly used by test after generation): ${ROOT_KEY}"
+echo "ES384 Private Key: ${EC_PRIV}"
+echo "ES384 Public Key: ${EC_PUB}"

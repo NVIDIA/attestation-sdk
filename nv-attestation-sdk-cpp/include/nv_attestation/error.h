@@ -36,6 +36,7 @@ namespace nvattestation {
     MACRO(FeatureNotEnabled, NVAT_RC_FEATURE_NOT_ENABLED) \
     MACRO(XmlInitFailed, NVAT_RC_XML_INIT_FAILED) \
     MACRO(RelyingPartyPolicyMismatch, NVAT_RC_RP_POLICY_MISMATCH) \
+    MACRO(OverallResultFalse, NVAT_RC_OVERALL_RESULT_FALSE) \
     MACRO(RimForbidden, NVAT_RC_RIM_FORBIDDEN) \
     MACRO(RimInternalError, NVAT_RC_RIM_INTERNAL_ERROR) \
     MACRO(RimConnectionError, NVAT_RC_RIM_CONNECTION_ERROR) \
@@ -106,6 +107,7 @@ inline const char* to_string(Error error) {
         case Error::FeatureNotEnabled: return "Feature is not enabled";
         case Error::XmlInitFailed: return "XML Initialization Failed";
         case Error::RelyingPartyPolicyMismatch: return "Relying Party Policy Mismatch";
+        case Error::OverallResultFalse: return "Overall Attestation Result is False";
 
         // RIM errors
         case Error::RimForbidden: return "RIM Forbidden";

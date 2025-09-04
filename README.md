@@ -48,5 +48,5 @@ This repository is licensed under Apache License v2.0 except where otherwise not
 
 ## Support
 
-For issues or questions, please [raise an issue on GitHub](issues). 
+For issues or questions, please [raise an issue on GitHub](https://github.com/NVIDIA/attestation-sdk/issues). 
 For additional support, contact us at [attestation-support@nvidia.com](mailto:attestation-support@nvidia.com).

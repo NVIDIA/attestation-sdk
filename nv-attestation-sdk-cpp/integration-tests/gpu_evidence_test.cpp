@@ -85,17 +85,17 @@ TEST(NvmlIntegration, NvmlEvidenceCollectorGetEvidence) {
     ASSERT_EQ(init_nvml(), Error::Ok);
     NvmlEvidenceCollector collector;
     std::vector<uint8_t> nonce(32, 0);
-    std::vector<GpuEvidence> evidence;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence;
     Error error = collector.get_evidence(nonce, evidence);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(evidence.empty());
     for (const auto& ev : evidence) {
-        ASSERT_FALSE(to_string(ev.get_gpu_architecture()).empty());
-        ASSERT_GT(ev.get_board_id(), 0u);
-        ASSERT_FALSE(ev.get_uuid().empty());
-        ASSERT_FALSE(ev.get_vbios_version().empty());
-        ASSERT_FALSE(ev.get_driver_version().empty());
-        ASSERT_FALSE(ev.get_attestation_report().empty());
+        ASSERT_FALSE(to_string(ev->get_gpu_architecture()).empty());
+        ASSERT_GT(ev->get_board_id(), 0u);
+        ASSERT_FALSE(ev->get_uuid().empty());
+        ASSERT_FALSE(ev->get_vbios_version().empty());
+        ASSERT_FALSE(ev->get_driver_version().empty());
+        ASSERT_FALSE(ev->get_attestation_report().empty());
     }
     shutdown_nvml();
 }

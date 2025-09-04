@@ -62,7 +62,6 @@ TEST_F(AttestationTest, MockSuccessGpuAttestation) {
     auto ocsp_client = std::make_shared<NvHttpOcspClient>();
     Error error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.ndis.nvidia.com", HttpOptions());
     ASSERT_EQ(error, Error::Ok);
-    auto evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
     auto local_gpu_verifier = std::make_shared<LocalGpuVerifier>();
     err = LocalGpuVerifier::create(*local_gpu_verifier, rim_store, ocsp_client);
     ASSERT_EQ(err, Error::Ok);
@@ -70,10 +69,10 @@ TEST_F(AttestationTest, MockSuccessGpuAttestation) {
     AttestationContext ctx {true, false};
     ctx.set_gpu_evidence_source(mock_evidence_source);
     ctx.set_gpu_verifier(local_gpu_verifier);
-    ctx.set_claims_evaluator(evaluator);
 
     ClaimsCollection claims {};
-    err = ctx.attest_system({}, claims);
+    std::string detached_eat;
+    err = ctx.attest_system({}, detached_eat, claims);
     ASSERT_EQ(err, Error::Ok) << "attestation process did not fail";
     ASSERT_FALSE(claims.empty()) << "attestation should have produced claims";
 }
@@ -88,7 +87,8 @@ TEST_F(AttestationTest, MockSuccessGpuAttestationDefaultContext) {
     ctx.set_gpu_evidence_source(mock_evidence_source);
 
     ClaimsCollection claims {};
-    err = ctx.attest_system({}, claims);
+    std::string detached_eat;
+    err = ctx.attest_system({}, detached_eat, claims);
     ASSERT_EQ(err, Error::Ok) << "attestation process did not fail";
 }
 
@@ -100,16 +100,15 @@ TEST_F(AttestationTest, MockFailedEvidenceCollectionGpuAttestation) {
     EXPECT_CALL(*mock_evidence_source, get_evidence(_, _))
         .WillRepeatedly(Return(Error::Unknown));
 
-    auto evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
     auto local_gpu_verifier = std::make_shared<LocalGpuVerifier>();
 
     AttestationContext ctx {true, false};
     ctx.set_gpu_evidence_source(mock_evidence_source);
     ctx.set_gpu_verifier(local_gpu_verifier);
-    ctx.set_claims_evaluator(evaluator);
 
     ClaimsCollection claims {};
-    err = ctx.attest_system({}, claims);
+    std::string detached_eat;
+    err = ctx.attest_system({}, detached_eat, claims);
     ASSERT_EQ(err, Error::Unknown) << "attest_gpu should have failed";
 }
 
@@ -120,7 +119,6 @@ TEST_F(AttestationTest, MockSuccessSwitchAttestation) {
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_default();
     mock_evidence_source->setup_success_behavior(mock_data);
 
-    auto evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
 
     auto mock_rim_store = std::make_shared<MockNvRemoteRimStore>();
     // the sample evidence for switch we are using here is from stg env and is an internal RIM
@@ -150,10 +148,10 @@ TEST_F(AttestationTest, MockSuccessSwitchAttestation) {
     AttestationContext ctx {false, true};
     ctx.set_switch_evidence_source(mock_evidence_source);
     ctx.set_switch_verifier(local_switch_verifier);
-    ctx.set_claims_evaluator(evaluator);
 
     ClaimsCollection claims {};
-    err = ctx.attest_system({}, claims);
+    std::string detached_eat;
+    err = ctx.attest_system({}, detached_eat, claims);
     ASSERT_EQ(err, Error::Ok);
     ASSERT_FALSE(claims.empty()) << "attestation should have produced claims";
 }
@@ -174,7 +172,9 @@ TEST(AttestationTestCApi, GpuHighLevelApiLocalVerify) { // integration + unit
     }
 
     nvat_claims_collection_t claims = nullptr;
-    nvat_rc_t err = nvat_attest_system(ctx, nullptr, &claims);
+    nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+    nvat_rc_t err = nvat_attest_system(ctx, nonce, NULL, &claims);
 
     if (err != NVAT_RC_OK) {
         if (claims) {
@@ -188,6 +188,7 @@ TEST(AttestationTestCApi, GpuHighLevelApiLocalVerify) { // integration + unit
     ASSERT_NE(claims, nullptr);
 
     nvat_claims_collection_free(&claims);
+    nvat_nonce_free(&nonce);
     nvat_attestation_ctx_free(&ctx);
 }
 
@@ -207,7 +208,9 @@ TEST(AttestationTestCApi, GpuHighLevelApiRemoteVerify) { // integration + unit
     }
 
     nvat_claims_collection_t claims = nullptr;
-    nvat_rc_t err = nvat_attest_system(ctx, nullptr, &claims);
+    nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+    nvat_rc_t err = nvat_attest_system(ctx, nonce, NULL, &claims);
     
     if (err != NVAT_RC_OK) {
         if (claims) {
@@ -221,6 +224,7 @@ TEST(AttestationTestCApi, GpuHighLevelApiRemoteVerify) { // integration + unit
     ASSERT_NE(claims, nullptr);
 
     nvat_claims_collection_free(&claims);
+    nvat_nonce_free(&nonce);
     nvat_attestation_ctx_free(&ctx);
 }
 
@@ -243,11 +247,14 @@ TEST(AttestationTestCApi, SwitchHighLevelApiLocalVerify) { // integration + unit
     }
 
     nvat_claims_collection_t claims = nullptr;
-    nvat_rc_t err = nvat_attest_system(ctx, nullptr, &claims);
+    nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+    nvat_rc_t err = nvat_attest_system(ctx, nonce, NULL, &claims);
     ASSERT_EQ(err, NVAT_RC_OK) << "Attestation failed with error: " << nvat_rc_to_string(err);
     ASSERT_NE(claims, nullptr);
 
     nvat_claims_collection_free(&claims);
+    nvat_nonce_free(&nonce);
     nvat_attestation_ctx_free(&ctx);
 } 
 
@@ -271,11 +278,14 @@ TEST(AttestationTestCApi, SwitchHighLevelApiRemoteVerify) { // integration + uni
     }
 
     nvat_claims_collection_t claims = nullptr;
-    nvat_rc_t err = nvat_attest_system(ctx, nullptr, &claims);
+    nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+    nvat_rc_t err = nvat_attest_system(ctx, nonce, NULL, &claims);
     ASSERT_EQ(err, NVAT_RC_OK) << "Attestation failed with error: " << nvat_rc_to_string(err);
     ASSERT_NE(claims, nullptr);
 
     nvat_claims_collection_free(&claims);
+    nvat_nonce_free(&nonce);
     nvat_attestation_ctx_free(&ctx);
 }
 
@@ -298,14 +308,16 @@ TEST(AttestationTestCApi, GpuLowLevelApi) { // integration + unit
     ASSERT_NE(evidence_source, nullptr);
 
     nvat_nonce_t nonce = nullptr;
-    ASSERT_EQ(nvat_nonce_create(&nonce, 32), NVAT_RC_OK);
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
     ASSERT_NE(nonce, nullptr);
 
-    nvat_gpu_evidence_collection_t evidence_collection = nullptr;
-    ASSERT_EQ(nvat_gpu_evidence_collect(evidence_source, nonce, &evidence_collection), NVAT_RC_OK);
-    nvat_gpu_evidence_source_free(&evidence_source);
+    nvat_gpu_evidence_t* evidences = nullptr;
+    size_t num_evidences = 0;
+    ASSERT_EQ(nvat_gpu_evidence_collect(evidence_source, nonce, &evidences, &num_evidences), NVAT_RC_OK);
     nvat_nonce_free(&nonce);
-    ASSERT_NE(evidence_collection, nullptr);
+    nvat_gpu_evidence_source_free(&evidence_source);
+    ASSERT_NE(evidences, nullptr);
+    ASSERT_NE(num_evidences, 0);
 
     nvat_rim_store_t rim_store = nullptr;
     ASSERT_EQ(nvat_rim_store_create_remote(&rim_store, "", nullptr), NVAT_RC_OK);
@@ -330,19 +342,16 @@ TEST(AttestationTestCApi, GpuLowLevelApi) { // integration + unit
     ASSERT_NE(evidence_policy, nullptr);
 
     nvat_claims_collection_t claims = nullptr;
-    ASSERT_EQ(nvat_verify_gpu_evidence(verifier_upcast, evidence_collection, evidence_policy, &claims), NVAT_RC_OK);
+    ASSERT_EQ(nvat_verify_gpu_evidence(verifier_upcast, evidences, num_evidences, evidence_policy, &claims), NVAT_RC_OK);
     nvat_gpu_verifier_free(&verifier_upcast);
     nvat_evidence_policy_free(&evidence_policy);
-    nvat_gpu_evidence_collection_free(&evidence_collection);
+    nvat_gpu_evidence_array_free(&evidences, num_evidences);
     ASSERT_NE(claims, nullptr);
 
-    nvat_relying_party_policy_t policy = nullptr;
-    ASSERT_EQ(nvat_relying_party_policy_create_default(&policy), NVAT_RC_OK);
-    ASSERT_NE(policy, nullptr);
-
-    nvat_rc_t err = nvat_apply_relying_party_policy(policy, claims);
-    ASSERT_EQ(err, NVAT_RC_OK);
-    nvat_relying_party_policy_free(&policy);
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_get_detached_eat_es384(claims, nullptr, nullptr, nullptr, &detached_eat), NVAT_RC_OK);
+    ASSERT_NE(detached_eat, nullptr);
+    nvat_str_free(&detached_eat);
     nvat_claims_collection_free(&claims);
 } 
 
@@ -373,14 +382,17 @@ TEST(AttestationTestCApi, SwitchLowLevelApi) {
     ASSERT_NE(evidence_source, nullptr);
 
     nvat_nonce_t nonce = nullptr;
-    ASSERT_EQ(nvat_nonce_create(&nonce, 32), NVAT_RC_OK);
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
     ASSERT_NE(nonce, nullptr);
 
-    nvat_switch_evidence_collection_t evidence_collection = nullptr;
-    ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nonce, &evidence_collection), NVAT_RC_OK);
+    nvat_switch_evidence_t* switch_evidence_array = nullptr;
+    size_t num_evidences = 0;
+    ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nonce, &switch_evidence_array, &num_evidences), NVAT_RC_OK);
+    nvat_nonce_free(&nonce);
     nvat_switch_evidence_source_free(&evidence_source);
     nvat_nonce_free(&nonce);
-    ASSERT_NE(evidence_collection, nullptr);
+    ASSERT_NE(switch_evidence_array, nullptr);
+    ASSERT_NE(num_evidences, 0);
 
 
     nvat_switch_local_verifier_t verifier = nullptr;
@@ -398,18 +410,16 @@ TEST(AttestationTestCApi, SwitchLowLevelApi) {
     ASSERT_NE(evidence_policy, nullptr);
 
     nvat_claims_collection_t claims = nullptr;
-    ASSERT_EQ(nvat_verify_switch_evidence(verifier_upcast, evidence_collection, evidence_policy, &claims), NVAT_RC_OK);
+    ASSERT_EQ(nvat_verify_switch_evidence(verifier_upcast, switch_evidence_array, num_evidences, evidence_policy, &claims), NVAT_RC_OK);
     nvat_switch_verifier_free(&verifier_upcast);
     nvat_evidence_policy_free(&evidence_policy);
-    nvat_switch_evidence_collection_free(&evidence_collection);
+    nvat_switch_evidence_array_free(&switch_evidence_array, num_evidences);
     ASSERT_NE(claims, nullptr);
 
-    nvat_relying_party_policy_t policy = nullptr;
-    ASSERT_EQ(nvat_relying_party_policy_create_default(&policy), NVAT_RC_OK);
-    ASSERT_NE(policy, nullptr);
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_get_detached_eat_es384(claims, nullptr, nullptr, nullptr, &detached_eat), NVAT_RC_OK);
+    ASSERT_NE(detached_eat, nullptr);
+    nvat_str_free(&detached_eat);
 
-    nvat_rc_t err = nvat_apply_relying_party_policy(policy, claims);
-    ASSERT_EQ(err, NVAT_RC_OK);
-    nvat_relying_party_policy_free(&policy);
     nvat_claims_collection_free(&claims);
 }

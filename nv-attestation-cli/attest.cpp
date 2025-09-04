@@ -28,27 +28,34 @@
 namespace nvattest {
 
     AttestOutput::AttestOutput(const int result_code)
-        : claims(""), result_code(result_code) {}
+        : result_code(result_code), claims(""), detached_eat("") {}
 
-    AttestOutput::AttestOutput(const std::string& claims, const int result_code)
-        : claims(claims), result_code(result_code) {}
+    AttestOutput::AttestOutput(const int result_code, const std::string& claims, const std::string& detached_eat)
+        : result_code(result_code), claims(claims), detached_eat(detached_eat) {}
     
     nlohmann::json AttestOutput::to_json() const {
         nlohmann::json claims_json;
         try {
-            claims_json = nlohmann::json::parse(claims); // Parse claims as JSON
-        } catch (...) {
-            claims_json = nullptr; // or handle error as desired
+            claims_json = nlohmann::json::parse(claims);
+        } catch (const nlohmann::json::parse_error& e) {
+            SPDLOG_ERROR("Failed to parse claims as JSON: {}", e.what());
+            claims_json = nlohmann::json::object();
         }
-        return nlohmann::json{
-            {"claims", claims_json},
-            {"result_code", result_code},
-            {"result_message", nvat_rc_to_string(result_code)}
-        };
+        catch (...) {
+            SPDLOG_ERROR("Failed to parse claims as JSON");
+            claims_json = nlohmann::json::object();
+        }
+        nlohmann::json attest_output = nlohmann::json::object();
+        attest_output["result_code"] = result_code;
+        attest_output["result_message"] = nvat_rc_to_string(result_code);
+        attest_output["claims"] = claims_json;
+        attest_output["detached_eat"] = detached_eat;
+        return attest_output;
     }
 
     CLI::App* create_attest_subcommand(
         CLI::App& app, 
+        std::string& nonce,
         std::vector<std::string>& devices, 
         std::string& verifier, 
         std::string& gpu_evidence, 
@@ -59,10 +66,13 @@ namespace nvattest {
         std::string& nras_url) {
 
         auto* subcommand = app.add_subcommand("attest", "Run attestation and print results as JSON");
+        subcommand->add_option("--nonce", nonce, "Nonce for the attestation (in hex format). If not provided, a nonce will be generated.")
+                    ->default_val("");
         subcommand->add_option("--device", devices, "Device type ('gpu' or 'switch')")
                   ->multi_option_policy(CLI::MultiOptionPolicy::TakeAll)
                   ->check(CLI::IsMember({"gpu", "nvswitch"}))
                   ->default_val("gpu");
+        
 
         subcommand->add_option("--verifier", verifier, "Verifier type ('local' or 'remote')")
                   ->check(CLI::IsMember({"local", "remote"}))
@@ -120,6 +130,7 @@ namespace nvattest {
 
 
     AttestOutput attest(
+        const std::string& nonce,
         const std::vector<std::string>& devices, 
         const std::string& verifier, 
         const std::string& gpu_evidence, 
@@ -244,29 +255,44 @@ namespace nvattest {
 
         nv_unique_ptr<nvat_claims_collection_t> claims;
         nvat_claims_collection_t raw_claims = nullptr;
-        err = nvat_attest_system(*(ctx.get()), NULL, &raw_claims);
+        nvat_str_t detached_eat = nullptr;
+        nvat_nonce_t nonce_ptr = nullptr; 
+        if (!nonce.empty()) {
+            err = nvat_nonce_from_hex(&nonce_ptr, nonce.c_str());
+            if (err != NVAT_RC_OK) {
+                return AttestOutput(err);
+            }
+        }
+        err = nvat_attest_system(*(ctx.get()), nonce_ptr, &detached_eat, &raw_claims);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
         claims.reset(&raw_claims);
 
-        nvat_str_t serialized_str;
-        err = nvat_claims_collection_serialize_json(*(claims.get()), &serialized_str);
+        nvat_str_t serialized_claims;
+        err = nvat_claims_collection_serialize_json(*(claims.get()), &serialized_claims);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
 
-        char * serialized_data = nullptr;
-        err = nvat_str_get_data(serialized_str, &serialized_data);
+        char * serialized_claims_data = nullptr;
+        err = nvat_str_get_data(serialized_claims, &serialized_claims_data);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
 
-        return AttestOutput(std::string(serialized_data), NVAT_RC_OK);
+        char * detached_eat_data = nullptr;
+        err = nvat_str_get_data(detached_eat, &detached_eat_data);
+        if (err != NVAT_RC_OK) {
+            return AttestOutput(err);
+        }
+
+        return AttestOutput(NVAT_RC_OK, std::string(serialized_claims_data), std::string(detached_eat_data));
     }
 
 
     int handle_attest_subcommand(
+        std::string& nonce,
         std::vector<std::string>& devices, 
         std::string& verifier, 
         std::string& gpu_evidence, 
@@ -276,11 +302,11 @@ namespace nvattest {
         std::string& ocsp_url,
         std::string& nras_url) {
 
-        AttestOutput attest_output = attest(devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
+        AttestOutput attest_output = attest(nonce, devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
         nvat_sdk_shutdown();
 
         auto json = attest_output.to_json();
-        SPDLOG_INFO(json.dump(4));
+        std::cout << json.dump(4) << std::endl;
         return attest_output.result_code;
     }
 }

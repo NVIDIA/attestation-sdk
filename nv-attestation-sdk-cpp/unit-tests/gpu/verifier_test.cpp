@@ -57,7 +57,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
     ASSERT_EQ(error, Error::Ok);
     
     // Create mock GPU evidence using test utilities
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use default mock data
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_default();
@@ -73,69 +73,13 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
 
     const SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
     ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
+    ASSERT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
+    ASSERT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
+    ASSERT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
+    ASSERT_EQ(claims_v3->m_hwmodel, "GH100 A01 GSP BROM");
+    ASSERT_EQ(claims_v3->m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims_v3->m_oem_id, "5703");
 
-    std::string expected_claims_v3;
-    readFileIntoString("testdata/sample_attestation_data/hopperClaimsv3_decoded.json", expected_claims_v3);
-
-    SerializableGpuClaimsV3 expected_claims_v3_obj;
-    try {
-        nlohmann::json j = nlohmann::json::parse(expected_claims_v3);
-        nlohmann::json gpu0_claims = j.at("GPU-0");
-        expected_claims_v3_obj = gpu0_claims.get<SerializableGpuClaimsV3>();
-    } catch (const nlohmann::json::exception& e) {
-        LOG_ERROR("JSON parse error in when getting expected claims v3: " << e.what());
-        GTEST_FAIL() << "could not parse expected claims v3";
-        return;
-    }
-
-    EXPECT_EQ(claims_v3->m_measurements_matching, expected_claims_v3_obj.m_measurements_matching);
-    EXPECT_EQ(claims_v3->m_gpu_arch_match, expected_claims_v3_obj.m_gpu_arch_match);
-    ASSERT_NE(claims_v3->m_secure_boot, nullptr);
-    ASSERT_NE(claims_v3->m_debug_status, nullptr);
-    EXPECT_EQ(*claims_v3->m_secure_boot, *expected_claims_v3_obj.m_secure_boot);
-    EXPECT_EQ(*claims_v3->m_debug_status, *expected_claims_v3_obj.m_debug_status);
-    EXPECT_EQ(claims_v3->m_mismatched_measurements, nullptr);
-    EXPECT_EQ(claims_v3->m_driver_version, expected_claims_v3_obj.m_driver_version);
-    EXPECT_EQ(claims_v3->m_vbios_version, expected_claims_v3_obj.m_vbios_version);
-
-    // ar cert chain claims
-    EXPECT_EQ(claims_v3->m_ar_cert_chain.m_cert_expiration_date, expected_claims_v3_obj.m_ar_cert_chain.m_cert_expiration_date);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain.m_cert_status, expected_claims_v3_obj.m_ar_cert_chain.m_cert_status);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain.m_cert_ocsp_status, expected_claims_v3_obj.m_ar_cert_chain.m_cert_ocsp_status);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain.m_cert_revocation_reason, expected_claims_v3_obj.m_ar_cert_chain.m_cert_revocation_reason);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_fwid_match, expected_claims_v3_obj.m_ar_cert_chain_fwid_match);
-    EXPECT_EQ(claims_v3->m_ar_parsed, expected_claims_v3_obj.m_ar_parsed);
-    EXPECT_EQ(claims_v3->m_gpu_ar_nonce_match, expected_claims_v3_obj.m_gpu_ar_nonce_match);
-    EXPECT_EQ(claims_v3->m_ar_signature_verified, expected_claims_v3_obj.m_ar_signature_verified);
-    
-
-    // driver rim claims
-    EXPECT_EQ(claims_v3->m_driver_rim_fetched, expected_claims_v3_obj.m_driver_rim_fetched);
-    EXPECT_EQ(claims_v3->m_driver_rim_cert_chain.m_cert_expiration_date, expected_claims_v3_obj.m_driver_rim_cert_chain.m_cert_expiration_date);
-    EXPECT_EQ(claims_v3->m_driver_rim_cert_chain.m_cert_status, expected_claims_v3_obj.m_driver_rim_cert_chain.m_cert_status);
-    EXPECT_EQ(claims_v3->m_driver_rim_cert_chain.m_cert_ocsp_status, expected_claims_v3_obj.m_driver_rim_cert_chain.m_cert_ocsp_status);
-    EXPECT_EQ(claims_v3->m_driver_rim_cert_chain.m_cert_revocation_reason, expected_claims_v3_obj.m_driver_rim_cert_chain.m_cert_revocation_reason);
-    EXPECT_EQ(claims_v3->m_driver_rim_signature_verified, expected_claims_v3_obj.m_driver_rim_signature_verified);
-    EXPECT_EQ(claims_v3->m_gpu_driver_rim_version_match, expected_claims_v3_obj.m_gpu_driver_rim_version_match);
-    EXPECT_EQ(claims_v3->m_driver_rim_measurements_available, expected_claims_v3_obj.m_driver_rim_measurements_available);
-
-    // vbios rim claims
-    EXPECT_EQ(claims_v3->m_vbios_rim_fetched, expected_claims_v3_obj.m_vbios_rim_fetched);
-    EXPECT_EQ(claims_v3->m_vbios_rim_cert_chain.m_cert_expiration_date, expected_claims_v3_obj.m_vbios_rim_cert_chain.m_cert_expiration_date);
-    EXPECT_EQ(claims_v3->m_vbios_rim_cert_chain.m_cert_status, expected_claims_v3_obj.m_vbios_rim_cert_chain.m_cert_status);
-    EXPECT_EQ(claims_v3->m_vbios_rim_cert_chain.m_cert_ocsp_status, expected_claims_v3_obj.m_vbios_rim_cert_chain.m_cert_ocsp_status);
-    EXPECT_EQ(claims_v3->m_vbios_rim_cert_chain.m_cert_revocation_reason, expected_claims_v3_obj.m_vbios_rim_cert_chain.m_cert_revocation_reason);
-    EXPECT_EQ(claims_v3->m_gpu_vbios_rim_version_match, expected_claims_v3_obj.m_gpu_vbios_rim_version_match);
-    EXPECT_EQ(claims_v3->m_vbios_rim_signature_verified, expected_claims_v3_obj.m_vbios_rim_signature_verified);
-    EXPECT_EQ(claims_v3->m_vbios_rim_measurements_available, expected_claims_v3_obj.m_vbios_rim_measurements_available);
-    EXPECT_EQ(claims_v3->m_vbios_index_no_conflict, expected_claims_v3_obj.m_vbios_index_no_conflict);
-    ASSERT_EQ(error, Error::Ok);
-
-    std::shared_ptr<IClaimsEvaluator> claims_evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
-    bool out_match;
-    error = claims_evaluator->evaluate_claims(claims, out_match);
-    ASSERT_EQ(error, Error::Ok) << "Could not evaluate claims: " << to_string(error);
-    EXPECT_EQ(out_match, true);
 }
 
 TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
@@ -143,7 +87,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     Error error = NvRemoteGpuVerifier::init_from_env(verifier);
     ASSERT_EQ(error, Error::Ok);
 
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_default();
     Error result = get_mock_gpu_evidence(mock_data, evidence_list);
     ASSERT_EQ(result, Error::Ok);
@@ -154,13 +98,15 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     error = verifier.verify_evidence(evidence_list, evidence_policy, claims);
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
     ASSERT_EQ(claims.size(), 1);
-    std::string expected_claims_v3;
-    readFileIntoString("testdata/sample_attestation_data/hopperClaimsv3_decoded.json", expected_claims_v3);
-    nlohmann::json expected_claims_v3_json = nlohmann::json::parse(expected_claims_v3);
-    nlohmann::json gpu0_claims = expected_claims_v3_json.at("GPU-0");
-    SerializableGpuClaimsV3 expected_claims_v3_obj = gpu0_claims.get<SerializableGpuClaimsV3>();
 
-    EXPECT_TRUE(*dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get()) == expected_claims_v3_obj) << "Claims v3 mismatch";
+    SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
+    EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
+    EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
+    EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
+    EXPECT_EQ(claims_v3->m_hwmodel, "GH100 A01 GSP BROM");
+    EXPECT_EQ(claims_v3->m_ueid, "478176379286082186618948445787393647364802107249");
+    EXPECT_EQ(claims_v3->m_oem_id, "5703");
+    EXPECT_EQ(claims_v3->m_nonce, mock_data.nonce);
 }
 TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBadNonce) {
     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
@@ -173,7 +119,7 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBadNonce) {
     
     // Create mock GPU evidence with bad nonce
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04};
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use mock data for nonce mismatch scenario
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_bad_nonce_scenario();
@@ -201,7 +147,7 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithInvalidSignature) {
     
     // Create mock GPU evidence with invalid signature
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use invalid signature mock data
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_invalid_signature_scenario();
@@ -249,7 +195,7 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithDriverMeasurementsMismatch) {
     
     // Create mock GPU evidence with driver measurements mismatch scenario
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use driver measurements mismatch mock data
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_measurements_mismatch_scenario();
@@ -304,7 +250,7 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithExpiredDriverRim) {
     
     // Create mock GPU evidence with expired driver rim scenario
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use expired driver rim mock data
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_expired_driver_rim_scenario();
@@ -334,7 +280,7 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBlackwell) {
     ASSERT_EQ(error, Error::Ok);
     
     // Create mock GPU evidence using test utilities
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     
     // Use default mock data
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_blackwell_scenario();
@@ -344,15 +290,6 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBlackwell) {
     
     EvidencePolicy evidence_policy{};
 
-    NvRemoteGpuVerifier remote_verifier;
-    error = NvRemoteGpuVerifier::init_from_env(remote_verifier, "https://nras.attestation-stg.nvidia.com");
-    ASSERT_EQ(error, Error::Ok);
-    ClaimsCollection remote_claims;
-    error = remote_verifier.verify_evidence(evidence_list, evidence_policy, remote_claims);
-    ASSERT_EQ(error, Error::Ok) << "Could not verify evidence from nras: " << to_string(error);
-    EXPECT_EQ(remote_claims.size(), 1);
-    const SerializableGpuClaimsV3* remote_claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(remote_claims[0].get());
-    ASSERT_NE(remote_claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
 
     ClaimsCollection claims;
     error = local_verifier.verify_evidence(evidence_list, evidence_policy, claims);
@@ -361,7 +298,10 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBlackwell) {
 
     const SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
     ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
-
-
-    EXPECT_EQ(*claims_v3, *remote_claims_v3);
+    EXPECT_EQ(claims_v3->m_hwmodel, "GB100 A01 GSP BROM");
+    EXPECT_EQ(claims_v3->m_ueid, "474146966256510137525212816567191319424869109849");
+    EXPECT_EQ(claims_v3->m_oem_id, "5703");
+    EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
+    EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
+    EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
 }

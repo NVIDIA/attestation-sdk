@@ -62,6 +62,10 @@ class AttestationContext {
         EvidencePolicy m_evidence_policy;
         shared_ptr<IClaimsEvaluator> m_claims_evaluator;
 
+        std::string m_eat_private_key_pem;
+        std::string m_eat_issuer;
+        std::string m_eat_kid;
+
         Error ensure_init();
         Error attest_gpus(Nonce& nonce, ClaimsCollection& out_claims);
         Error attest_switches(Nonce& nonce, ClaimsCollection& out_claims);
@@ -88,7 +92,10 @@ class AttestationContext {
             m_switch_verifier(nullptr),
             m_default_nras_url(""),
             m_evidence_policy(EvidencePolicy()),
-            m_claims_evaluator(nullptr) {}
+            m_claims_evaluator(nullptr),
+            m_eat_private_key_pem(""),
+            m_eat_issuer(""),
+            m_eat_kid("") {}
 
 
         ~AttestationContext() = default;
@@ -108,9 +115,13 @@ class AttestationContext {
         Error set_switch_evidence_source_json_file(const std::string& file_path);
         void set_gpu_verifier(shared_ptr<IGpuVerifier> verifier);
         void set_switch_verifier(shared_ptr<ISwitchVerifier> verifier);
+        void set_eat_private_key_pem(const std::string& private_key_pem);
+        void set_eat_issuer(const std::string& issuer);
+        void set_eat_kid(const std::string& kid);
 
         Error attest_system(
             Nonce nonce,
+            std::string& out_detached_eat, 
             ClaimsCollection& out_claims
         );
 };

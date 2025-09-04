@@ -93,6 +93,13 @@ void to_json(json& out_json, const SwitchEvidence& evidence) {
     };
 }
 
+void to_json(json& out_json, const std::shared_ptr<SwitchEvidence>& evidence) {
+    if (evidence == nullptr) {
+        throw std::runtime_error("Evidence cannot be null when serializing to JSON");
+    }
+    to_json(out_json, *evidence);
+}
+
 void from_json(const json& json, SwitchEvidence& out_evidence) {
     std::string version = json.at("version").get<std::string>();
     if (version != "1.0") {
@@ -127,15 +134,20 @@ void from_json(const json& json, SwitchEvidence& out_evidence) {
     out_evidence.set_attestation_cert_chain(certificate);
 }
 
+void from_json(const json& json, std::shared_ptr<SwitchEvidence>& out_evidence) {
+    out_evidence = std::make_shared<SwitchEvidence>();
+    from_json(json, *out_evidence);
+}
+
 Error SwitchEvidence::to_json(std::string& out_string) const {
     return serialize_to_json(*this, out_string);
 }
 
-Error SwitchEvidence::collection_to_json(const std::vector<SwitchEvidence>& collection, std::string& out_string) {
+Error SwitchEvidence::collection_to_json(const std::vector<std::shared_ptr<SwitchEvidence>>& collection, std::string& out_string) {
     return serialize_to_json(collection, out_string);
 }
 
-Error SwitchEvidence::collection_from_json(const std::string& json_string, std::vector<SwitchEvidence>& out_collection) {
+Error SwitchEvidence::collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<SwitchEvidence>>& out_collection) {
     return deserialize_from_json(json_string, out_collection);
 }
 
@@ -168,7 +180,7 @@ void from_string(const std::string& arch_str, SwitchArchitecture& out_arch) {
     out_arch = SwitchArchitecture::Unknown;
 }
 
-Error NscqEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence_list) const
+Error NscqEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const
 {
 #ifdef ENABLE_NSCQ
     std::vector<std::string> uuids;
@@ -214,7 +226,7 @@ Error NscqEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_inpu
         bool tnvl_mode = (tnvl_mode_status == SwitchTnvlMode::Enabled);
         bool lock_mode = (tnvl_mode_status == SwitchTnvlMode::Locked);
 
-        out_evidence_list.emplace_back(
+        out_evidence_list.emplace_back(std::make_shared<SwitchEvidence>(
             arch,
             uuid,
             attestation_report,
@@ -222,7 +234,7 @@ Error NscqEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_inpu
             tnvl_mode,
             lock_mode,
             nonce_input
-        );
+        ));
     }
     
     return Error::Ok;
@@ -373,6 +385,16 @@ Error SwitchEvidence::AttestationReport::generate_attestation_report_claims(cons
         return error;
     }
 
+    error = m_attestation_cert_chain.get_hwmodel(out_attestation_report_claims.m_hwmodel);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    error = m_attestation_cert_chain.get_ueid(out_attestation_report_claims.m_ueid);
+    if (error != Error::Ok) {
+        return error;
+    }
+
     return Error::Ok;
 }
 
@@ -470,7 +492,15 @@ Error SwitchEvidenceSourceFromJsonFile::create(const std::string& file_path, Swi
     return SwitchEvidence::collection_from_json(file_contents, out_source.m_evidence);
 }
 
-Error SwitchEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence) const {
+Error SwitchEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) const {
+    for (const auto& evidence_item : m_evidence) {
+        if (evidence_item->get_nonce() != nonce_input) {
+            LOG_ERROR("Nonce from switch evidence does not match the nonce used for attestation.");
+            LOG_ERROR("Nonce from switch evidence: " << to_hex_string(evidence_item->get_nonce()) << " Nonce used for attestation: " << to_hex_string(nonce_input));
+            LOG_ERROR("Does the nonce from serialized evidence JSON file match the nonce used for attestation?");
+            return Error::SwitchEvidenceNonceMismatch;
+        }
+    }
     out_evidence = m_evidence;
     return Error::Ok;
 }

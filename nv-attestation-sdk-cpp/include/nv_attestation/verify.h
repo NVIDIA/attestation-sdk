@@ -67,14 +67,8 @@ namespace nvattestation
          bool verify_rim_signature;
    };
 
-   class NRASAttestResponseV4 {
-      public: 
-         std::string overall_jwt_token;
-         std::unordered_map<std::string, std::string> device_attest_responses;
-   };
-
    Error validate_and_decode_EAT(
-      const NRASAttestResponseV4& attest_response,
+      const SerializableDetachedEAT& detached_eat,
       std::shared_ptr<JwkStore>& jwk_store,
       std::string& eat_issuer,
       NvHttpClient& http_client,
@@ -90,8 +84,6 @@ namespace nvattestation
          // vector of evidence and certificate chain
          std::vector<std::pair<std::string, std::string>> evidence_list;
    };
-
-   void from_json(const nlohmann::json& json, NRASAttestResponseV4& attest_response);
 
    void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request);
 

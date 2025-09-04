@@ -32,6 +32,9 @@ Error switch_claims_version_from_c(uint8_t value, SwitchClaimsVersion& out_versi
 
 class SerializableSwitchClaimsV3 : public Claims {
     public:
+        std::string m_nonce;
+        std::string m_hwmodel;
+        std::string m_ueid;
         SerializableMeasresClaim m_measurements_matching;
         std::shared_ptr<bool> m_secure_boot; // "true" if m_measurements_matching is "success", else null
         std::shared_ptr<std::string> m_debug_status; // "disabled" if m_measurements_matching is "success", else null
@@ -57,16 +60,25 @@ class SerializableSwitchClaimsV3 : public Claims {
 
         bool m_bios_rim_measurements_available;
 
+        std::string m_version;
+
+
         SerializableSwitchClaimsV3();
         ~SerializableSwitchClaimsV3() override = default;
+        Error get_nonce(std::string& out_nonce) const override;
+        Error get_overall_result(bool& out_result) const override;
+        Error get_version(std::string& out_version) const override;
+        Error get_device_type(std::string& out_device_type) const override;
         Error serialize_json(std::string& out_string) const override;
         static std::vector<std::uint8_t> to_cbor();
     protected:
         nlohmann::json to_json_object() const override;
 };
 
+void to_json(nlohmann::json& j, const SerializableSwitchClaimsV3& claims);
 void from_json(const nlohmann::json& js, SerializableSwitchClaimsV3& out_claims);
-void to_json(nlohmann::json& js, const SerializableSwitchClaimsV3& claims);
+
+
 bool operator==(const SerializableSwitchClaimsV3& lhs, const SerializableSwitchClaimsV3& rhs);
 
 }

@@ -73,7 +73,7 @@ public:
 /**
  * @brief Common function to get mock SWITCH evidence for testing purposes.
  */
-inline Error get_mock_switch_evidence(const MockSwitchEvidenceData& mock_data, std::vector<SwitchEvidence>& out_evidence) {
+inline Error get_mock_switch_evidence(const MockSwitchEvidenceData& mock_data, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) {
     // Read attestation report data
     std::vector<uint8_t> attestation_report_data;
     std::ifstream report_file(mock_data.attestation_report_path);
@@ -104,7 +104,7 @@ inline Error get_mock_switch_evidence(const MockSwitchEvidenceData& mock_data, s
     std::vector<uint8_t> nonce_bytes = hex_string_to_bytes(mock_data.nonce);
     
     // Create SwitchEvidence with mock data
-    SwitchEvidence switch_evidence(
+    std::shared_ptr<SwitchEvidence> switch_evidence = std::make_shared<SwitchEvidence>(
         mock_data.architecture,
         mock_data.uuid,
         attestation_report_data,
@@ -122,12 +122,12 @@ inline Error get_mock_switch_evidence(const MockSwitchEvidenceData& mock_data, s
 // Google Mock for ISwitchEvidenceSource with helper methods
 class MockSwitchEvidenceSource : public ISwitchEvidenceSource {
 public:
-    MOCK_METHOD(Error, get_evidence, (const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence), (const, override));
+    MOCK_METHOD(Error, get_evidence, (const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence), (const, override));
 
     // Helper method to set up successful evidence collection with real mock data
     void setup_success_behavior(const MockSwitchEvidenceData& mock_data = MockSwitchEvidenceData::create_default()) {
         EXPECT_CALL(*this, get_evidence(_, _))
-            .WillRepeatedly(Invoke([mock_data](const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence) -> Error {
+            .WillRepeatedly(Invoke([mock_data](const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) -> Error {
                 return get_mock_switch_evidence(mock_data, out_evidence);
             }));
     }

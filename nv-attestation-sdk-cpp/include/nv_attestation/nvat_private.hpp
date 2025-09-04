@@ -66,6 +66,21 @@ extern "C" {
         *c_base = nullptr; \
     }
 
+#define NVAT_ARRAY_FREE_FUNCTION(c_base, num_elements, cpp_type) \
+    void nvat_##c_base##_array_free(nvat_##c_base##_t** c_base, size_t num_elements) { \
+        if (c_base == nullptr) { \
+            return; \
+        } \
+        for (size_t i = 0; i < num_elements; ++i) { \
+            if ((*c_base)[i] == nullptr) { \
+                continue; \
+            } \
+            nvat_##c_base##_free(&(*c_base)[i]); \
+        } \
+        delete[] *c_base; \
+        *c_base = nullptr; \
+    }
+
 // === Exception Boundary Macros ===
 
 #define NVAT_C_API_BEGIN \
@@ -116,13 +131,11 @@ NVAT_PTR_CONVERSION_FUNCTIONS(attestation_ctx, AttestationContext);
 // === Evidence Collection ===
 
 NVAT_PTR_CONVERSION_FUNCTIONS(nonce, std::vector<uint8_t>);
-NVAT_PTR_CONVERSION_FUNCTIONS(gpu_evidence, GpuEvidence);
+NVAT_PTR_CONVERSION_FUNCTIONS(gpu_evidence, std::shared_ptr<GpuEvidence>);
 NVAT_PTR_CONVERSION_FUNCTIONS(gpu_evidence_source, std::shared_ptr<IGpuEvidenceSource>);
-NVAT_PTR_CONVERSION_FUNCTIONS(gpu_evidence_collection, std::vector<GpuEvidence>);
 
-NVAT_PTR_CONVERSION_FUNCTIONS(switch_evidence, SwitchEvidence);
+NVAT_PTR_CONVERSION_FUNCTIONS(switch_evidence, std::shared_ptr<SwitchEvidence>);
 NVAT_PTR_CONVERSION_FUNCTIONS(switch_evidence_source,  std::shared_ptr<ISwitchEvidenceSource>);
-NVAT_PTR_CONVERSION_FUNCTIONS(switch_evidence_collection,  std::vector<SwitchEvidence>);
 
 // === Evidence Verification ===
 

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <cstdlib>   // for std::getenv
 #include <memory>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -49,12 +50,12 @@ extern "C" {
 
 NVAT_FREE_FUNCTION(logger, ILogger);
 NVAT_FREE_FUNCTION(nonce, std::vector<uint8_t>);
-NVAT_FREE_FUNCTION(gpu_evidence, GpuEvidence);
+NVAT_FREE_FUNCTION(gpu_evidence, std::shared_ptr<GpuEvidence>);
+NVAT_ARRAY_FREE_FUNCTION(gpu_evidence, num_evidences, std::shared_ptr<GpuEvidence>);
 NVAT_FREE_FUNCTION(gpu_evidence_source, std::shared_ptr<IGpuEvidenceSource>);
-NVAT_FREE_FUNCTION(gpu_evidence_collection, std::vector<GpuEvidence>);
-NVAT_FREE_FUNCTION(switch_evidence, SwitchEvidence);
+NVAT_FREE_FUNCTION(switch_evidence, std::shared_ptr<SwitchEvidence>);
+NVAT_ARRAY_FREE_FUNCTION(switch_evidence, num_evidences, std::shared_ptr<SwitchEvidence>);
 NVAT_FREE_FUNCTION(switch_evidence_source, std::shared_ptr<ISwitchEvidenceSource>);
-NVAT_FREE_FUNCTION(switch_evidence_collection, std::vector<SwitchEvidence>);
 NVAT_FREE_FUNCTION(evidence_policy, EvidencePolicy);
 NVAT_FREE_FUNCTION(relying_party_policy, std::shared_ptr<IClaimsEvaluator>);
 NVAT_FREE_FUNCTION(http_options, HttpOptions);
@@ -281,18 +282,6 @@ void nvat_http_options_set_request_timeout_ms(nvat_http_options_t http_options, 
 }
 
 // === Attestation ===
-
-nvat_rc_t nvat_relying_party_policy_create_default(nvat_relying_party_policy_t* rp_policy) {
-    NVAT_C_API_BEGIN
-    if (rp_policy == nullptr) {
-        LOG_ERROR("rp_policy is null");
-        return NVAT_RC_BAD_ARGUMENT;
-    }
-    auto cpp_rp_policy = make_unique<shared_ptr<IClaimsEvaluator>>(ClaimsEvaluatorFactory::create_default_claims_evaluator());
-    *rp_policy = nvat_relying_party_policy_from_cpp(cpp_rp_policy.release());
-    return NVAT_RC_OK;
-    NVAT_C_API_END
-}
 
 nvat_rc_t nvat_relying_party_policy_create_rego_from_str(nvat_relying_party_policy_t* rp_policy, const char* rego_str) {
     NVAT_C_API_BEGIN
@@ -598,6 +587,7 @@ nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attesta
 nvat_rc_t nvat_attest_system(
     const nvat_attestation_ctx_t ctx,
     const nvat_nonce_t nonce,
+    nvat_str_t* out_detached_eat,
     nvat_claims_collection_t* out_claims
 ) {
     NVAT_C_API_BEGIN
@@ -608,23 +598,25 @@ nvat_rc_t nvat_attest_system(
     auto* cpp_ctx = nvat_attestation_ctx_to_cpp(ctx);
     auto* cpp_nonce = nvat_nonce_to_cpp(nonce);
     ClaimsCollection claims_collection {};
+    std::string detached_eat;
     Error err {};
     if (cpp_nonce != nullptr) {
-        err = cpp_ctx->attest_system(*cpp_nonce, claims_collection);
+        err = cpp_ctx->attest_system(*cpp_nonce, detached_eat, claims_collection);
     } else {
-        err = cpp_ctx->attest_system({}, claims_collection);
+        err = cpp_ctx->attest_system({}, detached_eat, claims_collection);
     }
-    if (err != Error::Ok) {
-        LOG_ERROR("failed to perform system attestation");
+    if (err != Error::Ok && err != Error::OverallResultFalse && err != Error::RelyingPartyPolicyMismatch) {
+        LOG_ERROR("error while performing system attestation");
         return nvat_rc_from_cpp(err);
     }
-    if (out_claims == nullptr) {
-        // discard claims
-        return NVAT_RC_OK;
+    if (out_detached_eat != nullptr) {
+        *out_detached_eat = nvat_str_from_cpp(new std::string(detached_eat));
     }
-    auto claims_collection_ptr = make_unique<ClaimsCollection>(std::move(claims_collection));
-    *out_claims = nvat_claims_collection_from_cpp(claims_collection_ptr.release());
-    return NVAT_RC_OK;
+    if (out_claims != nullptr) {
+        auto claims_collection_ptr = make_unique<ClaimsCollection>(std::move(claims_collection));
+        *out_claims = nvat_claims_collection_from_cpp(claims_collection_ptr.release());
+    }
+    return nvat_rc_from_cpp(err);
     NVAT_C_API_END
 }
 
@@ -658,7 +650,7 @@ size_t nvat_nonce_get_length(const nvat_nonce_t nonce) {
     return cpp_nonce->size();
 }
 
-nvat_rc_t nvat_nonce_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str) {
+nvat_rc_t nvat_nonce_to_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str) {
     NVAT_C_API_BEGIN
     if (nonce == nullptr) {
         LOG_ERROR("nonce is null");
@@ -672,6 +664,44 @@ nvat_rc_t nvat_nonce_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str) {
     const std::vector<uint8_t>* cpp_nonce = nvat_nonce_to_cpp(nonce);
     std::string hex_str = to_hex_string(*cpp_nonce);
     *out_str = nvat_str_from_cpp(new std::string(hex_str));
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_nonce_from_hex(nvat_nonce_t* out_nonce, const char* hex_string) {
+    NVAT_C_API_BEGIN
+    if (out_nonce == nullptr) {
+        LOG_ERROR("out_nonce is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (hex_string == nullptr) {
+        LOG_ERROR("hex_string is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    std::string hex_no_prefix(hex_string);
+    if (hex_no_prefix.rfind("0x", 0) == 0 || hex_no_prefix.rfind("0X", 0) == 0) {
+        hex_no_prefix = hex_no_prefix.substr(2);
+    }
+    if (hex_no_prefix.empty() || (hex_no_prefix.size() % 2) != 0) {
+        LOG_ERROR("hex_string must have an even number of hex digits");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    for (char ch : hex_no_prefix) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) == 0) {
+            LOG_ERROR("hex_string contains non-hex characters");
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+    }
+
+    std::vector<uint8_t> bytes = hex_string_to_bytes(hex_no_prefix);
+    if (bytes.size() < MIN_VALID_NONCE_LEN) {
+        LOG_ERROR("nonce too short: " << bytes.size() << " bytes; minimum is " << MIN_VALID_NONCE_LEN);
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    auto nonce = make_unique<vector<uint8_t>>(std::move(bytes));
+    *out_nonce = nvat_nonce_from_cpp(nonce.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -710,35 +740,23 @@ nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* ou
     NVAT_C_API_END
 }
 
-size_t nvat_gpu_evidence_collection_get_length(const nvat_gpu_evidence_collection_t collection) {
-    if (collection == nullptr) {
-        return 0;
-    }
-    vector<GpuEvidence>* cpp_collection = nvat_gpu_evidence_collection_to_cpp(collection);
-    return cpp_collection->size();
-}
-
-nvat_gpu_evidence_t nvat_gpu_evidence_collection_get_evidence(const nvat_gpu_evidence_collection_t collection, size_t index) {
-    if (collection == nullptr) {
-        return nullptr;
-    }
-    vector<GpuEvidence>* cpp_collection = nvat_gpu_evidence_collection_to_cpp(collection);
-    if (index >= cpp_collection->size()) {
-        return nullptr;
-    }
-    return nvat_gpu_evidence_from_cpp(&(*cpp_collection)[index]);
-}
-
-nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, const nvat_nonce_t nonce, nvat_gpu_evidence_collection_t* out_collection) {
+nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, const nvat_nonce_t nonce, nvat_gpu_evidence_t** out_gpu_evidence_array, size_t* out_num_evidences) {
     NVAT_C_API_BEGIN
     if (source == nullptr) {
         LOG_ERROR("source is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    if (out_collection == nullptr) {
-        LOG_ERROR("out_collection is null");
+    if (out_gpu_evidence_array == nullptr) {
+        LOG_ERROR("out_gpu_evidence_array is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
+    if (out_num_evidences == nullptr) {
+        LOG_ERROR("out_num_evidences is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    
+    *out_gpu_evidence_array = nullptr;
+    *out_num_evidences = 0;
     
     std::shared_ptr<IGpuEvidenceSource> cpp_source = *nvat_gpu_evidence_source_to_cpp(source);
     
@@ -748,36 +766,55 @@ nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, con
         cpp_nonce = *cpp_nonce_ptr;
     }
 
-    vector<GpuEvidence> evidence_list{};
+    vector<std::shared_ptr<GpuEvidence>> evidence_list{};
     Error err = cpp_source->get_evidence(cpp_nonce, evidence_list);
     
     if (err != Error::Ok) {
         LOG_ERROR("failed to collect GPU evidence");
         return nvat_rc_from_cpp(err);
     }
+
+    *out_gpu_evidence_array = new nvat_gpu_evidence_t[evidence_list.size()];
+    for (size_t i = 0; i < evidence_list.size(); i++) {
+        std::shared_ptr<GpuEvidence>* evidence_ptr = new std::shared_ptr<GpuEvidence>(evidence_list[i]);
+        // the paranthesis are important. out_evidences is a pointer to an array pointer.
+        // (*out_evidences) is the array pointer.
+        // hence, (*out_evidences)[i] is the element of the array we wan to set
+        // p.s for an array ptr, ptr[i] is the same as *(ptr + i), so to access an element, 
+        // we could've also used *((*out_evidences) + i)
+        (*out_gpu_evidence_array)[i] = nvat_gpu_evidence_from_cpp(evidence_ptr);
+    }
+    *out_num_evidences = evidence_list.size();
     
-    auto evidence_list_ptr = make_unique<vector<GpuEvidence>>(std::move(evidence_list));
-    *out_collection = nvat_gpu_evidence_collection_from_cpp(evidence_list_ptr.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
 
 nvat_rc_t nvat_gpu_evidence_serialize_json(
-    const nvat_gpu_evidence_collection_t collection, 
+    const nvat_gpu_evidence_t* gpu_evidence_array,
+    size_t num_evidences,
     nvat_str_t* out_serialized_evidence
 ) {
     NVAT_C_API_BEGIN
-    if (collection == nullptr) {
-        LOG_ERROR("collection is null");
+    if (gpu_evidence_array == nullptr) {
+        LOG_ERROR("gpu_evidence_array is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
     if (out_serialized_evidence == nullptr) {
         LOG_ERROR("out_serialized_evidence is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    vector<GpuEvidence>* cpp_collection = nvat_gpu_evidence_collection_to_cpp(collection);
+    std::vector<std::shared_ptr<GpuEvidence>> cpp_evidences;
+    for (size_t i = 0; i < num_evidences; i++) {
+        if (gpu_evidence_array[i] == nullptr) {
+            LOG_ERROR("gpu_evidence_array[" << i << "] is null");
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+        std::shared_ptr<GpuEvidence>* evidence_ptr = nvat_gpu_evidence_to_cpp(gpu_evidence_array[i]);
+        cpp_evidences.push_back(*evidence_ptr);
+    }
     std::string* json_string = new std::string("");
-    Error err = GpuEvidence::collection_to_json(*cpp_collection, *json_string);
+    Error err = GpuEvidence::collection_to_json(cpp_evidences, *json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize GPU evidence as JSON");
         return nvat_rc_from_cpp(err);
@@ -823,26 +860,7 @@ nvat_rc_t nvat_switch_evidence_source_from_json_file(nvat_switch_evidence_source
     NVAT_C_API_END
 }
 
-size_t nvat_switch_evidence_collection_get_length(const nvat_switch_evidence_collection_t collection) {
-    if (collection == nullptr) {
-        return 0;
-    }
-    std::vector<SwitchEvidence>* cpp_collection = nvat_switch_evidence_collection_to_cpp(collection);
-    return cpp_collection->size();
-}
-
-nvat_switch_evidence_t nvat_switch_evidence_collection_get_evidence(const nvat_switch_evidence_collection_t collection, size_t index) {
-    if (collection == nullptr) {
-        return nullptr;
-    }
-    std::vector<SwitchEvidence>* cpp_collection = nvat_switch_evidence_collection_to_cpp(collection);
-    if (index >= cpp_collection->size()) {
-        return nullptr;
-    }
-    return nvat_switch_evidence_from_cpp(&(*cpp_collection)[index]);
-}
-
-nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t source, const nvat_nonce_t nonce, nvat_switch_evidence_collection_t* out_collection) {
+nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t source, const nvat_nonce_t nonce, nvat_switch_evidence_t** out_switch_evidence_array, size_t* out_num_evidences) {
     NVAT_C_API_BEGIN
     if (source == nullptr) {
         LOG_ERROR("source is null");
@@ -852,7 +870,7 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
         LOG_ERROR("nonce is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    if (out_collection == nullptr) {
+    if (out_switch_evidence_array == nullptr) {
         LOG_ERROR("out_collection is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
@@ -865,24 +883,30 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
         cpp_nonce = *cpp_nonce_ptr;
     }
 
-    auto cpp_collection = std::make_unique<std::vector<SwitchEvidence>>();
-    Error error = cpp_source->get_evidence(cpp_nonce, *cpp_collection);
+    std::vector<std::shared_ptr<SwitchEvidence>> cpp_collection;
+    Error error = cpp_source->get_evidence(cpp_nonce, cpp_collection);
     if (error != Error::Ok) {
         LOG_ERROR("failed to get switch evidence");
         return nvat_rc_from_cpp(error);
     }
     
-    *out_collection = nvat_switch_evidence_collection_from_cpp(cpp_collection.release());
+    *out_switch_evidence_array = new nvat_switch_evidence_t[cpp_collection.size()];
+    for (size_t i = 0; i < cpp_collection.size(); i++) {
+        std::shared_ptr<SwitchEvidence>* evidence_ptr = new std::shared_ptr<SwitchEvidence>(cpp_collection[i]);
+        (*out_switch_evidence_array)[i] = nvat_switch_evidence_from_cpp(evidence_ptr);
+    }
+    *out_num_evidences = cpp_collection.size();
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
 
 nvat_rc_t nvat_switch_evidence_serialize_json(
-    const nvat_switch_evidence_collection_t collection, 
+    const nvat_switch_evidence_t* switch_evidence_array,
+    size_t num_evidences,
     nvat_str_t* out_serialized_evidence
 ) {
     NVAT_C_API_BEGIN
-    if (collection == nullptr) {
+    if (switch_evidence_array == nullptr) {
         LOG_ERROR("collection is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
@@ -890,9 +914,17 @@ nvat_rc_t nvat_switch_evidence_serialize_json(
         LOG_ERROR("out_serialized_evidence is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    vector<SwitchEvidence>* cpp_collection = nvat_switch_evidence_collection_to_cpp(collection);
+    vector<std::shared_ptr<SwitchEvidence>> cpp_collection;
+    for (size_t i = 0; i < num_evidences; i++) {
+        if (switch_evidence_array[i] == nullptr) {
+            LOG_ERROR("switch_evidence_array[" << i << "] is null");
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+        std::shared_ptr<SwitchEvidence>* evidence_ptr = nvat_switch_evidence_to_cpp(switch_evidence_array[i]);
+        cpp_collection.push_back(*evidence_ptr);
+    }
     std::string* json_string = new std::string("");
-    Error err = SwitchEvidence::collection_to_json(*cpp_collection, *json_string);
+    Error err = SwitchEvidence::collection_to_json(cpp_collection, *json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize switch evidence as JSON");
         return nvat_rc_from_cpp(err);
@@ -944,6 +976,59 @@ nvat_rc_t nvat_claims_collection_serialize_json(const nvat_claims_collection_t c
         return nvat_rc_from_cpp(err);
     }
     *out_serialized_claims = nvat_str_from_cpp(json_string);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_claims_collection_extend(nvat_claims_collection_t nvat_claims_collection, const nvat_claims_collection_t other_claims_collection) {
+    NVAT_C_API_BEGIN
+    if (nvat_claims_collection == nullptr) {
+        LOG_ERROR("nvat_claims_collection is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    if (other_claims_collection == nullptr) {
+        LOG_ERROR("other_claims_collection is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    ClaimsCollection* cpp_claims = nvat_claims_collection_to_cpp(nvat_claims_collection);
+    ClaimsCollection* cpp_other_claims = nvat_claims_collection_to_cpp(other_claims_collection);
+    cpp_claims->extend(*cpp_other_claims);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, const char* private_key_pem, const char* issuer, const char* kid, nvat_str_t* out_detached_eat) {
+    NVAT_C_API_BEGIN
+    if (claims == nullptr) {
+        LOG_ERROR("claims is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (out_detached_eat == nullptr) {
+        LOG_ERROR("out_detached_eat is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    ClaimsCollection* cpp_claims = nvat_claims_collection_to_cpp(claims);
+    std::string* detached_eat = new std::string("");
+    std::string cpp_private_key_pem;
+    std::string cpp_issuer;
+    std::string cpp_kid;
+    if (private_key_pem != nullptr) {
+        cpp_private_key_pem = std::string(private_key_pem);
+    }
+    if (issuer != nullptr) {
+        cpp_issuer = std::string(issuer);
+    }
+    if (kid != nullptr) {
+        cpp_kid = std::string(kid);
+    }
+    Error err = cpp_claims->get_detached_eat(*detached_eat, cpp_private_key_pem, cpp_issuer, cpp_kid);
+    if (err != Error::Ok) {
+        LOG_ERROR("failed to get detached EAT");
+        return nvat_rc_from_cpp(err);
+    }
+    *out_detached_eat = nvat_str_from_cpp(detached_eat);
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -1150,7 +1235,8 @@ nvat_switch_verifier_t nvat_switch_nras_verifier_upcast(nvat_switch_nras_verifie
 
 nvat_rc_t nvat_verify_gpu_evidence(
     const nvat_gpu_verifier_t verifier,
-    const nvat_gpu_evidence_collection_t evidence,
+    const nvat_gpu_evidence_t* gpu_evidence_array,
+    size_t num_evidences,
     const nvat_evidence_policy_t policy,
     nvat_claims_collection_t* out_claims
 ) {
@@ -1159,7 +1245,7 @@ nvat_rc_t nvat_verify_gpu_evidence(
         LOG_ERROR("verifier is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    if (evidence == nullptr) {
+    if (gpu_evidence_array == nullptr) {
         LOG_ERROR("evidence is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
@@ -1173,11 +1259,19 @@ nvat_rc_t nvat_verify_gpu_evidence(
     }
 
     IGpuVerifier* cpp_verifier = nvat_gpu_verifier_to_cpp(verifier);
-    std::vector<GpuEvidence>* cpp_evidence = nvat_gpu_evidence_collection_to_cpp(evidence);
+    std::vector<std::shared_ptr<GpuEvidence>> cpp_evidences;
+    for (size_t i = 0; i < num_evidences; i++) {
+        if (gpu_evidence_array[i] == nullptr) {
+            LOG_ERROR("gpu_evidence_array[" << i << "] is null");
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+        std::shared_ptr<GpuEvidence>* evidence_ptr = nvat_gpu_evidence_to_cpp(gpu_evidence_array[i]);
+        cpp_evidences.push_back(*evidence_ptr);
+    }
     EvidencePolicy* cpp_policy = nvat_evidence_policy_to_cpp(policy);
 
     ClaimsCollection cpp_claims;
-    Error err = cpp_verifier->verify_evidence(*cpp_evidence, *cpp_policy, cpp_claims);
+    Error err = cpp_verifier->verify_evidence(cpp_evidences, *cpp_policy, cpp_claims);
     if (err != Error::Ok) {
         LOG_ERROR("failed to verify GPU evidence");
         return nvat_rc_from_cpp(err);
@@ -1191,7 +1285,8 @@ nvat_rc_t nvat_verify_gpu_evidence(
 
 nvat_rc_t nvat_verify_switch_evidence(
     const nvat_switch_verifier_t verifier,
-    const nvat_switch_evidence_collection_t evidence,
+    const nvat_switch_evidence_t* switch_evidence_array,
+    size_t num_evidences,
     const nvat_evidence_policy_t policy,
     nvat_claims_collection_t* out_claims
 ) {
@@ -1200,7 +1295,7 @@ nvat_rc_t nvat_verify_switch_evidence(
         LOG_ERROR("verifier is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    if (evidence == nullptr) {
+    if (switch_evidence_array == nullptr) {
         LOG_ERROR("evidence is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
@@ -1214,11 +1309,19 @@ nvat_rc_t nvat_verify_switch_evidence(
     }
 
     ISwitchVerifier* cpp_verifier = nvat_switch_verifier_to_cpp(verifier);
-    std::vector<SwitchEvidence>* cpp_evidence = nvat_switch_evidence_collection_to_cpp(evidence);
+    std::vector<std::shared_ptr<SwitchEvidence>> cpp_evidences;
+    for (size_t i = 0; i < num_evidences; i++) {
+        if (switch_evidence_array[i] == nullptr) {
+            LOG_ERROR("switch_evidence_array[" << i << "] is null");
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+        std::shared_ptr<SwitchEvidence>* evidence_ptr = nvat_switch_evidence_to_cpp(switch_evidence_array[i]);
+        cpp_evidences.push_back(*evidence_ptr);
+    }
     EvidencePolicy* cpp_policy = nvat_evidence_policy_to_cpp(policy);
 
     ClaimsCollection cpp_claims;
-    Error err = cpp_verifier->verify_evidence(*cpp_evidence, *cpp_policy, cpp_claims);
+    Error err = cpp_verifier->verify_evidence(cpp_evidences, *cpp_policy, cpp_claims);
     if (err != Error::Ok) {
         LOG_ERROR("failed to verify switch evidence");
         return nvat_rc_from_cpp(err);

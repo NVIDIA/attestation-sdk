@@ -573,7 +573,7 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
     } else {
         out_cert_chain_claims.status = CertChainStatus::VALID;
     }
-    
+
     return Error::Ok;
 }
 
@@ -1025,6 +1025,102 @@ Error X509CertChain::get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_da
     out_fwid = fwid_list[0]; // use only the first fwid
     return Error::Ok;
 }
+
+Error X509CertChain::get_hwmodel(std::string& out_hwmodel) const {
+
+    if (m_certs.size() < 2) {
+        LOG_ERROR("Certificate index 1 is out of bounds. Chain size: " << m_certs.size());
+        return Error::CertNotFound;
+    }
+
+    const X509* cert = m_certs[1].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index 1 is null.");
+        return Error::CertNotFound;
+    }
+
+    // Get the subject name from the certificate
+    X509_NAME* subject_name = X509_get_subject_name(cert);
+    if (subject_name == nullptr) {
+        LOG_ERROR("Failed to get subject name from certificate at index 1: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    int lastpos = -1;
+    int cn_index = X509_NAME_get_index_by_NID(subject_name, NID_commonName, lastpos);
+    if (cn_index < 0) {
+        LOG_ERROR("Common name (CN) not found in certificate at index 1");
+        return Error::InternalError;
+    }
+
+    X509_NAME_ENTRY* cn_entry = X509_NAME_get_entry(subject_name, cn_index);
+    if (cn_entry == nullptr) {
+        LOG_ERROR("Failed to get common name entry from certificate at index 1: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    ASN1_STRING* cn_asn1_string = X509_NAME_ENTRY_get_data(cn_entry);
+    if (cn_asn1_string == nullptr) {
+        LOG_ERROR("Failed to get ASN1_STRING from common name entry: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    const unsigned char* cn_data = ASN1_STRING_get0_data(cn_asn1_string);
+    int cn_length = ASN1_STRING_length(cn_asn1_string);
+    
+    if (cn_data == nullptr || cn_length <= 0) {
+        LOG_ERROR("Common name data is empty or invalid");
+        return Error::InternalError;
+    }
+
+    // Store the common name in the output parameter
+    out_hwmodel = std::string(reinterpret_cast<const char*>(cn_data), cn_length);
+    
+    return Error::Ok;
+}
+
+Error X509CertChain::get_ueid(std::string& out_ueid) const {
+    if (m_certs.empty()) {
+        LOG_ERROR("Certificate index 0 is out of bounds. Chain size: " << m_certs.size());
+        return Error::CertNotFound;
+    }
+
+    const X509* cert = m_certs[0].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index 0 is null.");
+        return Error::CertNotFound;
+    }
+
+    // Get the serial number from the certificate
+    const ASN1_INTEGER* serial_asn1 = X509_get0_serialNumber(cert);
+    if (serial_asn1 == nullptr) {
+        LOG_ERROR("Failed to get serial number from certificate at index 0: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    // Convert ASN1_INTEGER to BIGNUM
+    nv_unique_ptr<BIGNUM> serial_bn(ASN1_INTEGER_to_BN(serial_asn1, nullptr));
+    if (!serial_bn) {
+        LOG_ERROR("Failed to convert ASN1_INTEGER to BIGNUM: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    // Convert BIGNUM to decimal string
+    char* dec_str = BN_bn2dec(serial_bn.get());
+    if (dec_str == nullptr) {
+        LOG_ERROR("Failed to convert BIGNUM to decimal string: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    // Store the serial number as decimal string in the output parameter
+    out_ueid = std::string(dec_str);
+    
+    // Free the allocated string from OpenSSL
+    OPENSSL_free(dec_str);
+    
+    return Error::Ok;
+}
+
 
 // << operator for OCSPClaims
 std::ostream& operator<<(std::ostream& os, const OCSPClaims& claims) {

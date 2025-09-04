@@ -149,6 +149,7 @@ class RimDocument{
         static constexpr const char* XML_DSIG_NAMESPACE_URI = "http://www.w3.org/2000/09/xmldsig#";
         static constexpr const char* ISO_19770_SCHEMA_NAMESPACE_URI = "http://standards.iso.org/iso/19770/-2/2015/schema.xsd";
         static constexpr const char* XML_ENC_SHA384_NAMESPACE_URI = "http://www.w3.org/2001/04/xmlenc#sha384";
+        static constexpr const char* TCG_RIM_NAMESPACE_URI = "https://trustedcomputinggroup.org/resource/tcg-reference-integrity-manifest-rim-information-model/";
 
         // 1 indexed vector of measurements
         Error get_measurements(Measurements& out_measurements) const;
@@ -156,6 +157,7 @@ class RimDocument{
         Error get_cert_chain(X509CertChain& out_cert_chain) const;
         Error get_version(std::string& out_version) const;
         Error generate_rim_claims(const EvidencePolicy& evidence_policy, IOcspHttpClient& ocsp_client, RimClaims& out_rim_claims) const;
+        Error get_manufacturer_id(std::string& out_manufacturer_id) const;
         RimDocument(nv_unique_ptr<xmlDoc> doc, const std::string& rim_data);
         RimDocument() = default;
         static Error create_from_rim_data(const std::string &rim_data, RimDocument& out_rim_document); // TODO(p2): create_from_string

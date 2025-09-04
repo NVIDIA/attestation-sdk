@@ -106,6 +106,12 @@ class MockClaims : public Claims {
     public:
         MOCK_METHOD(Error, serialize_json, (std::string& out_json), (const, override));
         MOCK_METHOD(nlohmann::json, to_json_object, (), (const));
+
+        MOCK_METHOD(Error, get_nonce, (std::string& out_nonce), (const, override));
+        MOCK_METHOD(Error, get_overall_result, (bool& out_result), (const, override));
+        MOCK_METHOD(Error, get_version, (std::string& out_version), (const, override));
+        MOCK_METHOD(Error, get_device_type, (std::string& out_device_type), (const, override));
+
         void setup_json(const char* str) {
             ON_CALL(*this, serialize_json(_)).WillByDefault(DoAll(SetArgReferee<0>(std::string(str)), Return(Error::Ok)));
             ON_CALL(*this, to_json_object()).WillByDefault(Return(nlohmann::json::parse(str)));
@@ -113,7 +119,7 @@ class MockClaims : public Claims {
     };
 
 TEST_F(ClaimsEvaluatorTest, CreateDefaultClaimsEvaluator) {
-    auto evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(VALID_POLICY);
 
     auto claims = std::make_shared<MockClaims>();
     claims->setup_json(VALID_CLAIMS);
@@ -125,9 +131,9 @@ TEST_F(ClaimsEvaluatorTest, CreateDefaultClaimsEvaluator) {
     EXPECT_EQ(result, true);
 }
 
-TEST(ClaimsEvaluatorTestCApi, CreateDefaultClaimsEvaluator) {
+TEST(ClaimsEvaluatorTestCApi, CreateRegoClaimsEvaluator) {
     nvat_relying_party_policy_t rp_policy;
-    nvat_rc_t rc = nvat_relying_party_policy_create_default(&rp_policy);
+    nvat_rc_t rc = nvat_relying_party_policy_create_rego_from_str(&rp_policy, VALID_POLICY);
     EXPECT_EQ(rc, NVAT_RC_OK);
     EXPECT_NE(rp_policy, nullptr);
     nvat_relying_party_policy_free(&rp_policy);

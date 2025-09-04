@@ -38,7 +38,7 @@ Error LocalSwitchVerifier::create(LocalSwitchVerifier& out_verifier, const std::
     return Error::Ok;
 }
 
-Error LocalSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
+Error LocalSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
     if (evidence_policy.switch_claims_version == SwitchClaimsVersion::V3) {
         return generate_claims_v3(evidence, evidence_policy, out_claims);
     } 
@@ -46,17 +46,17 @@ Error LocalSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>& ev
     return Error::BadArgument;
 }
 
-Error LocalSwitchVerifier::generate_claims_v3(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) const {
+Error LocalSwitchVerifier::generate_claims_v3(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) const {
     LOG_DEBUG("Generating switch evidence claims");
     for (const auto& cur_evidence : evidence) {
         SwitchEvidence::AttestationReport attestation_report;
-        Error error = cur_evidence.get_parsed_attestation_report(attestation_report);
+        Error error = cur_evidence->get_parsed_attestation_report(attestation_report);
         if (error != Error::Ok) {
             return error;
         }
-        LOG_DEBUG("Generating switch evidence claims for switch index " << cur_evidence.get_uuid());
+        LOG_DEBUG("Generating switch evidence claims for switch index " << cur_evidence->get_uuid());
         SwitchEvidenceClaims switch_evidence_claims;
-        error = cur_evidence.generate_switch_evidence_claims(attestation_report, evidence_policy.ocsp_options, *m_ocsp_http_client, switch_evidence_claims);
+        error = cur_evidence->generate_switch_evidence_claims(attestation_report, evidence_policy.ocsp_options, *m_ocsp_http_client, switch_evidence_claims);
         if (error != Error::Ok) {
             return error;
         }
@@ -65,9 +65,10 @@ Error LocalSwitchVerifier::generate_claims_v3(const std::vector<SwitchEvidence>&
         if (error != Error::Ok) {
             return error;
         }
+        serializable_claims->m_nonce = to_hex_string(cur_evidence->get_nonce());
       
         std::string vbios_rim_id;
-        error = attestation_report.get_vbios_rim_id(vbios_rim_id, cur_evidence.get_switch_architecture());
+        error = attestation_report.get_vbios_rim_id(vbios_rim_id, cur_evidence->get_switch_architecture());
         if (error != Error::Ok) {
             return error;
         }
@@ -124,6 +125,8 @@ Error LocalSwitchVerifier::set_switch_evidence_claims(const SwitchEvidenceClaims
     out_serializable_claims.m_ar_cert_chain_fwid_match = switch_evidence_claims.m_attestation_report_claims.m_fwid_match;
     out_serializable_claims.m_ar_parsed = switch_evidence_claims.m_attestation_report_claims.m_parsed;
     out_serializable_claims.m_ar_signature_verified = switch_evidence_claims.m_attestation_report_claims.m_signature_verified;
+    out_serializable_claims.m_hwmodel = switch_evidence_claims.m_attestation_report_claims.m_hwmodel;
+    out_serializable_claims.m_ueid = switch_evidence_claims.m_attestation_report_claims.m_ueid;
 
     return Error::Ok;
 }
@@ -238,7 +241,7 @@ Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier
     return Error::Ok;
 }
 
-Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
+Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
     // todo(p2): much of the functionality here and in the gpu remote verifier is the same.
     // can probably be refactored to use some common code using a evidence base class and generics for SerializableSwitchClaimsV3
     if (evidence.empty()) {
@@ -249,18 +252,18 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>&
     Error error = Error::InternalError;
     
     NRASAttestRequestV4 attest_request;
-    attest_request.nonce = to_hex_string(evidence[0].get_nonce());
-    attest_request.arch = to_string(evidence[0].get_switch_architecture());
+    attest_request.nonce = to_hex_string(evidence[0]->get_nonce());
+    attest_request.arch = to_string(evidence[0]->get_switch_architecture());
     attest_request.claims_version = to_string(SwitchClaimsVersion::V3);
     std::vector<std::pair<std::string, std::string>> evidence_list;
     for (const auto& evidence_item : evidence) {
         std::string evidence_b64;
-        error = encode_base64(evidence_item.get_attestation_report(), evidence_b64);
+        error = encode_base64(evidence_item->get_attestation_report(), evidence_b64);
         if (error != Error::Ok) {
             return error;
         }
         std::string cert_chain_b64;
-        error = encode_base64(evidence_item.get_attestation_cert_chain(), cert_chain_b64);
+        error = encode_base64(evidence_item->get_attestation_cert_chain(), cert_chain_b64);
         if (error != Error::Ok) {
             return error;
         }
@@ -287,7 +290,7 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>&
         return Error::NrasAttestationError;
     }
     
-    NRASAttestResponseV4 attest_response;
+    SerializableDetachedEAT attest_response;
     error = deserialize_from_json(attest_response_str, attest_response);
     if (error != Error::Ok) {
         return error;
@@ -300,8 +303,8 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<SwitchEvidence>&
         return error;
     }
 
-    if (eat_nonce != evidence[0].get_nonce()) {
-        LOG_ERROR("Switch evidence nonce and EAT nonce mismatch: " << to_hex_string(eat_nonce) << " != " << to_hex_string(evidence[0].get_nonce()));
+    if (eat_nonce != evidence[0]->get_nonce()) {
+        LOG_ERROR("Switch evidence nonce and EAT nonce mismatch: " << to_hex_string(eat_nonce) << " != " << to_hex_string(evidence[0]->get_nonce()));
         return Error::NrasTokenInvalid;
     }
 

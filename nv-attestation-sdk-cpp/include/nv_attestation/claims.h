@@ -162,6 +162,14 @@ class Claims {
         Claims() = default;
         virtual ~Claims() = default;
         virtual Error serialize_json(std::string& out_json) const = 0;
+        // these functions are used to create the detached EAT
+        virtual Error get_nonce(std::string& out_nonce) const = 0;
+        virtual Error get_overall_result(bool& out_result) const = 0;
+        virtual Error get_version(std::string& out_version) const = 0;
+        virtual Error get_device_type(std::string& out_device_type) const = 0;
+        // this is needed because Claims is a virtual class and when working with 
+        // shared_ptr<Claims> it is not straightforward to define nlohmann json's 
+        // adl (to_json and from_json)
         virtual nlohmann::json to_json_object() const = 0;
 };
 
@@ -172,15 +180,71 @@ class ClaimsCollection {
         ~ClaimsCollection() = default;
 
         Error serialize_json(std::string& out_json) const;
+        Error get_detached_eat(
+            std::string& out_json,
+            const std::string& private_key_pem = "",
+            const std::string& issuer = "", 
+            const std::string& kid = ""
+        ) const;
         void extend(ClaimsCollection other);
         void append(const std::shared_ptr<Claims>& claims);
         bool empty() const;
         size_t size() const;
         std::shared_ptr<Claims> operator[](size_t index);
 
+        // because this function needs m_claims, which is private
+        friend void to_json(nlohmann::json& j, const ClaimsCollection& claims);
+
     private:
         std::vector<std::shared_ptr<Claims>> m_claims;
 };
 
+void to_json(nlohmann::json& j, const ClaimsCollection& claims);
+// claims common to payloads inside all JWTs
+class SerializableCommonEATClaims {
+    public: 
+        std::int64_t m_iat;
+        std::int64_t m_exp;
+        std::string m_iss;
+        std::string m_jti;
+};
 
+// payload inside the overall JWT token
+class SerializableOverallEATClaims {
+    public: 
+        std::string m_sub;
+        SerializableCommonEATClaims m_common_claims;
+
+        std::string m_claims_version;
+        std::unordered_map<std::string, std::string> m_submod_digests;
+
+        bool m_overall_result;
+        std::string m_eat_nonce;
+};
+
+// payload inside the submod JWT tokens
+class SerializableEATSubmodClaims {
+    public: 
+        SerializableCommonEATClaims m_common_claims;
+        std::shared_ptr<Claims> m_device_claims;
+};
+
+// the entire detached EAT
+class SerializableDetachedEAT {
+      public: 
+         // can be deserialized to SerializableOverallEATClaims
+         std::string m_overall_jwt_token;
+         // each element can be deserialized to SerializableEATSubmodClaims
+         std::unordered_map<std::string, std::string> m_device_jwt_tokens;
+};
+
+void to_json(nlohmann::json& j, const SerializableDetachedEAT& detached_eat);
+void to_json(nlohmann::json& j, const SerializableOverallEATClaims& overall_claims);
+void to_json(nlohmann::json& j, const SerializableEATSubmodClaims& submod_claims);
+void to_json(nlohmann::json& j, const SerializableCommonEATClaims& out_common_claims);
+
+void from_json(const nlohmann::json& j, SerializableDetachedEAT& detached_eat);
+void from_json(const nlohmann::json& j, SerializableOverallEATClaims& overall_claims);
+void from_json(const nlohmann::json& j, SerializableEATSubmodClaims& submod_claims);
+void from_json(const nlohmann::json& j, SerializableCommonEATClaims& out_common_claims);
 } // namespace nvattestation

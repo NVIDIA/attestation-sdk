@@ -122,10 +122,6 @@ Error AttestationContext::ensure_init() {
         }
     }
 
-    if (m_claims_evaluator == nullptr) {
-        LOG_DEBUG("setting default relying party policy");
-        m_claims_evaluator = ClaimsEvaluatorFactory::create_default_claims_evaluator();
-    }
     return Error::Ok;
 }
 
@@ -211,10 +207,23 @@ void AttestationContext::set_switch_verifier(shared_ptr<ISwitchVerifier> verifie
     m_switch_verifier = verifier;
 }
 
+void AttestationContext::set_eat_private_key_pem(const std::string& private_key_pem) {
+    m_eat_private_key_pem = private_key_pem;
+}
+
+void AttestationContext::set_eat_issuer(const std::string& issuer) {
+    m_eat_issuer = issuer;
+}
+
+void AttestationContext::set_eat_kid(const std::string& kid) {
+    m_eat_kid = kid;
+}
+
 // NOLINTEND(performance-unnecessary-value-param)
 
 Error AttestationContext::attest_system(
     Nonce nonce,
+    std::string& out_detached_eat, 
     ClaimsCollection& out_claims
 ) {
     Error err = ensure_init();
@@ -235,14 +244,14 @@ Error AttestationContext::attest_system(
 
     // first pass at unified claims
     // TODO: determine final structure to pass to RP policy
-    ClaimsCollection all_claims {};
+    out_claims = ClaimsCollection();
     if (m_gpu_enabled) {
         ClaimsCollection claims {};
         err = attest_gpus(nonce, claims);
         if (err != Error::Ok) {
             return err;
         }
-        all_claims.extend(claims);
+        out_claims.extend(claims);
     }
     if (m_switch_enabled) {
         ClaimsCollection claims {};
@@ -250,15 +259,23 @@ Error AttestationContext::attest_system(
         if (err != Error::Ok) {
             return err;
         }
-        all_claims.extend(claims);
+        out_claims.extend(claims);
+    }
+
+    err = out_claims.get_detached_eat(out_detached_eat, m_eat_private_key_pem, m_eat_issuer, m_eat_kid);
+    if (m_claims_evaluator == nullptr) {
+        return err;
+    }
+
+    if (err != Error::Ok && err != Error::OverallResultFalse) {
+        return err;
     }
 
     bool policy_match = false;
-    err = m_claims_evaluator->evaluate_claims(all_claims, policy_match);
+    err = m_claims_evaluator->evaluate_claims(out_claims, policy_match);
     if (err != Error::Ok) {
         return err;
     }
-    out_claims = all_claims;
     if (!policy_match) {
         LOG_ERROR("Relying party policy REJECTED attestation results");
         return Error::RelyingPartyPolicyMismatch;
@@ -271,7 +288,7 @@ Error AttestationContext::attest_system(
 
 Error AttestationContext::attest_gpus(Nonce& nonce, ClaimsCollection& out_claims) {
     Error err {};
-    vector<GpuEvidence> evidence {};
+    vector<std::shared_ptr<GpuEvidence>> evidence {};
     err = m_gpu_evidence_source->get_evidence(nonce, evidence);
     if (err != Error::Ok) {
         LOG_ERROR("Failed to collect GPU evidence");
@@ -287,7 +304,7 @@ Error AttestationContext::attest_gpus(Nonce& nonce, ClaimsCollection& out_claims
 
 
 Error AttestationContext::attest_switches(Nonce& nonce, ClaimsCollection& out_claims) {
-    std::vector<SwitchEvidence> evidence {};
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence {};
     Error error = m_switch_evidence_source->get_evidence(nonce, evidence);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to collect switch evidence");

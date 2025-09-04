@@ -202,18 +202,19 @@ inline Error format_time(time_t timestamp, std::string& out_formatted_time) {
         return Error::InternalError;
     }
     
-    struct tm* tm_info = gmtime(&timestamp);
-    if (tm_info == nullptr) {
+    struct tm tm_info {};
+    struct tm* tm_result = gmtime_r(&timestamp, &tm_info);
+    if (tm_result == nullptr) {
         if (errno == EOVERFLOW) {
-            LOG_ERROR("gmtime() failed: timestamp too large to represent: " << timestamp);
+            LOG_ERROR("gmtime_r() failed: timestamp too large to represent: " << timestamp);
         } else {
-            LOG_ERROR("gmtime() failed for timestamp: " << timestamp);
+            LOG_ERROR("gmtime_r() failed for timestamp " << timestamp << ". errno: " << errno);
         }
         return Error::InternalError;
     }
     
     char buffer[80];
-    size_t result = strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S UTC", tm_info);
+    size_t result = strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
     if (result == 0) {
         LOG_ERROR("strftime() failed to format timestamp: " << timestamp);
         return Error::InternalError;
@@ -325,7 +326,10 @@ inline Error deserialize_from_json(const std::string& json_string, T& out_value)
         out_value = json.get<T>();
         return Error::Ok;
     } catch (const nlohmann::json::exception& e) {
-        LOG_ERROR("Failed to deserialize from JSON: " << e.what());
+        LOG_ERROR("Failed to deserialize from JSON: " << std::endl << json_string << std::endl << "The exception was: " << e.what());
+        return Error::InternalError;
+    } catch (...) {
+        LOG_ERROR("Unknown error occurred during JSON deserialization");
         return Error::InternalError;
     }
 }
@@ -452,4 +456,5 @@ static bool can_read_buffer(const std::vector<uint8_t>& buffer, size_t start_off
     return true;
 }
 
+Error compute_sha256_hex(const std::string& data, std::string& out_hex);
 } // namespace nvattestation

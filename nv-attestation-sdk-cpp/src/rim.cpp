@@ -375,6 +375,56 @@ Error RimDocument::get_measurements(Measurements& out_measurements) const {
     return Error::Ok;
 }
 
+Error RimDocument::get_manufacturer_id(std::string& out_manufacturer_id) const {
+    // tested in rim_test.cpp
+    auto x_path_ctx = nv_unique_ptr<xmlXPathContext>(xmlXPathNewContext(m_doc.get()));
+    if (!x_path_ctx) {
+        LOG_ERROR("Failed to create XPath context");
+        return Error::InternalError;
+    }
+
+    // Register the ns0 namespace for SoftwareIdentity schema
+    if(xmlXPathRegisterNs(x_path_ctx.get(), BAD_CAST "ns0", BAD_CAST RimDocument::ISO_19770_SCHEMA_NAMESPACE_URI) != 0) {
+        LOG_ERROR("Failed to register ns0 namespace");
+        return Error::InternalError;
+    }
+
+    // Register the ns1 namespace for TCG RIM schema
+    if(xmlXPathRegisterNs(x_path_ctx.get(), BAD_CAST "ns1", BAD_CAST RimDocument::TCG_RIM_NAMESPACE_URI) != 0) {
+        LOG_ERROR("Failed to register ns1 namespace");
+        return Error::InternalError;
+    }
+
+    // Find the Meta element with ns1:FirmwareManufacturerId attribute
+    auto x_path_obj = nv_unique_ptr<xmlXPathObject>(xmlXPathEvalExpression(BAD_CAST "//ns0:Meta[@ns1:FirmwareManufacturerId]", x_path_ctx.get()));
+    if (!x_path_obj) {
+        LOG_ERROR("Failed to get Meta XPath object");
+        return Error::RimInvalidSchema;
+    }
+
+    xmlNodeSetPtr nodes = x_path_obj->nodesetval;
+    if (nodes == nullptr) {
+        LOG_ERROR("Failed to get nodesetval from XPath object");
+        return Error::RimInvalidSchema;
+    }
+
+    if (nodes->nodeNr != 1) {
+        LOG_ERROR("Expected exactly 1 Meta element with ns1:FirmwareManufacturerId attribute, found " << nodes->nodeNr);
+        return Error::RimInvalidSchema;
+    }
+
+    // Extract the ns1:FirmwareManufacturerId attribute from the Meta node
+    xmlNodePtr meta_node = nodes->nodeTab[0];
+    auto manufacturer_id_attr = nv_unique_ptr<xmlChar>(xmlGetNsProp(meta_node, BAD_CAST "FirmwareManufacturerId", BAD_CAST RimDocument::TCG_RIM_NAMESPACE_URI));
+    if (!manufacturer_id_attr) {
+        LOG_ERROR("Failed to extract ns1:FirmwareManufacturerId attribute from Meta element");
+        return Error::RimInvalidSchema;
+    }
+
+    out_manufacturer_id = std::string(reinterpret_cast<const char*>(manufacturer_id_attr.get()));
+    return Error::Ok;
+}
+
 // RimClient functions
 NvRemoteRimStoreImpl::NvRemoteRimStoreImpl(const std::string &server_host) {
     m_base_url = server_host;

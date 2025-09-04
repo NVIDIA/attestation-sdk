@@ -49,27 +49,28 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::verify_evidence(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
+    Error LocalGpuVerifier::verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
         if (evidence_policy.gpu_claims_version == GpuClaimsVersion::V3) {
             return generate_claims_v3(evidence, evidence_policy, out_claims);
         }
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::generate_claims_v3(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& policy, ClaimsCollection& out_claims) const {
+    Error LocalGpuVerifier::generate_claims_v3(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, ClaimsCollection& out_claims) const {
         for (const auto& cur_evidence : evidence) {
             GpuEvidence::AttestationReport attestation_report;
-            Error error = cur_evidence.get_parsed_attestation_report(attestation_report);
+            Error error = cur_evidence->get_parsed_attestation_report(attestation_report);
             if (error != Error::Ok) {
                 return error;
             }
             GpuEvidenceClaims gpu_evidence_claims;
-            LOG_DEBUG("Generating GPU evidence claims for GPU index " << cur_evidence.get_uuid());
-            error = cur_evidence.generate_gpu_evidence_claims(attestation_report, policy.ocsp_options, *m_ocsp_http_client, gpu_evidence_claims);
+            LOG_DEBUG("Generating GPU evidence claims for GPU index " << cur_evidence->get_uuid());
+            error = cur_evidence->generate_gpu_evidence_claims(attestation_report, policy.ocsp_options, *m_ocsp_http_client, gpu_evidence_claims);
             if (error != Error::Ok) {
                 return error;
             }
             std::shared_ptr<SerializableGpuClaimsV3> serializable_claims = std::make_shared<SerializableGpuClaimsV3>();
+            serializable_claims->m_nonce = to_hex_string(cur_evidence->get_nonce());
             error = set_gpu_evidence_claims(gpu_evidence_claims, policy, *serializable_claims);
             if (error != Error::Ok) {
                 return error;
@@ -77,7 +78,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             
             std::string driver_rim_id;
 
-            error = attestation_report.get_driver_rim_id(cur_evidence.get_gpu_architecture(), driver_rim_id);
+            error = attestation_report.get_driver_rim_id(cur_evidence->get_gpu_architecture(), driver_rim_id);
             if (error != Error::Ok) {
                 return error;
             }
@@ -170,6 +171,13 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_revocation_reason = driver_rim_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
         out_serializable_claims.m_driver_rim_signature_verified = driver_rim_claims.m_signature_verified;
 
+        std::string oemid; 
+        error = driver_rim_document.get_manufacturer_id(oemid);
+        if (error != Error::Ok) {
+            return error;
+        }
+        out_serializable_claims.m_oem_id = oemid;
+
         return Error::Ok;
     }
 
@@ -207,6 +215,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_ar_signature_verified = gpu_evidence_claims.m_attestation_report_claims.m_signature_verified;
 
         out_serializable_claims.m_gpu_ar_nonce_match = gpu_evidence_claims.m_gpu_ar_nonce_match;
+        out_serializable_claims.m_hwmodel = gpu_evidence_claims.m_attestation_report_claims.m_hwmodel;
+        out_serializable_claims.m_ueid = gpu_evidence_claims.m_attestation_report_claims.m_ueid;
         return Error::Ok;
     }
 
@@ -386,7 +396,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error NvRemoteGpuVerifier::verify_evidence(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
+    Error NvRemoteGpuVerifier::verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) {
         if (evidence.empty()) {
             LOG_ERROR("No evidence provided");
             return Error::BadArgument;
@@ -397,20 +407,20 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         
         // todo: is this ok? getting nonce from the first evidence item?
         // all the evidence items should have the same nonce, right?
-        attest_request.nonce = to_hex_string(evidence[0].get_nonce());
-        attest_request.arch = to_string(evidence[0].get_gpu_architecture());
+        attest_request.nonce = to_hex_string(evidence[0]->get_nonce());
+        attest_request.arch = to_string(evidence[0]->get_gpu_architecture());
         // todo: get claims version from evidence policy. add evidence policy to remote verifier. 
         // will it need to send evidence policy to nras?
         attest_request.claims_version = to_string(GpuClaimsVersion::V3); 
         std::vector<std::pair<std::string, std::string>> evidence_list;
         for (const auto& evidence_item : evidence) {
             std::string evidence_b64;
-            error = encode_base64(evidence_item.get_attestation_report(), evidence_b64);
+            error = encode_base64(evidence_item->get_attestation_report(), evidence_b64);
             if (error != Error::Ok) {
                 return error;
             }
             std::string cert_chain_b64;
-            error = encode_base64(evidence_item.get_attestation_cert_chain(), cert_chain_b64);
+            error = encode_base64(evidence_item->get_attestation_cert_chain(), cert_chain_b64);
             if (error != Error::Ok) {
                 return error;
             }
@@ -438,7 +448,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             return Error::NrasAttestationError;
         }
 
-        NRASAttestResponseV4 attest_response;
+        SerializableDetachedEAT attest_response;
         error = deserialize_from_json(attest_response_str, attest_response);
         if (error != Error::Ok) {
             return error;
@@ -451,8 +461,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             return error;
         }
 
-        if (eat_nonce != evidence[0].get_nonce()) {
-            LOG_ERROR("GPU evidence nonce and EAT nonce mismatch: " << to_hex_string(eat_nonce) << " != " << to_hex_string(evidence[0].get_nonce()));
+        if (eat_nonce != evidence[0]->get_nonce()) {
+            LOG_ERROR("GPU evidence nonce and EAT nonce mismatch: " << to_hex_string(eat_nonce) << " != " << to_hex_string(evidence[0]->get_nonce()));
             return Error::NrasTokenInvalid;
         }
 

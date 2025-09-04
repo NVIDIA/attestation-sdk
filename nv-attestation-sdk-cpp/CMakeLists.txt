@@ -74,7 +74,7 @@ FetchContent_Populate(jwt-cpp)
 add_library(own-jwt-cpp INTERFACE)
 target_include_directories(own-jwt-cpp
     INTERFACE ${jwt-cpp_SOURCE_DIR}/include)
-# jwt-cpp is advertized as a c++11 library. but it somehow uses c++17 features, 
+# jwt-cpp is advertised as a c++11 library. but it somehow uses c++17 features, 
 # but it should work with c++14 also. so disable this warning.
 target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
 
@@ -143,6 +143,7 @@ add_library(nvat
   src/switch/spdm/switch_opaque_data_parser.cpp
   src/nv_http.cpp
   src/nv_jwt.cpp
+  src/utils.cpp
 )
 
 set(NV_ATTESTATION_SOVERSION 0)

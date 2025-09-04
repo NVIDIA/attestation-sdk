@@ -35,14 +35,13 @@ enum class GpuClaimsVersion  {
 std::string to_string(GpuClaimsVersion version);
 Error gpu_claims_version_from_c(uint8_t value, GpuClaimsVersion& out_version);
 
-/**
- * @brief Represents claims which are used for attestation
- * 
- * These claims are included in attestation evidence and are used by a verifier 
- * to evaluate the trustworthiness of the computing environment.
- */
 class SerializableGpuClaimsV3 : public Claims {
     public:
+        std::string m_nonce;
+        std::string m_hwmodel;
+        std::string m_ueid;
+        std::string m_oem_id;
+
         std::string m_driver_version;
         std::string m_vbios_version;
 
@@ -76,6 +75,8 @@ class SerializableGpuClaimsV3 : public Claims {
         bool m_vbios_rim_measurements_available;
         bool m_vbios_index_no_conflict;
 
+        std::string m_version;
+
         
 
         /**
@@ -96,6 +97,11 @@ class SerializableGpuClaimsV3 : public Claims {
          */
         Error serialize_json(std::string& out_string) const override;
 
+        Error get_nonce(std::string& out_nonce) const override;
+        Error get_overall_result(bool& out_result) const override;
+        Error get_version(std::string& out_version) const override;
+        Error get_device_type(std::string& out_device_type) const override;
+
         /**
          * @brief Serializes the GpuClaims as CBOR
          * @return CBOR bytes
@@ -105,19 +111,7 @@ class SerializableGpuClaimsV3 : public Claims {
     protected:
         nlohmann::json to_json_object() const override;
     };
-
-/**
- * @brief Deserializes the GpuClaims from JSON
- * @param j JSON object to read from
- * @param out_claims SerializableGpuClaimsV3 object to populate
- */
 void from_json(const nlohmann::json& j, SerializableGpuClaimsV3& out_claims);
-
-/**
- * @brief Serializes the GpuClaims as JSON
- * @param j JSON object to populate
- * @param claims SerializableGpuClaimsV3 object to serialize
- */
 void to_json(nlohmann::json& j, const SerializableGpuClaimsV3& claims);
 
 /**
@@ -127,5 +121,4 @@ void to_json(nlohmann::json& j, const SerializableGpuClaimsV3& claims);
  * @return true if objects are equal, false otherwise
  */
 bool operator==(const SerializableGpuClaimsV3& lhs, const SerializableGpuClaimsV3& rhs);
-
 }

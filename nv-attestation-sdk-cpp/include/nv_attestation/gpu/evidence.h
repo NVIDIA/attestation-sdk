@@ -54,6 +54,8 @@ class GpuEvidenceClaims {
         public:
         CertChainClaims m_cert_chain_claims;
         bool m_fwid_match;
+        std::string m_hwmodel;
+        std::string m_ueid;
         bool m_parsed;
         bool m_signature_verified;
     };
@@ -142,8 +144,8 @@ class GpuEvidence {
 
         Error to_json(std::string& out_string) const;
         Error from_json(const std::string& json_string);
-        static Error collection_to_json(const std::vector<GpuEvidence>& collection, std::string& out_string);
-        static Error collection_from_json(const std::string& json_string, std::vector<GpuEvidence>& out_collection);
+        static Error collection_to_json(const std::vector<std::shared_ptr<GpuEvidence>>& collection, std::string& out_string);
+        static Error collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<GpuEvidence>>& out_collection);
 
         // Getter methods
         GpuArchitecture get_gpu_architecture() const { return m_gpu_architecture; }
@@ -192,7 +194,7 @@ class IGpuEvidenceSource {
          * @brief Fallible operation to collect a list of GpuEvidence.
          * @return A vector of GpuEvidence to submit to a verifier
          */
-        virtual Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) const = 0;
+        virtual Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const = 0;
 };
 
 /**
@@ -200,18 +202,18 @@ class IGpuEvidenceSource {
  */
 class NvmlEvidenceCollector : public IGpuEvidenceSource {
     public:
-        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) const override;
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
 
     // TODO: the implementation may need an option to require CC or fail if in dev mode. These can be private vars configured with setters.
 };
 
 class GpuEvidenceSourceFromJsonFile : public IGpuEvidenceSource {
     public:
-        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) const override;
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
         static Error create(const std::string& file_path, GpuEvidenceSourceFromJsonFile& out_source);
 
     private:
         std::string m_file_path;
-        std::vector<GpuEvidence> m_evidence;
+        std::vector<std::shared_ptr<GpuEvidence>> m_evidence;
 };
 }

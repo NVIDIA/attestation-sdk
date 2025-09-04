@@ -27,6 +27,7 @@ add_executable(nv-attestation-unit-tests
     switch/verifier_test.cpp
     switch_test_utils.cpp
     nv_http_test.cpp
+    claims_test.cpp
 ) 
 
 target_include_directories(nv-attestation-unit-tests PRIVATE 
@@ -46,10 +47,55 @@ include(FetchContent)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
 FetchContent_MakeAvailable(json)
 
+find_package(jwt-cpp QUIET)
+
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # the unit tests can be built as part of the sdk (in which case it will 
+    # link against the build tree) or it can be built standalone in which 
+    # case it will link against the installed version using cmake. 
+    # if running as standalone, we need to fetch jwt-cpp
+    
+    # ideally, in both the cases, we should be able to fetch content jwt-cpp
+    # but in the sdk build jwt-cpp is handled differently from other dependencies
+    # because of that,
+    # we cannot fetch it again here if we build as part of the sdk.
+
+    # therefore, we fetch it only if we build as standalone
+
+    # Set JWT-CPP options before fetching
+    set(JWT_DISABLE_PICOJSON ON CACHE BOOL "Disable picojson support in jwt-cpp")
+    set(JWT_BUILD_EXAMPLES OFF CACHE BOOL "Disable building jwt-cpp examples")
+
+    FetchContent_Declare(
+    jwt-cpp
+    GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
+    GIT_TAG v0.7.1  # Use the latest stable version
+    EXCLUDE_FROM_ALL
+    )
+
+    # the fetch content for jwt-cpp is being handled differently because 
+    # it's headers were getting installed even when using EXCLUDE_FROM_ALL
+    # presumably, its because jwt-cpp is not respecting all of CMAKE's rules
+    # this way prevents the headers being installed when the sdk is installed 
+    # the headers must not be installed because we want to just link to this 
+    # statically. there is no need to add unnecessary libraries to target machines.
+    FetchContent_Populate(jwt-cpp)
+    add_library(own-jwt-cpp INTERFACE)
+    target_include_directories(own-jwt-cpp
+        INTERFACE ${jwt-cpp_SOURCE_DIR}/include)
+    # jwt-cpp is advertized as a c++11 library. but it somehow uses c++17 features, 
+    # but it should work with c++14 also. so disable this warning.
+    target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
+endif()
+
 target_link_libraries(nv-attestation-unit-tests PRIVATE
     GTest::gtest
     GTest::gmock
     nlohmann_json::nlohmann_json
+    # link regarless of whether we are building as part of the sdk or standalone
+    # if built as part of the sdk, the cmake in sdk will have 
+    # made this available.
+    own-jwt-cpp
 )
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)

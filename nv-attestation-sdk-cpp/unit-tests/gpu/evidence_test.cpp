@@ -32,30 +32,16 @@
 #include "test_utils.h" // Added for MockEvidenceCollector and MockGpuEvidenceData
 
 
-void assert_gpu_evidence_claims(const GpuEvidenceClaims& claims, const std::string& driver_version, const std::string& vbios_version) {
-    EXPECT_EQ(claims.m_driver_version, driver_version);
-    EXPECT_EQ(claims.m_vbios_version, vbios_version);
-    EXPECT_EQ(claims.m_gpu_ar_arch_match, true);
-    EXPECT_EQ(claims.m_gpu_ar_nonce_match, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_fwid_match, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_parsed, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_signature_verified, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.status, CertChainStatus::VALID);
-    EXPECT_FALSE(claims.m_attestation_report_claims.m_cert_chain_claims.expiration_date.empty());
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.status, OCSPStatus::GOOD);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.nonce_matches, true);
-    EXPECT_LT(time(nullptr), claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.ocsp_resp_expiration_time);
-}
 // Define a test fixture for GpuEvidence tests
 class GpuEvidenceTest : public ::testing::Test {
 protected:
-    GpuEvidence m_evidence;
+    std::shared_ptr<GpuEvidence> m_evidence;
     MockGpuEvidenceData m_mock_data;
     
     void SetUp() override {
         m_mock_data = MockGpuEvidenceData::create_default();
         
-        std::vector<GpuEvidence> evidence_list;
+        std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
         
         Error error = get_mock_gpu_evidence(m_mock_data, evidence_list);
         ASSERT_EQ(error, Error::Ok);
@@ -68,13 +54,13 @@ protected:
 
 // Test case using the fixture
 TEST_F(GpuEvidenceTest, CanCreateEvidence) {
-    EXPECT_EQ(m_evidence.get_gpu_architecture(), m_mock_data.architecture);
-    EXPECT_EQ(m_evidence.get_board_id(), m_mock_data.board_id);
-    EXPECT_EQ(m_evidence.get_uuid(), m_mock_data.uuid);
-    EXPECT_EQ(m_evidence.get_vbios_version(), m_mock_data.vbios_version);
-    EXPECT_EQ(m_evidence.get_driver_version(), m_mock_data.driver_version);
+    EXPECT_EQ(m_evidence->get_gpu_architecture(), m_mock_data.architecture);
+    EXPECT_EQ(m_evidence->get_board_id(), m_mock_data.board_id);
+    EXPECT_EQ(m_evidence->get_uuid(), m_mock_data.uuid);
+    EXPECT_EQ(m_evidence->get_vbios_version(), m_mock_data.vbios_version);
+    EXPECT_EQ(m_evidence->get_driver_version(), m_mock_data.driver_version);
     
-    EXPECT_FALSE(m_evidence.get_attestation_report().empty());
+    EXPECT_FALSE(m_evidence->get_attestation_report().empty());
 }
 
 TEST_F(GpuEvidenceTest, CorrectGpuEvidenceClaims) {
@@ -84,16 +70,21 @@ TEST_F(GpuEvidenceTest, CorrectGpuEvidenceClaims) {
     Error error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis.nvidia.com", HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     GpuEvidence::AttestationReport attestation_report;
-    error = m_evidence.get_parsed_attestation_report(attestation_report);
+    error = m_evidence->get_parsed_attestation_report(attestation_report);
     ASSERT_EQ(error, Error::Ok) << "Failed to parse attestation report";
-    error = m_evidence.generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
+    error = m_evidence->generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
     ASSERT_EQ(error, Error::Ok) << "Failed to generate GPU evidence claims";
 
     LOG_DEBUG("Claims: " << claims);
     
     // Print all fields of the claims using the << operator
     LOG_DEBUG(claims);
-    assert_gpu_evidence_claims(claims, m_mock_data.driver_version, m_mock_data.vbios_version);
+    // need to check only these claims because if the any of the other claims 
+    // are not as expected, we would get an error
+    ASSERT_EQ(claims.m_driver_version, m_mock_data.driver_version);
+    ASSERT_EQ(claims.m_vbios_version, m_mock_data.vbios_version);
+    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GH100 A01 GSP BROM");
 }
 
 TEST_F(GpuEvidenceTest, BlackwellCorrectGpuEvidenceClaims) {
@@ -104,26 +95,29 @@ TEST_F(GpuEvidenceTest, BlackwellCorrectGpuEvidenceClaims) {
     ASSERT_EQ(error, Error::Ok);    
 
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_blackwell_scenario();
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     error = get_mock_gpu_evidence(mock_data, evidence_list);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(evidence_list.empty());
 
-    GpuEvidence gpu_evidence = evidence_list[0];
+    std::shared_ptr<GpuEvidence> gpu_evidence = evidence_list[0];
     GpuEvidence::AttestationReport attestation_report;
-    error = gpu_evidence.get_parsed_attestation_report(attestation_report);
+    error = gpu_evidence->get_parsed_attestation_report(attestation_report);
     ASSERT_EQ(error, Error::Ok) << "Failed to parse attestation report";
-    error = gpu_evidence.generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
+    error = gpu_evidence->generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
     ASSERT_EQ(error, Error::Ok) << "Failed to generate GPU evidence claims";
     
     // Print all fields of the claims using the << operator
     LOG_DEBUG(claims);
-    assert_gpu_evidence_claims(claims, mock_data.driver_version, mock_data.vbios_version);
+    ASSERT_EQ(claims.m_driver_version, mock_data.driver_version);
+    ASSERT_EQ(claims.m_vbios_version, mock_data.vbios_version);
+    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "474146966256510137525212816567191319424869109849");
+    ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GB100 A01 GSP BROM");
 }
 
 TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_default();
-    std::vector<GpuEvidence> evidence_list;
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
     Error error = get_mock_gpu_evidence(mock_data, evidence_list);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(evidence_list.empty());
@@ -145,15 +139,15 @@ TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
     error = GpuEvidenceSourceFromJsonFile::create(temp_file_path, source);
     ASSERT_EQ(error, Error::Ok);
 
-    std::vector<GpuEvidence> deserialized_evidence_list;
-    error = source.get_evidence({}, deserialized_evidence_list);
+    std::vector<std::shared_ptr<GpuEvidence>> deserialized_evidence_list;
+    error = source.get_evidence(evidence_list[0]->get_nonce(), deserialized_evidence_list);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(deserialized_evidence_list.empty());
-    GpuEvidence deserialized_evidence = deserialized_evidence_list[0];
+    std::shared_ptr<GpuEvidence> deserialized_evidence = deserialized_evidence_list[0];
     // LOG_DEBUG("Deserialized evidence: " << deserialized_evidence);
 
-    EXPECT_EQ(deserialized_evidence.get_attestation_report(), evidence_list[0].get_attestation_report());
-    EXPECT_EQ(deserialized_evidence.get_attestation_cert_chain(), evidence_list[0].get_attestation_cert_chain());
+    EXPECT_EQ(deserialized_evidence->get_attestation_report(), evidence_list[0]->get_attestation_report());
+    EXPECT_EQ(deserialized_evidence->get_attestation_cert_chain(), evidence_list[0]->get_attestation_cert_chain());
 
     GpuEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
@@ -161,13 +155,16 @@ TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
     error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     GpuEvidence::AttestationReport attestation_report; 
-    error = deserialized_evidence.get_parsed_attestation_report(attestation_report);
+    error = deserialized_evidence->get_parsed_attestation_report(attestation_report);
     ASSERT_EQ(error, Error::Ok);
-    error = deserialized_evidence.generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
+    error = deserialized_evidence->generate_gpu_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
     ASSERT_EQ(error, Error::Ok);
     // LOG_DEBUG("Claims: " << claims);
 
-    assert_gpu_evidence_claims(claims, mock_data.driver_version, mock_data.vbios_version);
+    ASSERT_EQ(claims.m_driver_version, mock_data.driver_version);
+    ASSERT_EQ(claims.m_vbios_version, mock_data.vbios_version);
+    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GH100 A01 GSP BROM");
 }
 
 TEST(GpuEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
@@ -180,15 +177,16 @@ TEST(GpuEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_nonce_t nonce;
-    err = nvat_nonce_create(&nonce, 32);
+    err = nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb");
     ASSERT_EQ(err, NVAT_RC_OK);
 
-    nvat_gpu_evidence_collection_t collection;
-    err = nvat_gpu_evidence_collect(gpu_evidence_source, nonce, &collection);
+    nvat_gpu_evidence_t* gpu_evidences = nullptr;
+    size_t length = 0;
+    err = nvat_gpu_evidence_collect(gpu_evidence_source, nonce, &gpu_evidences, &length);
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_str_t serialized_evidence;
-    err = nvat_gpu_evidence_serialize_json(collection, &serialized_evidence);
+    err = nvat_gpu_evidence_serialize_json(gpu_evidences, length, &serialized_evidence);
     ASSERT_EQ(err, NVAT_RC_OK);
     char * serialized_evidence_str = nullptr;
     err = nvat_str_get_data(serialized_evidence, &serialized_evidence_str);
@@ -202,7 +200,7 @@ TEST(GpuEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     EXPECT_EQ(actual_json_obj, expected_json_obj);
 
     nvat_nonce_free(&nonce);
-    nvat_gpu_evidence_collection_free(&collection);
+    nvat_gpu_evidence_array_free(&gpu_evidences, length);
     nvat_gpu_evidence_source_free(&gpu_evidence_source);
     nvat_str_free(&serialized_evidence);
 }

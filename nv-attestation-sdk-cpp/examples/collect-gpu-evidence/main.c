@@ -24,7 +24,8 @@ typedef struct context {
     nvat_logger_t logger;
     nvat_gpu_evidence_source_t evidence_source;
     nvat_nonce_t nonce;
-    nvat_gpu_evidence_collection_t evidence_collection;
+    nvat_gpu_evidence_t* evidence_collection;
+    size_t num_evidences;
     nvat_gpu_verifier_t verifier;
     nvat_evidence_policy_t evidence_policy;
     nvat_claims_collection_t claims;
@@ -79,7 +80,7 @@ nvat_rc_t attest(void) {
     }
 
     nvat_str_t nonce_str;
-    err = nvat_nonce_hex_string(ctx.nonce, &nonce_str);
+    err = nvat_nonce_to_hex_string(ctx.nonce, &nonce_str);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
@@ -92,14 +93,14 @@ nvat_rc_t attest(void) {
     }
     fprintf(stderr, "nonce is %s\n", buf);
 
-    err = nvat_gpu_evidence_collect(ctx.evidence_source, ctx.nonce, &ctx.evidence_collection);
+    err = nvat_gpu_evidence_collect(ctx.evidence_source, ctx.nonce, &ctx.evidence_collection, &ctx.num_evidences);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
     }
 
     nvat_str_t json_str;
-    err = nvat_gpu_evidence_serialize_json(ctx.evidence_collection, &json_str);
+    err = nvat_gpu_evidence_serialize_json(ctx.evidence_collection, ctx.num_evidences, &json_str);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
@@ -138,7 +139,7 @@ nvat_rc_t attest(void) {
         return err;
     }
 
-    err = nvat_verify_gpu_evidence(ctx.verifier, ctx.evidence_collection, ctx.evidence_policy, &ctx.claims);
+    err = nvat_verify_gpu_evidence(ctx.verifier, ctx.evidence_collection, ctx.num_evidences, ctx.evidence_policy, &ctx.claims);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
@@ -166,7 +167,7 @@ void teardown(context_t ctx) {
     nvat_logger_free(&ctx.logger);
     nvat_gpu_evidence_source_free(&ctx.evidence_source);
     nvat_nonce_free(&ctx.nonce);
-    nvat_gpu_evidence_collection_free(&ctx.evidence_collection);
+    nvat_gpu_evidence_array_free(&ctx.evidence_collection, ctx.num_evidences);
     nvat_gpu_verifier_free(&ctx.verifier);
     nvat_claims_collection_free(&ctx.claims);
     nvat_evidence_policy_free(&ctx.evidence_policy);

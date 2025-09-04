@@ -36,10 +36,10 @@ int main(int argc, char** argv) {
     app.set_config("--config", "config.toml", "Read options from a TOML configuration file");
 
     std::vector<std::string> devices;
-    std::string verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url;
+    std::string nonce, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url;
     
     CLI::App* version_subcommand = nvattest::create_version_subcommand(app);
-    CLI::App* attest_subcommand = nvattest::create_attest_subcommand(app, devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
+    CLI::App* attest_subcommand = nvattest::create_attest_subcommand(app, nonce, devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
 
     CLI11_PARSE(app, argc, argv);
 
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     if (version_subcommand->parsed()) {
         return nvattest::handle_version_subcommand();
     } else if (attest_subcommand->parsed()) {
-        return nvattest::handle_attest_subcommand(devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
+        return nvattest::handle_attest_subcommand(nonce, devices, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url);
     } else {
         // Default behavior is to display the help message
         std::cout << app.help() << std::endl;

@@ -67,47 +67,6 @@ class RegoClaimsEvaluator : public IClaimsEvaluator {
         }
 };
 
-
-std::shared_ptr<IClaimsEvaluator> ClaimsEvaluatorFactory::create_default_claims_evaluator() {
-    std::string default_policy = R"(
-    package policy
-    import future.keywords.every
-    default nv_match := false
-    
-    # Check if all certificate chain claims have valid status for GPU devices
-    gpu_certs_valid(result) {
-        result["x-nvidia-gpu-attestation-report-cert-chain"]["x-nvidia-cert-status"] == "valid"
-        result["x-nvidia-gpu-driver-rim-cert-chain"]["x-nvidia-cert-status"] == "valid"
-        result["x-nvidia-gpu-vbios-rim-cert-chain"]["x-nvidia-cert-status"] == "valid"
-    }
-    
-    # Check if all certificate chain claims have valid status for Switch devices
-    switch_certs_valid(result) {
-        result["x-nvidia-switch-attestation-report-cert-chain"]["x-nvidia-cert-status"] == "valid"
-        result["x-nvidia-switch-bios-rim-cert-chain"]["x-nvidia-cert-status"] == "valid"
-    }
-
-    nv_match_device(result) {
-        result["x-nvidia-device-type"] == "gpu"
-        gpu_certs_valid(result)
-    }
-
-    nv_match_device(result) {
-        result["x-nvidia-device-type"] == "nvswitch"
-        switch_certs_valid(result)
-    }
-    
-    nv_match {
-        every result in input {
-            result["measres"] == "success"
-            
-            nv_match_device(result)
-        }
-    }
-    )";
-    return std::make_shared<RegoClaimsEvaluator>(default_policy);
-}
-
 std::shared_ptr<IClaimsEvaluator> ClaimsEvaluatorFactory::create_rego_claims_evaluator(const std::string &policy) {
     return std::make_shared<RegoClaimsEvaluator>(policy);
 }

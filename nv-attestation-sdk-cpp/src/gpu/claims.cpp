@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
-#include "nv_attestation/gpu/claims.h"
-
 #include <nlohmann/json.hpp>
+
+#include "nv_attestation/gpu/claims.h"
+#include "nv_attestation/claims.h"
 #include "nv_attestation/error.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/utils.h"
@@ -70,6 +71,7 @@ namespace nvattestation
         , m_vbios_rim_signature_verified(false)
         , m_vbios_rim_measurements_available(false)
         , m_vbios_index_no_conflict(false)
+        , m_version("3.0")
     {
     }
 
@@ -83,14 +85,40 @@ namespace nvattestation
         return std::vector<std::uint8_t>();
     }
 
+    Error SerializableGpuClaimsV3::get_nonce(std::string& out_nonce) const {
+        out_nonce = m_nonce;
+        return Error::Ok;
+    }
+
+    Error SerializableGpuClaimsV3::get_overall_result(bool& out_result) const {
+        out_result = m_measurements_matching == SerializableMeasresClaim::Success;
+        return Error::Ok;
+    }
+
+    Error SerializableGpuClaimsV3::get_version(std::string& out_version) const {
+        out_version = m_version;
+        return Error::Ok;
+    }
+
+    Error SerializableGpuClaimsV3::get_device_type(std::string& out_device_type) const {
+        out_device_type = "gpu";
+        return Error::Ok;
+    }
+
     void from_json(const nlohmann::json& js, SerializableGpuClaimsV3& out_claims)
     {
         // Top-level claims using exact keys from to_json
+        out_claims.m_nonce = js.at("eat_nonce").get<std::string>();
         out_claims.m_measurements_matching = js.at("measres").get<SerializableMeasresClaim>();
         out_claims.m_secure_boot = deserialize_optional_shared_ptr<bool>(js, "secboot");
         out_claims.m_debug_status = deserialize_optional_shared_ptr<std::string>(js, "dbgstat");
         out_claims.m_mismatched_measurements = deserialize_optional_shared_ptr<std::vector<SerializableMismatchedMeasurements>>(js, "x-nvidia-mismatch-measurement-records");
         out_claims.m_gpu_arch_match = js.at("x-nvidia-gpu-arch-check").get<bool>();
+
+        out_claims.m_hwmodel = js.at("hwmodel").get<std::string>();
+        out_claims.m_ueid = js.at("ueid").get<std::string>();
+        out_claims.m_oem_id = js.at("oemid").get<std::string>();
+
         out_claims.m_driver_version = js.at("x-nvidia-gpu-driver-version").get<std::string>();
         out_claims.m_vbios_version = js.at("x-nvidia-gpu-vbios-version").get<std::string>();
 
@@ -115,12 +143,20 @@ namespace nvattestation
         out_claims.m_vbios_rim_signature_verified = js.at("x-nvidia-gpu-vbios-rim-signature-verified").get<bool>();
         out_claims.m_vbios_rim_measurements_available = js.at("x-nvidia-gpu-vbios-rim-measurements-available").get<bool>();
         out_claims.m_vbios_index_no_conflict = js.at("x-nvidia-gpu-vbios-index-no-conflict").get<bool>();
+
+        out_claims.m_version = "3.0";
     }
 
     void to_json(nlohmann::json& js, const SerializableGpuClaimsV3& claims) {
+        js["eat_nonce"] = claims.m_nonce;
         js["measres"] = claims.m_measurements_matching;
         js["secboot"] = serialize_optional_shared_ptr(claims.m_secure_boot.get());
         js["dbgstat"] = serialize_optional_shared_ptr(claims.m_debug_status.get());
+
+        js["hwmodel"] = claims.m_hwmodel;
+        js["ueid"] = claims.m_ueid;
+        js["oemid"] = claims.m_oem_id;
+
         js["x-nvidia-device-type"] = "gpu";
         js["x-nvidia-mismatch-measurement-records"] = serialize_optional_shared_ptr(claims.m_mismatched_measurements.get());
         js["x-nvidia-gpu-arch-check"] = claims.m_gpu_arch_match;
@@ -149,6 +185,7 @@ namespace nvattestation
         js["x-nvidia-gpu-vbios-rim-measurements-available"] = claims.m_vbios_rim_measurements_available;
         js["x-nvidia-gpu-vbios-index-no-conflict"] = claims.m_vbios_index_no_conflict;
 
+        js["x-nvidia-gpu-claims-version"] = "3.0";
     }
     
     nlohmann::json SerializableGpuClaimsV3::to_json_object() const {
@@ -160,7 +197,11 @@ namespace nvattestation
 
     // Operator== for SerializableGpuClaimsV3
     bool operator==(const SerializableGpuClaimsV3& lhs, const SerializableGpuClaimsV3& rhs) {
-        return lhs.m_measurements_matching == rhs.m_measurements_matching &&
+        return lhs.m_nonce == rhs.m_nonce &&
+               lhs.m_hwmodel == rhs.m_hwmodel &&
+               lhs.m_ueid == rhs.m_ueid &&
+               lhs.m_oem_id == rhs.m_oem_id &&
+               lhs.m_measurements_matching == rhs.m_measurements_matching &&
                lhs.m_gpu_arch_match == rhs.m_gpu_arch_match &&
                compare_shared_ptr(lhs.m_secure_boot, rhs.m_secure_boot) &&
                compare_shared_ptr(lhs.m_debug_status, rhs.m_debug_status) &&
@@ -182,7 +223,8 @@ namespace nvattestation
                lhs.m_gpu_vbios_rim_version_match == rhs.m_gpu_vbios_rim_version_match &&
                lhs.m_vbios_rim_signature_verified == rhs.m_vbios_rim_signature_verified &&
                lhs.m_vbios_rim_measurements_available == rhs.m_vbios_rim_measurements_available &&
-               lhs.m_vbios_index_no_conflict == rhs.m_vbios_index_no_conflict;
+               lhs.m_vbios_index_no_conflict == rhs.m_vbios_index_no_conflict &&
+               lhs.m_version == rhs.m_version;
     }
 
 }

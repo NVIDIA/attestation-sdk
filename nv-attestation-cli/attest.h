@@ -32,11 +32,12 @@ namespace nvattest {
      */
     class AttestOutput {
         public:
-            std::string claims;
             int result_code;
+            std::string claims;
+            std::string detached_eat;
         
             AttestOutput(const int result_code);
-            AttestOutput(const std::string& claims, const int result_code);
+            AttestOutput(const int result_code, const std::string& claims, const std::string& detached_eat);
             nlohmann::json to_json() const;
     };
 
@@ -56,6 +57,7 @@ namespace nvattest {
      */
     CLI::App* create_attest_subcommand(
         CLI::App& app,
+        std::string& nonce,
         std::vector<std::string>& devices,
         std::string& verifier,
         std::string& gpu_evidence, 
@@ -80,6 +82,7 @@ namespace nvattest {
      * @return Exit code for the subcommand handler (0 = success, 1 = failure, 2 = policy mismatch).
      */
     int handle_attest_subcommand(
+        std::string& nonce,
         std::vector<std::string>& devices,
         std::string& verifier,
         std::string& gpu_evidence, 

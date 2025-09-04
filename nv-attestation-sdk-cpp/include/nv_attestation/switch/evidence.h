@@ -72,6 +72,8 @@ class SwitchEvidenceClaims {
             public:
                 CertChainClaims m_cert_chain_claims;
                 bool m_fwid_match;
+                std::string m_hwmodel;
+                std::string m_ueid;
                 bool m_parsed;
                 bool m_signature_verified;
         };
@@ -132,8 +134,8 @@ class SwitchEvidence {
         std::string get_hex_nonce() const;
 
         Error to_json(std::string& out_string) const;
-        static Error collection_to_json(const std::vector<SwitchEvidence>& collection, std::string& out_string);
-        static Error collection_from_json(const std::string& json_string, std::vector<SwitchEvidence>& out_collection);
+        static Error collection_to_json(const std::vector<std::shared_ptr<SwitchEvidence>>& collection, std::string& out_string);
+        static Error collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<SwitchEvidence>>& out_collection);
     
         // Getter methods
         SwitchArchitecture get_switch_architecture() const { return m_switch_architecture; }
@@ -172,7 +174,7 @@ class ISwitchEvidenceSource {
          * @param out_evidence_list Output vector to populate with SwitchEvidence
          * @return Error indicating success or failure
          */
-        virtual Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence_list) const = 0;
+        virtual Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const = 0;
 };
 
 /**
@@ -180,16 +182,16 @@ class ISwitchEvidenceSource {
  */
 class NscqEvidenceCollector : public ISwitchEvidenceSource {
     public:
-        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence_list) const override;
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const override;
 };
 
 class SwitchEvidenceSourceFromJsonFile : public ISwitchEvidenceSource {
     public:
-        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<SwitchEvidence>& out_evidence_list) const override;
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const override;
         static Error create(const std::string& file_path, SwitchEvidenceSourceFromJsonFile& out_source);
 
     private:
-        std::vector<SwitchEvidence> m_evidence;
+        std::vector<std::shared_ptr<SwitchEvidence>> m_evidence;
 };
 
 }

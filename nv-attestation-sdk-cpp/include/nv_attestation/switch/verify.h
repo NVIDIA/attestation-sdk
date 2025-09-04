@@ -38,18 +38,18 @@ struct SwitchVerifyOptions {
 class ISwitchVerifier {
     public:
         virtual ~ISwitchVerifier() = default;
-        virtual Error verify_evidence(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) = 0;
+        virtual Error verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) = 0;
 };
 
 class LocalSwitchVerifier : public ISwitchVerifier {
     public:
         static Error create(LocalSwitchVerifier& out_verifier, const std::shared_ptr<IRimStore>& rim_store = nullptr, const std::shared_ptr<IOcspHttpClient>& ocsp_http_client = nullptr);
-        Error verify_evidence(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
+        Error verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
     private:
         std::shared_ptr<IRimStore> m_rim_store;
         std::shared_ptr<IOcspHttpClient> m_ocsp_http_client;
 
-        Error generate_claims_v3(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) const;
+        Error generate_claims_v3(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) const;
         static Error set_switch_evidence_claims(const SwitchEvidenceClaims& switch_evidence_claims, SerializableSwitchClaimsV3& out_serializable_claims);
         Error set_vbios_rim_claims(const RimDocument& vbios_rim, const EvidencePolicy& evidence_policy, SerializableSwitchClaimsV3& out_serializable_claims) const ;
         static Error generate_set_measurement_claims(const Measurements& golden_measurements, const SwitchEvidence::AttestationReport& attestation_report, SerializableSwitchClaimsV3& out_serializable_claims);
@@ -60,7 +60,7 @@ class NvRemoteSwitchVerifier : public ISwitchVerifier {
         static constexpr const char* DEFAULT_BASE_URL = "https://nras.attestation.nvidia.com";
 
         static Error init_from_env(NvRemoteSwitchVerifier& out_verifier, const char* nras_url=DEFAULT_BASE_URL, HttpOptions http_options = HttpOptions());
-        Error verify_evidence(const std::vector<SwitchEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
+        Error verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
     private:
         std::string m_nras_url;
         std::string m_eat_issuer;

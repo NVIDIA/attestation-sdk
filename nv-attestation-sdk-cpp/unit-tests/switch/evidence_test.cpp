@@ -33,9 +33,9 @@
 #include "nv_attestation/nvat_private.hpp"
 #include "test_utils.h"
 
-void assert_switch_evidence_claims(const SwitchEvidenceClaims& claims, const MockSwitchEvidenceData& mock_data) {
+void assert_switch_evidence_claims(const SwitchEvidenceClaims& claims, const std::string& bios_version, const std::string& hwmodel, const std::string& ueid) {
     EXPECT_EQ(claims.m_switch_arch_match, true);
-    EXPECT_EQ(claims.m_switch_bios_version, mock_data.bios_version);
+    EXPECT_EQ(claims.m_switch_bios_version, bios_version);
     EXPECT_EQ(claims.m_switch_ar_nonce_match, true);
     EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.status, CertChainStatus::VALID);
     EXPECT_FALSE(claims.m_attestation_report_claims.m_cert_chain_claims.expiration_date.empty());
@@ -45,12 +45,14 @@ void assert_switch_evidence_claims(const SwitchEvidenceClaims& claims, const Moc
     EXPECT_EQ(claims.m_attestation_report_claims.m_fwid_match, true);
     EXPECT_EQ(claims.m_attestation_report_claims.m_parsed, true);
     EXPECT_EQ(claims.m_attestation_report_claims.m_signature_verified, true);
+    EXPECT_EQ(claims.m_attestation_report_claims.m_hwmodel, hwmodel);
+    EXPECT_EQ(claims.m_attestation_report_claims.m_ueid, ueid);
 }
 
 // Define a test fixture for SwitchEvidence tests
 class SwitchEvidenceTest : public ::testing::Test {
 protected:
-    SwitchEvidence m_evidence;
+    std::shared_ptr<SwitchEvidence> m_evidence;
     MockSwitchEvidenceData m_mock_data;
     
     void SetUp() override {
@@ -58,7 +60,7 @@ protected:
         m_mock_data = MockSwitchEvidenceData::create_default();
         
         // Use the common get_mock_switch_evidence function with mock data
-        std::vector<SwitchEvidence> evidence_list;
+        std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
         
         Error error = get_mock_switch_evidence(m_mock_data, evidence_list);
         ASSERT_EQ(error, Error::Ok);
@@ -71,13 +73,13 @@ protected:
 
 // Test case using the fixture
 TEST_F(SwitchEvidenceTest, CanCreateEvidence) {
-    EXPECT_EQ(m_evidence.get_switch_architecture(), m_mock_data.architecture);
-    EXPECT_EQ(m_evidence.get_uuid(), m_mock_data.uuid);
-    EXPECT_EQ(m_evidence.get_tnvl_mode(), m_mock_data.tnvl_mode);
-    EXPECT_EQ(m_evidence.get_lock_mode(), m_mock_data.lock_mode);
+    EXPECT_EQ(m_evidence->get_switch_architecture(), m_mock_data.architecture);
+    EXPECT_EQ(m_evidence->get_uuid(), m_mock_data.uuid);
+    EXPECT_EQ(m_evidence->get_tnvl_mode(), m_mock_data.tnvl_mode);
+    EXPECT_EQ(m_evidence->get_lock_mode(), m_mock_data.lock_mode);
     
-    EXPECT_FALSE(m_evidence.get_attestation_report().empty());
-    EXPECT_FALSE(m_evidence.get_attestation_cert_chain().empty());
+    EXPECT_FALSE(m_evidence->get_attestation_report().empty());
+    EXPECT_FALSE(m_evidence->get_attestation_cert_chain().empty());
 }
 
 TEST_F(SwitchEvidenceTest, CorrectSwitchEvidenceClaimsV3) {
@@ -87,29 +89,18 @@ TEST_F(SwitchEvidenceTest, CorrectSwitchEvidenceClaimsV3) {
     Error error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     SwitchEvidence::AttestationReport attestation_report;
-    error = m_evidence.get_parsed_attestation_report(attestation_report);
+    error = m_evidence->get_parsed_attestation_report(attestation_report);
     ASSERT_EQ(error, Error::Ok) << "Failed to parse attestation report";
-    error = m_evidence.generate_switch_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
+    error = m_evidence->generate_switch_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
     ASSERT_EQ(error, Error::Ok) << "Failed to generate switch evidence claims";
 
-    EXPECT_EQ(claims.m_switch_arch_match, true);
-    EXPECT_EQ(claims.m_switch_bios_version, m_mock_data.bios_version);
-    EXPECT_EQ(claims.m_switch_ar_nonce_match, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_fwid_match, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.status, CertChainStatus::VALID);
-    EXPECT_FALSE(claims.m_attestation_report_claims.m_cert_chain_claims.expiration_date.empty());
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.status, OCSPStatus::GOOD);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.nonce_matches, true);
-    EXPECT_LT(time(nullptr), claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.ocsp_resp_expiration_time);
-
-    EXPECT_EQ(claims.m_attestation_report_claims.m_parsed, true);
-    EXPECT_EQ(claims.m_attestation_report_claims.m_signature_verified, true);
+    assert_switch_evidence_claims(claims, m_mock_data.bios_version, "LS_10 A01 FSP BROM", "694931143880983876767046803400974855445978836716");
 }
 
 TEST_F(SwitchEvidenceTest, CanSerializeAndDeserialize) {
     
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_default();
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     Error error = get_mock_switch_evidence(mock_data, evidence_list);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(evidence_list.empty());
@@ -128,16 +119,16 @@ TEST_F(SwitchEvidenceTest, CanSerializeAndDeserialize) {
     error = SwitchEvidenceSourceFromJsonFile::create(temp_file_path, source);
     ASSERT_EQ(error, Error::Ok);
 
-    std::vector<SwitchEvidence> deserialized_evidence_list;
-    error = source.get_evidence({}, deserialized_evidence_list);
+    std::vector<std::shared_ptr<SwitchEvidence>> deserialized_evidence_list;
+    error = source.get_evidence(evidence_list[0]->get_nonce(), deserialized_evidence_list);
     ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(deserialized_evidence_list.empty());
-    SwitchEvidence deserialized_evidence = deserialized_evidence_list[0];
+    std::shared_ptr<SwitchEvidence> deserialized_evidence = deserialized_evidence_list[0];
 
-    EXPECT_EQ(deserialized_evidence.get_attestation_report(), evidence_list[0].get_attestation_report());
-    EXPECT_EQ(deserialized_evidence.get_attestation_cert_chain(), evidence_list[0].get_attestation_cert_chain());
-    EXPECT_EQ(deserialized_evidence.get_nonce(), evidence_list[0].get_nonce());
-    EXPECT_EQ(deserialized_evidence.get_switch_architecture(), evidence_list[0].get_switch_architecture());
+    EXPECT_EQ(deserialized_evidence->get_attestation_report(), evidence_list[0]->get_attestation_report());
+    EXPECT_EQ(deserialized_evidence->get_attestation_cert_chain(), evidence_list[0]->get_attestation_cert_chain());
+    EXPECT_EQ(deserialized_evidence->get_nonce(), evidence_list[0]->get_nonce());
+    EXPECT_EQ(deserialized_evidence->get_switch_architecture(), evidence_list[0]->get_switch_architecture());
 
     SwitchEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
@@ -145,10 +136,10 @@ TEST_F(SwitchEvidenceTest, CanSerializeAndDeserialize) {
     error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     SwitchEvidence::AttestationReport attestation_report;
-    error = deserialized_evidence.get_parsed_attestation_report(attestation_report);
-    error = deserialized_evidence.generate_switch_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
+    error = deserialized_evidence->get_parsed_attestation_report(attestation_report);
+    error = deserialized_evidence->generate_switch_evidence_claims(attestation_report, ocsp_verify_options, ocsp_client, claims);
     ASSERT_EQ(error, Error::Ok);
-    assert_switch_evidence_claims(claims, mock_data);
+    assert_switch_evidence_claims(claims, mock_data.bios_version, "LS_10 A01 FSP BROM", "694931143880983876767046803400974855445978836716");
 }
 
 TEST(SwitchEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
@@ -162,15 +153,16 @@ TEST(SwitchEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_nonce_t nonce;
-    err = nvat_nonce_create(&nonce, 32);
+    err = nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb");
     ASSERT_EQ(err, NVAT_RC_OK);
 
-    nvat_switch_evidence_collection_t collection;
-    err = nvat_switch_evidence_collect(switch_evidence_source, nonce, &collection);
+    nvat_switch_evidence_t* switch_evidence_array = nullptr;
+    size_t num_evidences = 0;
+    err = nvat_switch_evidence_collect(switch_evidence_source, nonce, &switch_evidence_array, &num_evidences);
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_str_t serialized_evidence;
-    err = nvat_switch_evidence_serialize_json(collection, &serialized_evidence);
+    err = nvat_switch_evidence_serialize_json(switch_evidence_array, num_evidences, &serialized_evidence);
     ASSERT_EQ(err, NVAT_RC_OK);
     char * serialized_evidence_str = nullptr;
     err = nvat_str_get_data(serialized_evidence, &serialized_evidence_str);
@@ -184,7 +176,7 @@ TEST(SwitchEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     EXPECT_EQ(actual_json_obj, expected_json_obj);
 
     nvat_nonce_free(&nonce);
-    nvat_switch_evidence_collection_free(&collection);
+    nvat_switch_evidence_array_free(&switch_evidence_array, num_evidences);
     nvat_switch_evidence_source_free(&switch_evidence_source);
     nvat_str_free(&serialized_evidence);
 }

@@ -96,15 +96,15 @@ TEST_F(NscqIntegrationTest, SwitchEvidence) {
 TEST_F(NscqIntegrationTest, NscqEvidenceCollectorGetEvidence) {
     NscqEvidenceCollector collector;
     std::vector<uint8_t> nonce(NSCQ_ATTESTATION_REPORT_NONCE_SIZE, 0);
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     Error error = collector.get_evidence(nonce, evidence_list);
     ASSERT_EQ(error, Error::Ok);
     if (!evidence_list.empty()) {
         for (const auto& ev : evidence_list) {
-            ASSERT_NE(ev.get_switch_architecture(), SwitchArchitecture::Unknown);
-            ASSERT_FALSE(ev.get_uuid().empty());
-            ASSERT_FALSE(ev.get_attestation_report().empty());
-            ASSERT_FALSE(ev.get_attestation_cert_chain().empty());
+            ASSERT_NE(ev->get_switch_architecture(), SwitchArchitecture::Unknown);
+            ASSERT_FALSE(ev->get_uuid().empty());
+            ASSERT_FALSE(ev->get_attestation_report().empty());
+            ASSERT_FALSE(ev->get_attestation_cert_chain().empty());
         }
     }
 }

@@ -45,7 +45,7 @@ class IGpuVerifier {
          * @param evidence_policy Policy used to evaluate GPU evidence
          * @return GpuClaims
          */
-        virtual Error verify_evidence(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) = 0;
+        virtual Error verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) = 0;
     private: 
 
 
@@ -79,13 +79,13 @@ class LocalGpuVerifier : public IGpuVerifier {
          * @param evidence_policy Policy used to evaluate GPU evidence
          * @return GpuClaims
          */
-        Error verify_evidence(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
+        Error verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
         
     private:
         std::shared_ptr<IRimStore> m_rim_store;
         std::shared_ptr<IOcspHttpClient> m_ocsp_http_client;
         
-        Error generate_claims_v3(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& policy, ClaimsCollection& out_claims) const;
+        Error generate_claims_v3(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, ClaimsCollection& out_claims) const;
         static Error set_gpu_evidence_claims(const GpuEvidenceClaims& gpu_evidence_claims, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims);
         Error set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
         Error set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
@@ -100,7 +100,7 @@ class NvRemoteGpuVerifier : public IGpuVerifier {
         static constexpr const char* DEFAULT_BASE_URL = "https://nras.attestation.nvidia.com";
 
         static Error init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url=DEFAULT_BASE_URL, HttpOptions http_options = HttpOptions());
-        Error verify_evidence(const std::vector<GpuEvidence>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
+        Error verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, ClaimsCollection& out_claims) override;
 
     private:
         std::string m_nras_url;

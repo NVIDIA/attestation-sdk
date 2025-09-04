@@ -285,5 +285,18 @@ class X509CertChain{
          */
         Error get_fwid(size_t cert_index, FWIDType fwid_type, std::vector<uint8_t>& out_fwid) const;
 
+        /**
+         * @brief Extracts the common name from the first certificate in the chain.
+         * This is applicable for only GPU certificate chains. It is used to generate
+         * the hwmodel claim.
+         */
+        Error get_hwmodel(std::string& out_hwmodel) const;
+        /**
+         * @brief Extracts the serial number from the first certificate in the chain.
+         * This is used to generate the ueid claim for GPU and NVSwitch evidence claims
+         */
+        Error get_ueid(std::string& out_ueid) const;
+
+
 };
 }

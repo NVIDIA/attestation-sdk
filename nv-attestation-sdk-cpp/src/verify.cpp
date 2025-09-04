@@ -22,6 +22,7 @@
 #include "nv_attestation/nv_jwt.h"
 #include "nv_attestation/utils.h"
 #include "nvat.h"
+#include "nv_attestation/claims.h"
 
 namespace nvattestation {
 
@@ -63,19 +64,6 @@ bool OcspVerifyOptions::get_allow_cert_hold() const {
     return m_allow_cert_hold;
 }
 
-void from_json(const nlohmann::json& json, NRASAttestResponseV4& attest_response) {
-    attest_response.overall_jwt_token = json.at(0).at(1).get<std::string>();
-    unsigned long response_array_length = json.size();
-    attest_response.device_attest_responses = std::unordered_map<std::string, std::string>();
-    // first element is the overall JWT token
-    for(unsigned long i = 1; i < response_array_length; i++) {
-        auto claims_jwt_pair = json.at(i).get<nlohmann::json>();
-        for (const auto &items : claims_jwt_pair.items()) {
-            attest_response.device_attest_responses.insert({items.key(), items.value().get<std::string>()});
-        }
-    }
-}
-
 void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request) {
     json["nonce"] = attest_request.nonce;
     json["arch"] = attest_request.arch;
@@ -87,38 +75,62 @@ void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request) {
     json["evidence_list"] = evidence_list_json;
 }
 
-Error validate_and_decode_EAT(const NRASAttestResponseV4& attest_response, std::shared_ptr<JwkStore>& jwk_store, std::string &eat_issuer, NvHttpClient& http_client, std::vector<uint8_t>& out_eat_nonce, std::unordered_map<std::string, std::string>& out_claims) {
+Error validate_and_decode_EAT(const SerializableDetachedEAT& detached_eat, std::shared_ptr<JwkStore>& jwk_store, std::string &eat_issuer, NvHttpClient& http_client, std::vector<uint8_t>& out_eat_nonce, std::unordered_map<std::string, std::string>& out_claims) {
     LOG_DEBUG("Validating and decoding EAT");
     std::string overall_jwt_payload;
-    Error error = NvJwt::validate_and_decode(attest_response.overall_jwt_token, jwk_store, eat_issuer, overall_jwt_payload);
+    Error error = NvJwt::validate_and_decode(detached_eat.m_overall_jwt_token, jwk_store, eat_issuer, overall_jwt_payload);
     if (error != Error::Ok) {
         return error;
     }
-    nlohmann::json overall_jwt_payload_json;
-    error = deserialize_from_json<nlohmann::json>(overall_jwt_payload, overall_jwt_payload_json);
+    SerializableOverallEATClaims overall_jwt_payload_json;
+    LOG_DEBUG("Deserializing overall EAT claims from JSON");
+    error = deserialize_from_json<SerializableOverallEATClaims>(overall_jwt_payload, overall_jwt_payload_json);
     if (error != Error::Ok) {
         return error;
     }
-    if (!overall_jwt_payload_json.contains("eat_nonce")) {
+    if (overall_jwt_payload_json.m_eat_nonce.empty()) {
         LOG_ERROR("NRAS token does not contain eat_nonce");
         return Error::NrasTokenInvalid;
     }
-    std::string eat_nonce = overall_jwt_payload_json["eat_nonce"].get<std::string>();
+    std::string eat_nonce = overall_jwt_payload_json.m_eat_nonce;
     LOG_DEBUG("EAT nonce: " << eat_nonce);
     out_eat_nonce = hex_string_to_bytes(eat_nonce);
 
     out_claims = std::unordered_map<std::string, std::string>();
-    
-    for(const auto &item : attest_response.device_attest_responses) {
-        std::string device_id = item.first;
-        std::string claims_jwt = item.second;
+
+    // for each submod digest in the main JWT, validate it is equal to 
+    // digest of the submod JWT token
+    for (const auto& submod_digest_item : overall_jwt_payload_json.m_submod_digests) {
+        std::string device_id = submod_digest_item.first;
+        std::string submod_digest_from_overall_jwt = submod_digest_item.second;
+        auto it = detached_eat.m_device_jwt_tokens.find(device_id);
+        if (it == detached_eat.m_device_jwt_tokens.end()) {
+            LOG_ERROR("Submod digest for device: " << device_id << " not found in detached EAT");
+            return Error::NrasTokenInvalid;
+        }
+        std::string device_claims_jwt = it->second;
         std::string claims_payload;
-        error = NvJwt::validate_and_decode(claims_jwt, jwk_store, eat_issuer, claims_payload);
+        error = NvJwt::validate_and_decode(device_claims_jwt, jwk_store, eat_issuer, claims_payload);
         if (error != Error::Ok) {
             return error;
         }
-        LOG_DEBUG("Validated and decoded claims for device: " << device_id);
+        std::string device_claims_digest;
+        error = compute_sha256_hex(device_claims_jwt, device_claims_digest);
+        if (error != Error::Ok) {
+            return error;
+        }
+        if (device_claims_digest != submod_digest_from_overall_jwt) {
+            LOG_ERROR("Submod digest for device: " << device_id << " does not match");
+            LOG_ERROR("Expected digest (from overall JWT): " << submod_digest_from_overall_jwt);
+            LOG_ERROR("Actual digest (from submod JWT): " << device_claims_digest);
+            return Error::NrasTokenInvalid;
+        }
         out_claims.insert({device_id, claims_payload});
+    }
+
+    if (overall_jwt_payload_json.m_submod_digests.size() != detached_eat.m_device_jwt_tokens.size()) {
+        LOG_ERROR("Number of submod digests in overall JWT does not match number of submod JWT tokens in detached EAT");
+        return Error::NrasTokenInvalid;
     }
 
     return Error::Ok;

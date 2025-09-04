@@ -77,7 +77,7 @@ public:
 /**
  * @brief Common function to get mock GPU evidence for testing purposes.
  */
-inline Error get_mock_gpu_evidence(const MockGpuEvidenceData& mock_data, std::vector<GpuEvidence>& out_evidence) {
+inline Error get_mock_gpu_evidence(const MockGpuEvidenceData& mock_data, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) {
     // Read attestation report data
     std::vector<uint8_t> attestation_report_data;
     std::ifstream report_file(mock_data.attestation_report_path);
@@ -108,7 +108,7 @@ inline Error get_mock_gpu_evidence(const MockGpuEvidenceData& mock_data, std::ve
     std::vector<uint8_t> nonce_bytes = hex_string_to_bytes(mock_data.nonce);
     
     // Create GpuEvidence with mock data
-    GpuEvidence gpu_evidence(
+    std::shared_ptr<GpuEvidence> gpu_evidence = std::make_shared<GpuEvidence>(
         mock_data.architecture,
         mock_data.board_id,
         mock_data.uuid,
@@ -127,12 +127,12 @@ inline Error get_mock_gpu_evidence(const MockGpuEvidenceData& mock_data, std::ve
 // Google Mock for IGpuEvidenceSource with helper methods
 class MockGpuEvidenceSource : public IGpuEvidenceSource {
 public:
-    MOCK_METHOD(Error, get_evidence, (const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence), (const, override));
+    MOCK_METHOD(Error, get_evidence, (const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence), (const, override));
 
     // Helper method to set up successful evidence collection with real mock data
     void setup_success_behavior(const MockGpuEvidenceData& mock_data = MockGpuEvidenceData::create_default()) {
         EXPECT_CALL(*this, get_evidence(_, _))
-            .WillRepeatedly(Invoke([mock_data](const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) -> Error {
+            .WillRepeatedly(Invoke([mock_data](const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) -> Error {
                 return get_mock_gpu_evidence(mock_data, out_evidence);
             }));
     }

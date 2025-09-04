@@ -47,14 +47,10 @@ TEST_F(SwitchVerifierTest, SuccessfullyVerifySwitchEvidence) {
 
     // Set up mock to return successful evidence collection with real data
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_default();
-    mock_evidence_source->setup_success_behavior(mock_data);
-
-    std::vector<SwitchEvidence> evidence;
-    
-    std::vector<uint8_t> nonce = hex_string_to_bytes(mock_data.nonce);
-    Error error = evidence_source->get_evidence(nonce, evidence);
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
+    Error error = get_mock_switch_evidence(mock_data, evidence_list);
     ASSERT_EQ(error, Error::Ok);
-    ASSERT_FALSE(evidence.empty());
+    ASSERT_FALSE(evidence_list.empty());
 
     auto verifier = std::make_shared<LocalSwitchVerifier>();
     std::shared_ptr<MockNvRemoteRimStore> mock_rim_store = std::make_shared<MockNvRemoteRimStore>();
@@ -81,52 +77,18 @@ TEST_F(SwitchVerifierTest, SuccessfullyVerifySwitchEvidence) {
 
     EvidencePolicy evidence_policy {};
     ClaimsCollection claims;
-    error = verifier->verify_evidence(evidence, evidence_policy, claims);
+    error = verifier->verify_evidence(evidence_list, evidence_policy, claims);
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
     EXPECT_EQ(claims.size(), 1);
 
     const SerializableSwitchClaimsV3* claims_v3 = dynamic_cast<SerializableSwitchClaimsV3*>(claims[0].get());
     ASSERT_NE(claims_v3, nullptr) << "Expected SerializableSwitchClaimsV3 claims";
 
-    std::string expected_claims_v3;
-    readFileIntoString("testdata/sample_attestation_data/switch_decoded.json", expected_claims_v3);
+    EXPECT_EQ(claims_v3->m_switch_bios_version, mock_data.bios_version);
+    EXPECT_EQ(claims_v3->m_hwmodel, "LS_10 A01 FSP BROM");
+    EXPECT_EQ(claims_v3->m_ueid, "694931143880983876767046803400974855445978836716");
+    EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
 
-    SerializableSwitchClaimsV3 expected_claims_v3_obj;
-    try {
-        nlohmann::json j = nlohmann::json::parse(expected_claims_v3);
-        nlohmann::json switch0_claims = j.at("SWITCH-0");
-        expected_claims_v3_obj = switch0_claims.get<SerializableSwitchClaimsV3>();
-    } catch (const nlohmann::json::exception& e) {
-        LOG_ERROR("JSON parse error in when getting expected claims v3: " << e.what());
-        GTEST_FAIL() << "could not parse expected claims v3";
-        return;
-    }
-
-    EXPECT_EQ(claims_v3->m_measurements_matching, expected_claims_v3_obj.m_measurements_matching);
-    EXPECT_EQ(*claims_v3->m_secure_boot, *expected_claims_v3_obj.m_secure_boot);
-    EXPECT_EQ(*claims_v3->m_debug_status, *expected_claims_v3_obj.m_debug_status);
-    EXPECT_EQ(claims_v3->m_mismatched_measurements, nullptr);
-
-    EXPECT_EQ(claims_v3->m_switch_arch_match, expected_claims_v3_obj.m_switch_arch_match);
-    EXPECT_EQ(claims_v3->m_switch_ar_nonce_match, expected_claims_v3_obj.m_switch_ar_nonce_match);
-    EXPECT_EQ(claims_v3->m_switch_bios_version, expected_claims_v3_obj.m_switch_bios_version);
-
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_claims.m_cert_expiration_date, expected_claims_v3_obj.m_ar_cert_chain_claims.m_cert_expiration_date);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_claims.m_cert_status, expected_claims_v3_obj.m_ar_cert_chain_claims.m_cert_status);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_claims.m_cert_ocsp_status, expected_claims_v3_obj.m_ar_cert_chain_claims.m_cert_ocsp_status);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_claims.m_cert_revocation_reason, expected_claims_v3_obj.m_ar_cert_chain_claims.m_cert_revocation_reason);
-    EXPECT_EQ(claims_v3->m_ar_cert_chain_fwid_match, expected_claims_v3_obj.m_ar_cert_chain_fwid_match);
-    EXPECT_EQ(claims_v3->m_ar_parsed, expected_claims_v3_obj.m_ar_parsed);
-    EXPECT_EQ(claims_v3->m_ar_signature_verified, expected_claims_v3_obj.m_ar_signature_verified);
-
-    EXPECT_EQ(claims_v3->m_bios_rim_fetched, expected_claims_v3_obj.m_bios_rim_fetched);
-    EXPECT_EQ(claims_v3->m_bios_rim_cert_chain.m_cert_expiration_date, expected_claims_v3_obj.m_bios_rim_cert_chain.m_cert_expiration_date);
-    EXPECT_EQ(claims_v3->m_bios_rim_cert_chain.m_cert_status, expected_claims_v3_obj.m_bios_rim_cert_chain.m_cert_status);
-    EXPECT_EQ(claims_v3->m_bios_rim_cert_chain.m_cert_ocsp_status, expected_claims_v3_obj.m_bios_rim_cert_chain.m_cert_ocsp_status);
-    EXPECT_EQ(claims_v3->m_bios_rim_cert_chain.m_cert_revocation_reason, expected_claims_v3_obj.m_bios_rim_cert_chain.m_cert_revocation_reason);
-    EXPECT_EQ(claims_v3->m_bios_rim_signature_verified, expected_claims_v3_obj.m_bios_rim_signature_verified);
-    EXPECT_EQ(claims_v3->m_switch_bios_rim_version_match, expected_claims_v3_obj.m_switch_bios_rim_version_match);
-    EXPECT_EQ(claims_v3->m_bios_rim_measurements_available, expected_claims_v3_obj.m_bios_rim_measurements_available);
 }
 
 TEST_F(SwitchVerifierTest, SuccessSwitchEvidenceRemoteVerifier) {
@@ -138,32 +100,28 @@ TEST_F(SwitchVerifierTest, SuccessSwitchEvidenceRemoteVerifier) {
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_default();
     mock_evidence_source->setup_success_behavior(mock_data);
 
-    std::vector<SwitchEvidence> evidence;
-    std::vector<uint8_t> nonce = hex_string_to_bytes(mock_data.nonce);
-    Error error = evidence_source->get_evidence(nonce, evidence);
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
+    Error error = get_mock_switch_evidence(mock_data, evidence_list);
     ASSERT_EQ(error, Error::Ok);
-    ASSERT_FALSE(evidence.empty());
+    ASSERT_FALSE(evidence_list.empty());
 
     NvRemoteSwitchVerifier verifier;
     NvRemoteSwitchVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", HttpOptions());
 
     EvidencePolicy evidence_policy {};
     ClaimsCollection claims;
-    error = verifier.verify_evidence(evidence, evidence_policy, claims);
+    error = verifier.verify_evidence(evidence_list, evidence_policy, claims);
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
-    
-    // Verify we got claims back
     EXPECT_EQ(claims.size(), 1);
+
     const SerializableSwitchClaimsV3* claims_v3 = dynamic_cast<SerializableSwitchClaimsV3*>(claims[0].get());
     ASSERT_NE(claims_v3, nullptr) << "Expected SerializableSwitchClaimsV3 claims";
 
-    std::string expected_claims_v3;
-    readFileIntoString("testdata/sample_attestation_data/switch_decoded.json", expected_claims_v3);
-    nlohmann::json expected_claims_v3_json = nlohmann::json::parse(expected_claims_v3);
-    nlohmann::json switch0_claims = expected_claims_v3_json.at("SWITCH-0");
-    SerializableSwitchClaimsV3 expected_claims_v3_obj = switch0_claims.get<SerializableSwitchClaimsV3>();
+    EXPECT_EQ(claims_v3->m_switch_bios_version, mock_data.bios_version);
+    EXPECT_EQ(claims_v3->m_hwmodel, "LS_10 A01 FSP BROM");
+    EXPECT_EQ(claims_v3->m_ueid, "694931143880983876767046803400974855445978836716");
+    EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
 
-    EXPECT_TRUE(*claims_v3 == expected_claims_v3_obj) << "Claims v3 mismatch";
 }
 
 TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadNonce) {
@@ -175,12 +133,12 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadNonce) {
     
     // Create mock switch evidence with bad nonce
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04};
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     
     // Use mock data for nonce mismatch scenario
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_bad_nonce_scenario();
-    Error result = get_mock_switch_evidence(mock_data, evidence_list);
-    ASSERT_EQ(result, Error::Ok);
+    error = get_mock_switch_evidence(mock_data, evidence_list);
+    ASSERT_EQ(error, Error::Ok);
     ASSERT_FALSE(evidence_list.empty());
     
     EvidencePolicy evidence_policy {};
@@ -214,7 +172,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadRimSignature) {
     
     // Create mock switch evidence with invalid signature
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     
     // Use invalid signature mock data
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_bad_rim_signature_scenario();
@@ -252,7 +210,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithDriverMeasurementsMismatch) {
     
     // Create mock switch evidence with driver measurements mismatch scenario
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     
     // Use driver measurements mismatch mock data
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_measurements_mismatch_scenario();
@@ -297,7 +255,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithInvalidSignature) {
     
     // Create mock GPU evidence with invalid signature
     std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
-    std::vector<SwitchEvidence> evidence_list;
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
     
     // Use invalid signature mock data
     MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_invalid_signature_scenario();

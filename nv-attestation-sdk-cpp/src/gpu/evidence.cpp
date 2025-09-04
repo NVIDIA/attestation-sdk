@@ -98,6 +98,13 @@ void to_json(json& out_json, const GpuEvidence& evidence) {
     };
 }
 
+void to_json(json& out_json, const std::shared_ptr<GpuEvidence>& evidence) {
+    if (evidence == nullptr) {
+        throw std::runtime_error("Evidence cannot be null when serializing to JSON");
+    }
+    to_json(out_json, *evidence);
+}
+
 void from_json(const json& json, GpuEvidence& out_evidence) {
     std::string version = json.at("version").get<std::string>();
     if (version != "1.0") {
@@ -138,15 +145,20 @@ void from_json(const json& json, GpuEvidence& out_evidence) {
     out_evidence.set_attestation_cert_chain(certificate_str);
 }
 
+void from_json(const json& json, std::shared_ptr<GpuEvidence>& out_evidence) {
+    out_evidence = std::make_shared<GpuEvidence>();
+    from_json(json, *out_evidence);
+}
+
 Error GpuEvidence::to_json(std::string& out_string) const {
     return serialize_to_json(*this, out_string);
 }
 
-Error GpuEvidence::collection_to_json(const std::vector<GpuEvidence>& collection, std::string& out_string) {
+Error GpuEvidence::collection_to_json(const std::vector<std::shared_ptr<GpuEvidence>>& collection, std::string& out_string) {
     return serialize_to_json(collection, out_string);
 }
 
-Error GpuEvidence::collection_from_json(const std::string& json_string, std::vector<GpuEvidence>& out_collection) {
+Error GpuEvidence::collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<GpuEvidence>>& out_collection) {
     return deserialize_from_json(json_string, out_collection);
 }
 
@@ -171,7 +183,7 @@ void from_string(const std::string& arch_str, GpuArchitecture& out_arch) {
     out_arch = GpuArchitecture::Unknown;
 }
 
-Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) const // NOLINT(readability-function-cognitive-complexity)
+Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const // NOLINT(readability-function-cognitive-complexity)
 {
 #ifdef ENABLE_NVML
     // Calculate the number of devices
@@ -241,7 +253,7 @@ Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_inpu
             return Error::NvmlError;
         }
         
-        out_evidence.emplace_back(
+        std::shared_ptr<GpuEvidence> evidence = std::make_shared<GpuEvidence>(
             *architecture_enum_ptr,
             board_id,
             *uuid_ptr,
@@ -251,6 +263,7 @@ Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_inpu
             *attestation_cert_chain_ptr,
             nonce_input
         );
+        out_evidence.push_back(evidence);
     }
     
     return Error::Ok;
@@ -352,6 +365,16 @@ Error GpuEvidence::AttestationReport::generate_attestation_report_claims(const O
     }
 
     error = m_attestation_cert_chain.generate_cert_chain_claims(ocsp_verify_options, ocsp_client, out_attestation_report_claims.m_cert_chain_claims);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    error = m_attestation_cert_chain.get_hwmodel(out_attestation_report_claims.m_hwmodel);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    error = m_attestation_cert_chain.get_ueid(out_attestation_report_claims.m_ueid);
     if (error != Error::Ok) {
         return error;
     }
@@ -628,7 +651,15 @@ Error GpuEvidenceSourceFromJsonFile::create(const std::string& file_path, GpuEvi
 
 }
 
-Error GpuEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<GpuEvidence>& out_evidence) const {
+Error GpuEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const {
+    for (const auto& evidence_item : m_evidence) {
+        if (evidence_item->get_nonce() != nonce_input) {
+            LOG_ERROR("Nonce from GPU evidence does not match the nonce used for attestation.");
+            LOG_ERROR("Nonce from GPU evidence: " << to_hex_string(evidence_item->get_nonce()) << " Nonce used for attestation: " << to_hex_string(nonce_input));
+            LOG_ERROR("Does the nonce from serialized evidence JSON file match the nonce used for attestation?");
+            return Error::GpuEvidenceNonceMismatch;
+        }
+    }
     out_evidence = m_evidence;
     return Error::Ok;
 }
