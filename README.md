@@ -14,8 +14,8 @@ with more bindings to come.
 
 ## Documentation
 
-- [CLI introduction](https://docs.nvidia.com/attestation/nv-attestation-cli/introduction.html)
-- [SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/introduction.html)
+- [CLI introduction](https://docs.nvidia.com/attestation/nv-attestation-cli/latest/introduction.html)
+- [SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/latest/introduction.html)
 - [NVIDIA Confidential Computing](https://docs.nvidia.com/confidential-computing/index.html)
 - [NVIDIA Attestation Suite](https://docs.nvidia.com/attestation/overview-attestation-suite/latest/introduction.html)
 
