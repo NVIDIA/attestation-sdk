@@ -85,7 +85,7 @@ nvattest attest --help
 ### More
 
 To get started with the C API, refer to the documentation in the
-[SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/introduction.html).
+[SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/latest/introduction.html).
 
 ## Confidential Computing
 
