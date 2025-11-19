@@ -32,6 +32,7 @@
 #include "nvat.h"
 #include "nv_attestation/nvat_private.hpp"
 #include "test_utils.h"
+#include "environment.h"
 
 void assert_switch_evidence_claims(const SwitchEvidenceClaims& claims, const std::string& bios_version, const std::string& hwmodel, const std::string& ueid) {
     EXPECT_EQ(claims.m_switch_arch_match, true);
@@ -86,7 +87,7 @@ TEST_F(SwitchEvidenceTest, CorrectSwitchEvidenceClaimsV3) {
     SwitchEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
     NvHttpOcspClient ocsp_client;
-    Error error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     SwitchEvidence::AttestationReport attestation_report;
     error = m_evidence->get_parsed_attestation_report(attestation_report);
@@ -133,7 +134,7 @@ TEST_F(SwitchEvidenceTest, CanSerializeAndDeserialize) {
     SwitchEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
     NvHttpOcspClient ocsp_client;
-    error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     SwitchEvidence::AttestationReport attestation_report;
     error = deserialized_evidence->get_parsed_attestation_report(attestation_report);

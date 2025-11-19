@@ -122,18 +122,17 @@ namespace nvattestation {
 
     class NvHttpClient {
         public: 
-            static Error create(NvHttpClient& out_client, HttpOptions options = HttpOptions());
+            static Error create(NvHttpClient& out_client, std::string service_key, HttpOptions options = HttpOptions());
 
-            Error do_request_as_string(const NvRequest& request, long& out_status, std::string& out_response);
+            Error do_request_as_string(const NvRequest& request, long& out_status, std::string& out_response) const;
             template<typename T>
             Error do_request_as_json_struct(const NvRequest& request, long& out_status, T& out_response);
 
             NvHttpClient()=default;
 
         private: 
-            nv_unique_ptr<CURL> m_curl_handle;
             HttpOptions m_options;
-            std::mt19937_64 m_rng{std::random_device{}()}; // for randomized backoff
+            std::string m_service_key;
 
             static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, void *userp);
     };

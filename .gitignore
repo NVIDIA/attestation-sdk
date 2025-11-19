@@ -6,3 +6,6 @@
 */build/*
 *_build*
 *_repo*
+*.pyc
+build_docs/
+build/

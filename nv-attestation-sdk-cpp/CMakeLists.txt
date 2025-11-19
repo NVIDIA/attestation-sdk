@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 0.0.0)
+project(nv-attestation VERSION 0.1.0)
 
-# set c++14
 set(CMAKE_CXX_STANDARD 14 CACHE STRING 
   "The C++ standard whose features are requested to build this target."
 )
@@ -12,13 +11,15 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ON CACHE STRING
 option(BUILD_SHARED_LIBS "Default to shared libraries instead of static libraries" ON)
 option(BUILD_EXAMPLES "Whether to build executables in examples folder" OFF)
 option(BUILD_TESTING "Whether to build unit-tests and integration-tests" OFF)
-option(ENABLE_NVML "Enable NVML support for GPU attestation" OFF)
-option(ENABLE_NSCQ "Enable NSCQ support for SWITCH Attestation" OFF)
 option(SANITIZER "Select a sanitizer [thread|address|undefined|leak|OFF]" OFF)
 
 include(CTest)
 include(GNUInstallDirs)
 include(FetchContent)
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
+    cmake_policy(SET CMP0135 NEW)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -39,21 +40,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(regorus)
 
 corrosion_import_crate(
-  # Path to <regorus-source-folder>/bindings/ffi/Cargo.toml
   MANIFEST_PATH "${regorus_SOURCE_DIR}/bindings/ffi/Cargo.toml"
-  # Always build regorus in Release mode.
   PROFILE "release"
-  # Only build the "regorus-ffi" crate.
   CRATES regorus-ffi
-
-  # Select specific features in regorus.
   FEATURES "regorus/semver"
-  
-  # Link statically
   CRATE_TYPES "staticlib"
 )
 
-# Set JWT-CPP options before fetching
 set(JWT_DISABLE_PICOJSON ON CACHE BOOL "Disable picojson support in jwt-cpp")
 set(JWT_BUILD_EXAMPLES OFF CACHE BOOL "Disable building jwt-cpp examples")
 
@@ -87,18 +80,6 @@ find_package(LibXml2 REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(xmlsec REQUIRED)
-
-if(ENABLE_NVML)
-  message("-- Building with NVML support")
-  find_package(Nvml REQUIRED)
-  add_compile_definitions(ENABLE_NVML)
-endif()
-
-if(ENABLE_NSCQ)
-  message("-- Building with NSCQ support")
-  find_package(Nscq REQUIRED)
-  add_compile_definitions(ENABLE_NSCQ)
-endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
 if (CMAKE_VERSION VERSION_LESS 3.24.0 AND CMAKE_COMPILE_WARNING_AS_ERROR)
@@ -148,7 +129,9 @@ add_library(nvat
   src/switch/spdm/switch_opaque_data_parser.cpp
   src/nv_http.cpp
   src/nv_jwt.cpp
+  src/nv_ocsp.cpp
   src/utils.cpp
+  src/nv_cache.cpp
 )
 
 set(NV_ATTESTATION_SOVERSION 0)
@@ -159,8 +142,6 @@ set_target_properties(nvat PROPERTIES
 
 target_include_directories(nvat 
   PUBLIC
-    $<$<BOOL:${ENABLE_NVML}>:${Nvml_INCLUDE_DIR}>
-    $<$<BOOL:${ENABLE_NSCQ}>:${Nscq_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   PRIVATE
@@ -197,8 +178,6 @@ endif()
 #https://stackoverflow.com/questions/69783203/examples-of-when-public-private-interface-should-be-used-in-cmake
 target_link_libraries(nvat
   PUBLIC
-    $<$<BOOL:${ENABLE_NVML}>:${Nvml_LIBRARY}>
-    $<$<BOOL:${ENABLE_NSCQ}>:${Nscq_LIBRARY}>
     spdlog::spdlog
     xmlsec::xmlsec
     xmlsec::xmlsec-openssl
@@ -243,7 +222,6 @@ install(EXPORT nvatTargets
 
 install(FILES
     cmake/FindLibXml2.cmake
-    cmake/FindNvml.cmake
     cmake/Findxmlsec.cmake
     DESTINATION ${CMAKE_INSTALL_DATADIR}/cmake/nvat/Modules
     COMPONENT Development

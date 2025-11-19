@@ -82,6 +82,8 @@ class LocalGpuVerifier : public IGpuVerifier {
         Error verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) override;
         
     private:
+        static const uint64_t MIN_OPAQUE_DATA_VERSION_FOR_FEATURE_FLAG = 1;
+        static const uint64_t MAX_SUPPORTED_OPAQUE_DATA_VERSION = 1;
         std::shared_ptr<IRimStore> m_rim_store;
         std::shared_ptr<IOcspHttpClient> m_ocsp_http_client;
         DetachedEATOptions m_detached_eat_options;
@@ -91,16 +93,17 @@ class LocalGpuVerifier : public IGpuVerifier {
         Error set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
         Error set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
         static Error generate_set_measurement_claims(const Measurements& golden_driver_measurements, const Measurements& golden_vbios_measurements, const GpuEvidence::AttestationReport& attestation_report, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims);
+        static Error add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV3& out_serializable_claims);
 };
 
 /**
- * @brief Verifies GPU evidence using the [NVIDIA Remote Attestation Service](https://docs.nvidia.com/attestation/api-docs-nras/latest/nras_api.html).
+ * @brief Verifies GPU evidence using the [NVIDIA Remote Attestation Service](https://docs.nvidia.com/attestation/cloud-services/latest/nras/nras_api.html).
  */
 class NvRemoteGpuVerifier : public IGpuVerifier {
     public:
         static constexpr const char* DEFAULT_BASE_URL = "https://nras.attestation.nvidia.com";
 
-        static Error init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url=DEFAULT_BASE_URL, HttpOptions http_options = HttpOptions());
+        static Error init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url, const std::string& service_key, const HttpOptions& http_options);
         Error verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) override;
 
     private:

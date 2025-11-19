@@ -9,9 +9,7 @@
 
 #### Coding Guidelines
 
-- All source code contributions must strictly adhere to the [NVIDIA Attestation SDK Coding Guidelines](CODING-GUIDELINES.md).
-
-- In addition, please follow the existing conventions in the relevant file, submodule, module, and project when you add new code or when you extend/fix existing functionality.
+- Please follow the existing conventions in the relevant file, submodule, module, and project when you add new code or when you extend/fix existing functionality.
 
 - To maintain consistency in code formatting and style, you should also run `clang-format` on the modified sources with the provided configuration file. This applies NVIDIA Attestation SDK code formatting rules to:
   - class, function/method, and variable/field naming

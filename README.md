@@ -12,29 +12,20 @@ security of confidential computing environments.
 The core SDK is written in C++ and wrapped with a C API and CLI,
 with more bindings to come.
 
-## Documentation
-
-- [CLI introduction](https://docs.nvidia.com/attestation/nv-attestation-cli/latest/introduction.html)
-- [SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/latest/introduction.html)
-- [NVIDIA Confidential Computing](https://docs.nvidia.com/confidential-computing/index.html)
-- [NVIDIA Attestation Suite](https://docs.nvidia.com/attestation/overview-attestation-suite/latest/introduction.html)
-
 ## Project Status
 
-This project is the successor of the guest tools in [nvTrust](https://github.com/NVIDIA/nvtrust),
-which are written in Python.
-Attestation at NVIDIA is evolving and we aim to provide utilities that are
-suitable across a broader range of environments and use-cases.
+This project is the successor of the Python-based guest tools in [nvTrust](https://github.com/NVIDIA/nvtrust), providing utilities suitable for a broader range of environments and use-cases.
 
-Note that this project is in **Alpha**.
-Though we will aim to keep breaking ABI and CLI changes to a minimum,
-breakages may still occur before the SDK is stabilized.
+**Note:** This project is in **Alpha**. While we strive to minimize breaking changes, the ABI and CLI may change before stabilization.
+
+## Components
+
+NVAT provides two components for different use cases:
+
+- **CLI (`nvattest`)**: For quick testing, scripts, and getting started. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-cli/introduction.html)
+- **C API**: For integrating attestation into C/C++ applications. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-c/introduction.html)
 
 ## Quick Start Guide
-
-The Attestation SDK is in **Alpha** and requires an installation from source.
-This guide will walk through the process of installing the `nvattest` CLI 
-and the `nvat` shared library on a confidential virtual machine and attesting the connected GPUs.
 
 ### Prerequisites
 
@@ -51,22 +42,22 @@ See [Prerequisites](#prerequisites) above.
 2. Install the Rust compiler. See [rustup](https://www.rust-lang.org/tools/install)
 
 3. Install additional build dependencies:
-```shell
-apt update && \
-apt install cmake git pkg-config clang \
-    libcurl4-openssl-dev libssl-dev libxml2-dev \
-    libxmlsec1-dev libxmlsec1-openssl libspdlog-dev
-```
+    ```shell
+    apt update && \
+    apt install cmake git pkg-config clang \
+        libcurl4-openssl-dev libssl-dev libxml2-dev \
+        libxmlsec1-dev libxmlsec1-openssl libspdlog-dev
+    ```
 
 4. Install the CLI:
-```shell
-git clone https://github.com/NVIDIA/attestation-sdk.git
-cd attestation-sdk/nv-attestation-cli
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_NVML=ON
-cmake --build build
-cmake --install build
-sudo ldconfig
-```
+    ```shell
+    git clone https://github.com/NVIDIA/attestation-sdk.git
+    cd attestation-sdk/nv-attestation-cli
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+    cmake --build build
+    cmake --install build
+    sudo ldconfig
+    ```
 
 ### Attestation
 
@@ -82,27 +73,17 @@ Use `--help` to view all the options associated with the attest subcommand:
 nvattest attest --help
 ```
 
-### More
+### Using the C API
 
 To get started with the C API, refer to the documentation in the
-[SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-c/latest/introduction.html).
+[SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-c/introduction.html).
 
-## Confidential Computing
+## Documentation
 
-NVIDIA Confidential Computing offers a solution for securely processing data and code in use,
-preventing unauthorized users from both access and modification.
-When running AI training or inference, the data and the code must be protected. 
-Often the input data includes personally identifiable information (PII) or enterprise secrets, 
-and the trained model is highly valuable intellectual property (IP). 
-Confidential computing is the ideal solution to protect both AI models and data.
-
-NVIDIA is at the forefront of confidential computing, collaborating with CPU partners, 
-cloud providers, and independent software vendors (ISVs) to ensure that the change from traditional, 
-accelerated workloads to confidential, accelerated workloads will be smooth and transparent.
-
-For more information, including documentation, white papers, 
-and videos regarding the Confidential Computing story, 
-please visit [NVIDIA Confidential Computing docs](https://docs.nvidia.com/confidential-computing/index.html).
+- [CLI introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-cli/introduction.html)
+- [SDK introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-c/introduction.html)
+- [NVIDIA Confidential Computing](https://docs.nvidia.com/confidential-computing/index.html)
+- [NVIDIA Attestation Suite](https://docs.nvidia.com/attestation)
 
 ## License
 

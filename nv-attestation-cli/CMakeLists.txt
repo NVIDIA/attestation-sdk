@@ -1,20 +1,18 @@
 cmake_minimum_required(VERSION 3.11)
-project(nvattest VERSION 0.0.0)
+project(nvattest VERSION 0.1.0)
 
 option(BUILD_TESTING "Build tests" OFF)
+option(USE_SYSTEM_NVAT "Compile and link to the system nvat library. If OFF, nvat will be built from source." OFF)
 
-# set c++11
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
 
-# Add debug flags when building in Debug mode
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 
 include(CTest)
 include(GNUInstallDirs)
 include(FetchContent)
 
-# Declare external dependencies
 FetchContent_Declare(
     CLI11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
@@ -28,6 +26,8 @@ add_executable(nvattest
     src/main.cpp
     src/version.cpp
     src/attest.cpp
+    src/collect_evidence.cpp
+    src/utils.cpp
 )
 
 find_package(spdlog REQUIRED)
@@ -36,18 +36,18 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.toml
                ${CMAKE_CURRENT_BINARY_DIR}/config.toml
                COPYONLY)
 
-# Generate version header from template
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/version_config.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/version_config.h)
 
-# TODO - Link against installed nv attestation sdk cpp instead of directly to the source code
-add_subdirectory(
-    "${CMAKE_CURRENT_SOURCE_DIR}/../nv-attestation-sdk-cpp"  # Source directory
-    "${CMAKE_CURRENT_BINARY_DIR}/nv-attestation-sdk-build"   # Binary directory
-)
-
-# Create namespaced alias for the nvat target added by the SDK subdirectory
-add_library(nvat::nvat ALIAS nvat)
+if(USE_SYSTEM_NVAT)
+    find_package(nvat REQUIRED)
+else()
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../nv-attestation-sdk-cpp"  # Source directory
+        "${CMAKE_CURRENT_BINARY_DIR}/nv-attestation-sdk-build"   # Binary directory
+    )
+    add_library(nvat::nvat ALIAS nvat)
+endif()
 
 target_link_libraries(nvattest PRIVATE
     nvat::nvat
@@ -56,10 +56,11 @@ target_link_libraries(nvattest PRIVATE
     spdlog::spdlog
 )
 
-# Add the binary directory to the include path for the generated version header
-target_include_directories(nvattest PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(nvattest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
 
-# Only build tests if BUILD_TESTING is enabled
 if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)

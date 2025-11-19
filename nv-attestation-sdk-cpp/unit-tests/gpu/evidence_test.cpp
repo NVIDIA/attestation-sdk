@@ -30,6 +30,7 @@
 #include "nvat.h"
 #include "nv_attestation/nvat_private.hpp"
 #include "test_utils.h" // Added for MockEvidenceCollector and MockGpuEvidenceData
+#include "environment.h"
 
 
 // Define a test fixture for GpuEvidence tests
@@ -67,7 +68,7 @@ TEST_F(GpuEvidenceTest, CorrectGpuEvidenceClaims) {
     GpuEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
     NvHttpOcspClient ocsp_client;
-    Error error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     GpuEvidence::AttestationReport attestation_report;
     error = m_evidence->get_parsed_attestation_report(attestation_report);
@@ -91,7 +92,7 @@ TEST_F(GpuEvidenceTest, BlackwellCorrectGpuEvidenceClaims) {
     GpuEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
     NvHttpOcspClient ocsp_client;
-    Error error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
 
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_blackwell_scenario();
@@ -114,6 +115,46 @@ TEST_F(GpuEvidenceTest, BlackwellCorrectGpuEvidenceClaims) {
     ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "474146966256510137525212816567191319424869109849");
     ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GB100 A01 GSP BROM");
 }
+
+TEST(GpuEvidenceParserTest, GetOpaqueDataVersion) {
+    GpuEvidenceSourceFromJsonFile source;
+    Error error = GpuEvidenceSourceFromJsonFile::create("testdata/evidence_hopper_590_12.json", source);
+    ASSERT_EQ(error, Error::Ok);
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
+    std::vector<uint8_t> nonce = hex_string_to_bytes(evidence_to_nonce_map.find("hopper_590_12")->second);
+    error = source.get_evidence(nonce, evidence_list);
+    ASSERT_EQ(error, Error::Ok);
+    ASSERT_FALSE(evidence_list.empty());
+
+    std::shared_ptr<GpuEvidence> gpu_evidence = evidence_list[0];
+    GpuEvidence::AttestationReport attestation_report;
+    error = gpu_evidence->get_parsed_attestation_report(attestation_report);
+    uint64_t opaque_data_version = 0;
+    error = attestation_report.get_opaque_data_version(opaque_data_version);
+    ASSERT_EQ(error, Error::Ok);
+    LOG_TRACE("Opaque data version: " << opaque_data_version);
+    ASSERT_EQ(opaque_data_version, 1);
+}
+
+TEST(GpuEvidenceParserTest, GetFeatureFlag) {
+    GpuEvidenceSourceFromJsonFile source;
+    Error error = GpuEvidenceSourceFromJsonFile::create("testdata/evidence_hopper_590_12.json", source);
+    ASSERT_EQ(error, Error::Ok);
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
+    std::vector<uint8_t> nonce = hex_string_to_bytes(evidence_to_nonce_map.find("hopper_590_12")->second);
+    error = source.get_evidence(nonce, evidence_list);
+    ASSERT_EQ(error, Error::Ok);
+    ASSERT_FALSE(evidence_list.empty());
+    std::shared_ptr<GpuEvidence> gpu_evidence = evidence_list[0];
+    GpuEvidence::AttestationReport attestation_report;
+    error = gpu_evidence->get_parsed_attestation_report(attestation_report);
+    GpuEvidence::AttestationReport::OpaqueDataFeatureFlag feature_flag = GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::MPT;
+    error = attestation_report.get_feature_flag(feature_flag);
+    ASSERT_EQ(error, Error::Ok);
+    LOG_TRACE("Feature flag: " << static_cast<int>(feature_flag));
+    ASSERT_EQ(feature_flag, GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::PPCIE);
+}
+
 
 TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
     MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_default();
@@ -152,7 +193,7 @@ TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
     GpuEvidenceClaims claims;
     OcspVerifyOptions ocsp_verify_options;
     NvHttpOcspClient ocsp_client;
-    error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);    
     GpuEvidence::AttestationReport attestation_report; 
     error = deserialized_evidence->get_parsed_attestation_report(attestation_report);
@@ -177,7 +218,8 @@ TEST(GpuEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_nonce_t nonce;
-    err = nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb");
+    std::string nonce_str = evidence_to_nonce_map.find("hopper_latest")->second;
+    err = nvat_nonce_from_hex(&nonce, nonce_str.c_str());
     ASSERT_EQ(err, NVAT_RC_OK);
 
     nvat_gpu_evidence_t* gpu_evidences = nullptr;

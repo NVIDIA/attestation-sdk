@@ -15,9 +15,7 @@
  * limitations under the License.
  */
 
-#ifdef ENABLE_NVML
 #include <gtest/gtest.h>
-#include <nvml.h>
 #include <vector>
 #include <memory>
 #include <string>
@@ -33,51 +31,9 @@ TEST(NvmlIntegration, InitAndShutdown) {
 
 TEST(NvmlIntegration, GetDriverVersion) {
     ASSERT_EQ(init_nvml(), Error::Ok);
-    auto version = get_driver_version();
-    ASSERT_NE(version, nullptr);
-    ASSERT_FALSE(version->empty());
-    shutdown_nvml();
-}
-
-TEST(NvmlIntegration, DeviceMethods) {
-    ASSERT_EQ(init_nvml(), Error::Ok);
-    unsigned int device_count = 0;
-    nvmlReturn_t result = nvmlDeviceGetCount(&device_count);
-    ASSERT_EQ(result, NVML_SUCCESS);
-    ASSERT_GT(device_count, 0u);
-    for (unsigned int i = 0; i < device_count; ++i) {
-        nvmlDevice_t device;
-        result = nvmlDeviceGetHandleByIndex(i, &device);
-        ASSERT_EQ(result, NVML_SUCCESS);
-        auto uuid = get_uuid(device);
-        ASSERT_NE(uuid, nullptr);
-        ASSERT_FALSE(uuid->empty());
-        auto vbios = get_vbios_version(device);
-        ASSERT_NE(vbios, nullptr);
-        ASSERT_FALSE(vbios->empty());
-        auto arch = get_gpu_architecture(device);
-        ASSERT_NE(arch, nullptr);
-        auto arch_str = to_string(*arch);
-        ASSERT_FALSE(arch_str.empty());
-        auto cert_chain = get_attestation_cert_chain(device);
-        ASSERT_NE(cert_chain, nullptr);
-        ASSERT_FALSE(cert_chain->empty());
-        std::vector<uint8_t> nonce(32, 0);
-        auto report = get_attestation_report(device, nonce);
-        ASSERT_NE(report, nullptr);
-        ASSERT_FALSE(report->empty());
-    }
-    shutdown_nvml();
-}
-
-TEST(NvmlIntegration, ReadyStateAndCC) {
-    ASSERT_EQ(init_nvml(), Error::Ok);
-    auto ready_state = get_gpu_ready_state();
-    ASSERT_NE(ready_state, nullptr);
-    auto cc_enabled = is_cc_enabled();
-    ASSERT_NE(cc_enabled, nullptr);
-    auto cc_dev_mode = is_cc_dev_mode();
-    ASSERT_NE(cc_dev_mode, nullptr);
+    std::string driver_version{};
+    ASSERT_EQ(get_driver_version(driver_version), Error::Ok);
+    ASSERT_FALSE(driver_version.empty());
     shutdown_nvml();
 }
 
@@ -99,4 +55,3 @@ TEST(NvmlIntegration, NvmlEvidenceCollectorGetEvidence) {
     }
     shutdown_nvml();
 }
-#endif

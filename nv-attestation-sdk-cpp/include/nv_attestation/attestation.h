@@ -64,6 +64,8 @@ class AttestationContext {
 
         DetachedEATOptions m_eat_options;
 
+        std::string m_service_key = "";
+
         Error ensure_init();
         Error attest_gpus(Nonce& nonce, std::string* out_detached_eat, ClaimsCollection& out_claims);
         Error attest_switches(Nonce& nonce, std::string* out_detached_eat, ClaimsCollection& out_claims);
@@ -98,6 +100,7 @@ class AttestationContext {
         void set_gpu_verifier(shared_ptr<IGpuVerifier> verifier);
         void set_switch_verifier(shared_ptr<ISwitchVerifier> verifier);
         void set_detached_eat_options(const DetachedEATOptions& options);
+        void set_service_key(const std::string& service_key);
 
         Error attest_device(
             Nonce nonce,

@@ -21,6 +21,9 @@
 #include "CLI/CLI.hpp"
 #include "version.h"
 #include "attest.h"
+#include "collect_evidence.h"
+#include "nvattest_options.h"
+#include "utils.h"
 
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/stdout_sinks.h"
@@ -35,12 +38,16 @@ int main(int argc, char** argv) {
     CLI::App app{"NVIDIA attestation CLI for collecting evidence and verifying device integrity in confidential computing environments"};
     app.set_config("--config", "config.toml", "Read options from a TOML configuration file");
 
-    // todo (p1): group these options into a struct and pass it to the subcommands
-    std::string nonce, device, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url;
-    std::string log_level;
+    nvattest::EvidenceCollectionOptions evidence_collection_options;
+    nvattest::EvidenceVerificationOptions evidence_verification_options;
+    nvattest::EvidencePolicyOptions evidence_policy_options;
+    nvattest::CommonOptions common_options;
     
+    add_common_options(app, common_options);
+
     CLI::App* version_subcommand = nvattest::create_version_subcommand(app);
-    CLI::App* attest_subcommand = nvattest::create_attest_subcommand(app, nonce, device, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url, log_level);
+    CLI::App* attest_subcommand = nvattest::create_attest_subcommand(app, evidence_collection_options, evidence_verification_options, evidence_policy_options);
+    CLI::App* collect_evidence_subcommand = nvattest::create_collect_evidence_subcommand(app, evidence_collection_options);
 
     CLI11_PARSE(app, argc, argv);
 
@@ -48,7 +55,9 @@ int main(int argc, char** argv) {
     if (version_subcommand->parsed()) {
         return nvattest::handle_version_subcommand();
     } else if (attest_subcommand->parsed()) {
-        return nvattest::handle_attest_subcommand(nonce, device, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url, log_level);
+        return nvattest::handle_attest_subcommand(evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
+    } else if (collect_evidence_subcommand->parsed()) {
+        return nvattest::handle_collect_evidence_subcommand(evidence_collection_options, common_options);
     } else {
         // Default behavior is to display the help message
         std::cout << app.help() << std::endl;

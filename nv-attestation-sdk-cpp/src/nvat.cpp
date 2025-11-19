@@ -40,6 +40,7 @@
 #include "nv_attestation/utils.h"
 #include "nv_attestation/gpu/evidence.h"
 #include "nv_attestation/switch/evidence.h"
+#include "nv_attestation/nv_ocsp.h"
 #include "nvat.h.in"
 
 using namespace nvattestation;
@@ -291,7 +292,7 @@ nvat_rc_t nvat_apply_relying_party_policy(nvat_relying_party_policy_t policy, co
     NVAT_C_API_END
 }
 
-nvat_rc_t nvat_ocsp_client_create_default(nvat_ocsp_client_t* out_client, const char* base_url, const nvat_http_options_t http_options) {
+nvat_rc_t nvat_ocsp_client_create_default(nvat_ocsp_client_t* out_client, const char* base_url, const char* service_key, const nvat_http_options_t http_options) {
     NVAT_C_API_BEGIN
     if (out_client == nullptr) {
         LOG_ERROR("out_client is null");
@@ -303,7 +304,8 @@ nvat_rc_t nvat_ocsp_client_create_default(nvat_ocsp_client_t* out_client, const 
     if (http_options != nullptr) {
         cpp_http_options = *nvat_http_options_to_cpp(http_options);
     }
-    Error err = NvHttpOcspClient::init_from_env(client, base_url, cpp_http_options);
+    const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
+    Error err = NvHttpOcspClient::init_from_env(client, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
         LOG_ERROR("failed to create OCSP client");
         return nvat_rc_from_cpp(err);
@@ -315,7 +317,31 @@ nvat_rc_t nvat_ocsp_client_create_default(nvat_ocsp_client_t* out_client, const 
     NVAT_C_API_END
 }
 
-nvat_rc_t nvat_rim_store_create_remote(nvat_rim_store_t* out_store, const char* base_url, const nvat_http_options_t http_options) {
+nvat_rc_t nvat_ocsp_client_create_cached(nvat_ocsp_client_t* out_client, const nvat_ocsp_client_t inner_client, uint64_t max_size_bytes, time_t ttl_seconds) {
+    NVAT_C_API_BEGIN
+    if (out_client == nullptr) {
+        LOG_ERROR("out_client is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (inner_client == nullptr) {
+        LOG_ERROR("inner_client is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    
+    std::shared_ptr<IOcspHttpClient> inner_client_ptr = *nvat_ocsp_client_to_cpp(inner_client);
+    std::shared_ptr<IOcspHttpClient> out_client_ptr;
+    Error err = NvHttpOcspCacheClient::create(inner_client_ptr, max_size_bytes, ttl_seconds, out_client_ptr);
+    if (err != Error::Ok) {
+        LOG_ERROR("failed to create cached OCSP client");
+        return nvat_rc_from_cpp(err);
+    }
+    std::shared_ptr<IOcspHttpClient>* client_ptr = new std::shared_ptr<IOcspHttpClient>(out_client_ptr);
+    *out_client = nvat_ocsp_client_from_cpp(client_ptr);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_rim_store_create_remote(nvat_rim_store_t* out_store, const char* base_url, const char* service_key, const nvat_http_options_t http_options) {
     NVAT_C_API_BEGIN
     if (out_store == nullptr) {
         LOG_ERROR("out_store is null");
@@ -327,7 +353,8 @@ nvat_rc_t nvat_rim_store_create_remote(nvat_rim_store_t* out_store, const char* 
         cpp_http_options = *nvat_http_options_to_cpp(http_options);
     }
     auto store = NvRemoteRimStoreImpl{};
-    Error err = NvRemoteRimStoreImpl::init_from_env(store, base_url, cpp_http_options);
+    const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
+    Error err = NvRemoteRimStoreImpl::init_from_env(store, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
         LOG_ERROR("Failed to create remote RIM store");
         return nvat_rc_from_cpp(err);
@@ -355,6 +382,24 @@ nvat_rc_t nvat_rim_store_create_filesystem(nvat_rim_store_t* out_store, const ch
     // auto store = make_unique<FilesystemRimStoreImpl>(path);
     // *out_store = nvat_rim_store_from_cpp(store.release());
     return NVAT_RC_INTERNAL_ERROR;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_rim_store_create_cached(nvat_rim_store_t* out_store, const nvat_rim_store_t inner_store, uint64_t max_size_bytes, time_t ttl_seconds) {
+    NVAT_C_API_BEGIN
+    if (out_store == nullptr) {
+        LOG_ERROR("out_store is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (inner_store == nullptr) {
+        LOG_ERROR("inner_store is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    
+    std::shared_ptr<IRimStore> store = std::make_shared<InMemoryCachingRimStoreImpl>(*nvat_rim_store_to_cpp(inner_store), max_size_bytes, ttl_seconds);
+    std::shared_ptr<IRimStore>* store_ptr = new std::shared_ptr<IRimStore>(store);
+    *out_store = nvat_rim_store_from_cpp(store_ptr);
+    return NVAT_RC_OK;
     NVAT_C_API_END
 }
 
@@ -412,6 +457,8 @@ nvat_rc_t nvat_attestation_ctx_set_evidence_policy(nvat_attestation_ctx_t ctx, n
     } else {
         auto* cpp_evidence_policy = nvat_evidence_policy_to_cpp(*evidence_policy);
         cpp_ctx->set_evidence_policy(*cpp_evidence_policy);
+        delete cpp_evidence_policy;
+        cpp_evidence_policy = nullptr;
     }
     return NVAT_RC_OK;
     NVAT_C_API_END
@@ -558,6 +605,22 @@ nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attesta
         LOG_ERROR("failed to set switch evidence source from JSON file");
         return nvat_rc_from_cpp(err);
     }
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_attestation_ctx_set_service_key(nvat_attestation_ctx_t ctx, const char* service_key) {
+    NVAT_C_API_BEGIN
+    if (ctx == nullptr) {
+        LOG_ERROR("ctx cannot be null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    auto* cpp_ctx = nvat_attestation_ctx_to_cpp(ctx);
+    if (service_key == nullptr) {
+        LOG_ERROR("service_key cannot be null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    cpp_ctx->set_service_key(std::string(service_key));
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -758,15 +821,22 @@ nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, con
     
     std::shared_ptr<IGpuEvidenceSource> cpp_source = *nvat_gpu_evidence_source_to_cpp(source);
     
-    vector<uint8_t>* cpp_nonce_ptr = nvat_nonce_to_cpp(nonce);
-    vector<uint8_t> cpp_nonce(0, 0);
-    if (cpp_nonce_ptr != nullptr) {
-        cpp_nonce = *cpp_nonce_ptr;
+    // todo (p2): push the nonce generation by default to the evidence collector
+    vector<uint8_t>* cpp_nonce_ptr=nullptr;
+    vector<uint8_t> local_nonce(GPU_SPDM_REQ_NONCE_SIZE, 0);
+    if (nonce != nullptr) {
+        cpp_nonce_ptr = nvat_nonce_to_cpp(nonce);
+    } else {
+        Error err = generate_nonce(local_nonce);
+        if (err != Error::Ok) {
+            LOG_ERROR("failed to generate nonce of " << GPU_SPDM_REQ_NONCE_SIZE << " bytes");
+            return nvat_rc_from_cpp(err);
+        }
+        cpp_nonce_ptr = &local_nonce;
     }
 
     vector<std::shared_ptr<GpuEvidence>> evidence_list{};
-    Error err = cpp_source->get_evidence(cpp_nonce, evidence_list);
-    
+    Error err = cpp_source->get_evidence(*cpp_nonce_ptr, evidence_list);
     if (err != Error::Ok) {
         LOG_ERROR("failed to collect GPU evidence");
         return nvat_rc_from_cpp(err);
@@ -811,13 +881,13 @@ nvat_rc_t nvat_gpu_evidence_serialize_json(
         std::shared_ptr<GpuEvidence>* evidence_ptr = nvat_gpu_evidence_to_cpp(gpu_evidence_array[i]);
         cpp_evidences.push_back(*evidence_ptr);
     }
-    std::string* json_string = new std::string("");
+    auto json_string = make_unique<std::string>();
     Error err = GpuEvidence::collection_to_json(cpp_evidences, *json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize GPU evidence as JSON");
         return nvat_rc_from_cpp(err);
     }
-    *out_serialized_evidence = nvat_str_from_cpp(json_string);
+    *out_serialized_evidence = nvat_str_from_cpp(json_string.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -864,27 +934,35 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
         LOG_ERROR("source is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    if (nonce == nullptr) {
-        LOG_ERROR("nonce is null");
-        return NVAT_RC_BAD_ARGUMENT;
-    }
     if (out_switch_evidence_array == nullptr) {
         LOG_ERROR("out_collection is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (out_num_evidences == nullptr) {
+        LOG_ERROR("out_num_evidences is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
     
     std::shared_ptr<ISwitchEvidenceSource> cpp_source = *nvat_switch_evidence_source_to_cpp(source);
     
-    vector<uint8_t>* cpp_nonce_ptr = nvat_nonce_to_cpp(nonce);
-    vector<uint8_t> cpp_nonce(0, 0);
-    if (cpp_nonce_ptr != nullptr) {
-        cpp_nonce = *cpp_nonce_ptr;
+    // todo (p2): push the nonce generation by default to the evidence collector
+    vector<uint8_t>* cpp_nonce_ptr=nullptr;
+    vector<uint8_t> local_nonce(SWITCH_SPDM_REQ_NONCE_SIZE, 0);
+    if (nonce != nullptr) {
+        cpp_nonce_ptr = nvat_nonce_to_cpp(nonce);
+    } else {
+        Error err = generate_nonce(local_nonce);
+        if (err != Error::Ok) {
+            LOG_ERROR("failed to generate nonce of " << SWITCH_SPDM_REQ_NONCE_SIZE << " bytes");
+            return nvat_rc_from_cpp(err);
+        }
+        cpp_nonce_ptr = &local_nonce;
     }
 
     std::vector<std::shared_ptr<SwitchEvidence>> cpp_collection;
-    Error error = cpp_source->get_evidence(cpp_nonce, cpp_collection);
+    Error error = cpp_source->get_evidence(*cpp_nonce_ptr, cpp_collection);
     if (error != Error::Ok) {
-        LOG_ERROR("failed to get switch evidence");
+        LOG_ERROR("failed to collect nvswitch evidence");
         return nvat_rc_from_cpp(error);
     }
     
@@ -894,6 +972,7 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
         (*out_switch_evidence_array)[i] = nvat_switch_evidence_from_cpp(evidence_ptr);
     }
     *out_num_evidences = cpp_collection.size();
+
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -921,13 +1000,13 @@ nvat_rc_t nvat_switch_evidence_serialize_json(
         std::shared_ptr<SwitchEvidence>* evidence_ptr = nvat_switch_evidence_to_cpp(switch_evidence_array[i]);
         cpp_collection.push_back(*evidence_ptr);
     }
-    std::string* json_string = new std::string("");
+    auto json_string = make_unique<std::string>();
     Error err = SwitchEvidence::collection_to_json(cpp_collection, *json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize switch evidence as JSON");
         return nvat_rc_from_cpp(err);
     }
-    *out_serialized_evidence = nvat_str_from_cpp(json_string);
+    *out_serialized_evidence = nvat_str_from_cpp(json_string.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -945,13 +1024,13 @@ nvat_rc_t nvat_claims_serialize_json(const nvat_claims_t claims, nvat_str_t* out
         return NVAT_RC_BAD_ARGUMENT;
     }
     Claims* cpp_claims = nvat_claims_to_cpp(claims);
-    std::string* json_string = new std::string("");
+    auto json_string = make_unique<std::string>();
     Error err = cpp_claims->serialize_json(*json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize claims as JSON");
         return nvat_rc_from_cpp(err);
     }
-    *out_serialized_claims = nvat_str_from_cpp(json_string);
+    *out_serialized_claims = nvat_str_from_cpp(json_string.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -967,13 +1046,13 @@ nvat_rc_t nvat_claims_collection_serialize_json(const nvat_claims_collection_t c
         return NVAT_RC_BAD_ARGUMENT;
     }
     ClaimsCollection* cpp_claims = nvat_claims_collection_to_cpp(claims);
-    std::string* json_string = new std::string("");
+    auto json_string = make_unique<std::string>();
     Error err = cpp_claims->serialize_json(*json_string);
     if (err != Error::Ok) {
         LOG_ERROR("failed to serialize claims as JSON");
         return nvat_rc_from_cpp(err);
     }
-    *out_serialized_claims = nvat_str_from_cpp(json_string);
+    *out_serialized_claims = nvat_str_from_cpp(json_string.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -1029,18 +1108,18 @@ nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, con
 
     ClaimsCollection* cpp_claims = nvat_claims_collection_to_cpp(claims);
 
-    std::string* detached_eat = new std::string("");
     DetachedEATOptions cpp_options = DetachedEATOptions();
     if (options != nullptr) {
         cpp_options = *nvat_detached_eat_options_to_cpp(options);
     }
 
+    auto detached_eat = make_unique<std::string>();
     Error err = cpp_claims->get_detached_eat(*detached_eat, cpp_options);
     if (err != Error::Ok) {
         LOG_ERROR("failed to get detached EAT");
         return nvat_rc_from_cpp(err);
     }
-    *out_detached_eat = nvat_str_from_cpp(detached_eat);
+    *out_detached_eat = nvat_str_from_cpp(detached_eat.release());
     return NVAT_RC_OK;
     NVAT_C_API_END
 }
@@ -1111,7 +1190,7 @@ nvat_rc_t nvat_evidence_policy_set_switch_claims_version(nvat_evidence_policy_t 
     NVAT_C_API_END
 }
 
-nvat_rc_t nvat_gpu_nras_verifier_create(nvat_gpu_nras_verifier_t* out_verifier, const char* base_url, const nvat_http_options_t http_options) {
+nvat_rc_t nvat_gpu_nras_verifier_create(nvat_gpu_nras_verifier_t* out_verifier, const char* base_url, const char* service_key, const nvat_http_options_t http_options) {
     NVAT_C_API_BEGIN
     if (out_verifier == nullptr) {
         LOG_ERROR("out_verifier is null");
@@ -1122,8 +1201,9 @@ nvat_rc_t nvat_gpu_nras_verifier_create(nvat_gpu_nras_verifier_t* out_verifier, 
     if (http_options != nullptr) {
         cpp_http_options = *nvat_http_options_to_cpp(http_options);
     }
+    const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
     NvRemoteGpuVerifier verifier;
-    Error err = NvRemoteGpuVerifier::init_from_env(verifier, base_url, cpp_http_options);
+    Error err = NvRemoteGpuVerifier::init_from_env(verifier, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
         LOG_ERROR("failed to create NRAS client");
         return nvat_rc_from_cpp(err);
@@ -1135,7 +1215,7 @@ nvat_rc_t nvat_gpu_nras_verifier_create(nvat_gpu_nras_verifier_t* out_verifier, 
     NVAT_C_API_END
 }
 
-nvat_rc_t nvat_switch_nras_verifier_create(nvat_switch_nras_verifier_t* out_verifier, const char* base_url, const nvat_http_options_t http_options) {
+nvat_rc_t nvat_switch_nras_verifier_create(nvat_switch_nras_verifier_t* out_verifier, const char* base_url, const char* service_key, const nvat_http_options_t http_options) {
     NVAT_C_API_BEGIN
     if (out_verifier == nullptr) {
         LOG_ERROR("out_verifier is null");
@@ -1147,7 +1227,8 @@ nvat_rc_t nvat_switch_nras_verifier_create(nvat_switch_nras_verifier_t* out_veri
         cpp_http_options = *nvat_http_options_to_cpp(http_options);
     }
     NvRemoteSwitchVerifier verifier;
-    Error err = NvRemoteSwitchVerifier ::init_from_env(verifier, base_url, cpp_http_options);
+    const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
+    Error err = NvRemoteSwitchVerifier ::init_from_env(verifier, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
         LOG_ERROR("failed to create NRAS client");
         return nvat_rc_from_cpp(err);

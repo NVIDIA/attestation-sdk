@@ -18,17 +18,11 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include <iostream>
-#include <iomanip>
 #include <ctime>
 #include <algorithm>
 
-#ifdef ENABLE_NSCQ
-#include "nv_attestation/switch/nscq_attestation.h"
-#include "nv_attestation/switch/nscq_client.h"
-#endif // ENABLE_NSCQ
-
 #include "nv_attestation/switch/evidence.h"
+#include "nv_attestation/switch/nscq_client.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
 #include <nlohmann/json.hpp>
@@ -52,7 +46,7 @@ const std::vector<SwitchArchitecture> SwitchArchitectureData::m_supported_archit
 Error SwitchArchitectureData::create(SwitchArchitecture arch, SwitchArchitectureData& out_arch_data) {
     if (std::find(m_supported_architectures.begin(), m_supported_architectures.end(), arch) == m_supported_architectures.end()) {
         LOG_ERROR("SWITCH architecture " + to_string(arch) + " is not supported.");
-        return Error::NscqArchitectureError;
+        return Error::SwitchArchitectureNotSupported;
     }
     out_arch_data.m_arch = arch;
     switch (arch) {
@@ -67,7 +61,7 @@ Error SwitchArchitectureData::create(SwitchArchitecture arch, SwitchArchitecture
             break;
         default:
             LOG_ERROR("SWITCH architecture " + to_string(arch) + " is not supported.");
-            return Error::NscqArchitectureError;
+            return Error::SwitchArchitectureNotSupported;
     }
     return Error::Ok;
 }
@@ -182,67 +176,13 @@ void from_string(const std::string& arch_str, SwitchArchitecture& out_arch) {
 
 Error NscqEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const
 {
-#ifdef ENABLE_NSCQ  
-    init_nscq();
-    std::vector<std::string> uuids;
-    Error error = get_all_switch_uuid(uuids);
+    Error error = init_nscq();
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to get switch UUIDs");
+        LOG_ERROR("Failed to initialize NSCQ");
         return error;
     }
 
-    if (uuids.empty()) {
-        LOG_ERROR("No switch UUIDs found");
-        return Error::NscqError;
-    }
-
-    auto arch = SwitchArchitecture::Unknown;
-    error = get_switch_architecture(arch);
-    if (error != Error::Ok) {
-        LOG_ERROR("Failed to get switch architecture");
-        return error;
-    }
-
-    for (const auto& uuid : uuids) {
-        std::vector<uint8_t> attestation_report;
-        error = get_attestation_report(uuid, nonce_input, attestation_report);
-        if (error != Error::Ok) {
-            LOG_ERROR("Failed to get attestation report for UUID: " + uuid);
-            return error;
-        }
-
-        std::string attestation_cert_chain;
-        error = get_attestation_cert_chain(uuid, attestation_cert_chain);
-        if (error != Error::Ok) {
-            LOG_ERROR("Failed to get attestation certificate chain for UUID: " + uuid);
-            return error;
-        }
-
-        auto tnvl_mode_status = SwitchTnvlMode::Unknown;
-        error = get_switch_tnvl_status(uuid, tnvl_mode_status);
-        if (error != Error::Ok) {
-            LOG_ERROR("Failed to get TNVL mode for UUID: " + uuid);
-            return error;
-        }
-        bool tnvl_mode = (tnvl_mode_status == SwitchTnvlMode::Enabled);
-        bool lock_mode = (tnvl_mode_status == SwitchTnvlMode::Locked);
-
-        out_evidence_list.emplace_back(std::make_shared<SwitchEvidence>(
-            arch,
-            uuid,
-            attestation_report,
-            attestation_cert_chain,
-            tnvl_mode,
-            lock_mode,
-            nonce_input
-        ));
-    }
-    
-    return Error::Ok;
-#else // ENABLE_NSCQ
-    LOG_ERROR("ENABLE_NSCQ feature was not enabled during compilation");
-    return Error::FeatureNotEnabled;
-#endif // ENABLE_NSCQ
+    return collect_evidence_nscq(nonce_input, out_evidence_list);
 }
 
 Error SwitchEvidence::generate_switch_evidence_claims(const AttestationReport& parsed_attestation_report, const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, SwitchEvidenceClaims& out_switch_evidence_claims) const {

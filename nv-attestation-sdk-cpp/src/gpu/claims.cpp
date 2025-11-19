@@ -144,6 +144,10 @@ namespace nvattestation
         out_claims.m_vbios_rim_measurements_available = js.at("x-nvidia-gpu-vbios-rim-measurements-available").get<bool>();
         out_claims.m_vbios_index_no_conflict = js.at("x-nvidia-gpu-vbios-index-no-conflict").get<bool>();
 
+        if (js.contains("x-nvidia-gpu-mode")) {
+            out_claims.m_mode = js.at("x-nvidia-gpu-mode").get<std::string>();
+        }
+
         out_claims.m_version = "3.0";
     }
 
@@ -185,6 +189,9 @@ namespace nvattestation
         js["x-nvidia-gpu-vbios-rim-measurements-available"] = claims.m_vbios_rim_measurements_available;
         js["x-nvidia-gpu-vbios-index-no-conflict"] = claims.m_vbios_index_no_conflict;
 
+        if (!claims.m_mode.empty()) {
+            js["x-nvidia-gpu-mode"] = claims.m_mode;
+        }
         js["x-nvidia-gpu-claims-version"] = "3.0";
     }
     

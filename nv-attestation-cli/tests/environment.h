@@ -38,6 +38,7 @@ class Environment : public ::testing::Environment {
         std::string test_mode; // "unit" or "integration"
         bool test_device_gpu;
         bool test_device_switch;
+        std::string service_key = "";
 
         ~Environment() override = default;
         
@@ -65,6 +66,9 @@ class Environment : public ::testing::Environment {
                     test_device_switch = true;
                 }
             }
+
+            service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
+            ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
         }
 
         void TearDown() override {

@@ -43,7 +43,7 @@ Error AttestationContext::ensure_init() {
 
     if (m_default_rim_store == nullptr) {
         NvRemoteRimStoreImpl rim_store;
-        err = NvRemoteRimStoreImpl::init_from_env(rim_store, m_default_rim_store_url.c_str(), m_default_http_options);
+        err = NvRemoteRimStoreImpl::init_from_env(rim_store, m_default_rim_store_url.c_str(), m_service_key, m_default_http_options);
         if (err != Error::Ok) {
             return err;
         }
@@ -52,7 +52,7 @@ Error AttestationContext::ensure_init() {
 
     if (m_default_ocsp_client == nullptr) {
         NvHttpOcspClient ocsp_client;
-        err = NvHttpOcspClient::init_from_env(ocsp_client, m_default_ocsp_url.c_str(), m_default_http_options);
+        err = NvHttpOcspClient::init_from_env(ocsp_client, m_default_ocsp_url.c_str(), m_service_key, m_default_http_options);
         if (err != Error::Ok) {
             return err;
         }
@@ -79,7 +79,7 @@ Error AttestationContext::ensure_init() {
                 }
                 case VerifierType::Remote: {
                     NvRemoteGpuVerifier r_verifier;
-                    err = NvRemoteGpuVerifier::init_from_env(r_verifier, m_default_nras_url.c_str(), m_default_http_options);
+                    err = NvRemoteGpuVerifier::init_from_env(r_verifier, m_default_nras_url.c_str(), m_service_key, m_default_http_options);
                     if (err != Error::Ok) {
                         return err;
                     }
@@ -114,7 +114,7 @@ Error AttestationContext::ensure_init() {
                 }
                 case VerifierType::Remote: {
                     NvRemoteSwitchVerifier r_verifier;
-                    err = NvRemoteSwitchVerifier::init_from_env(r_verifier, m_default_nras_url.c_str(), m_default_http_options);
+                    err = NvRemoteSwitchVerifier::init_from_env(r_verifier, m_default_nras_url.c_str(), m_service_key, m_default_http_options);
                     if (err != Error::Ok) {
                         return err;
                     }
@@ -239,6 +239,14 @@ void AttestationContext::set_detached_eat_options(const DetachedEATOptions& opti
     m_eat_options = options;
     m_gpu_verifier = nullptr;
     m_switch_verifier = nullptr;
+}
+
+void AttestationContext::set_service_key(const std::string& service_key) {
+    m_service_key = service_key;
+    m_gpu_verifier = nullptr;
+    m_switch_verifier = nullptr;
+    m_default_rim_store = nullptr;
+    m_default_ocsp_client = nullptr;
 }
 
 // NOLINTEND(performance-unnecessary-value-param)

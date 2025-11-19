@@ -23,6 +23,7 @@
 #include <map>
 #include "error.h"
 #include "nv_attestation/nv_http.h"
+#include "nv_attestation/nv_cache.h"
 #include "nv_x509.h"
 #include "nv_types.h"
 
@@ -178,7 +179,7 @@ class IRimStore {
 };
 
 /**
- * @brief RIM store that fetches RIMs from the [NVIDIA RIM service](https://docs.nvidia.com/attestation/api-docs-rim/latest/rim_api.html)
+ * @brief RIM store that fetches RIMs from the [NVIDIA RIM service](https://docs.nvidia.com/attestation/cloud-services/latest/rim/rim_api.html)
  *        or a service with a compatible HTTP interface.
  */
 class NvRemoteRimStoreImpl : public IRimStore {
@@ -188,7 +189,7 @@ class NvRemoteRimStoreImpl : public IRimStore {
         // todo(p2): support SAK
         NvRemoteRimStoreImpl(const std::string &server_host);
         NvRemoteRimStoreImpl() : NvRemoteRimStoreImpl(DEFAULT_BASE_URL) {}
-        static Error init_from_env(NvRemoteRimStoreImpl& out_rim_store, const char* base_url, HttpOptions http_options);
+        static Error init_from_env(NvRemoteRimStoreImpl& out_rim_store, const char* base_url, const std::string& service_key, const HttpOptions& http_options);
 
         Error get_rim(const std::string &rim_id, RimDocument& out_rim_document) override;
     private: 
@@ -217,10 +218,11 @@ class FilesystemRimStoreImpl : public IRimStore {
 // TODO(p0): implement and add additional settings for TTL
 class InMemoryCachingRimStoreImpl : public IRimStore {
     public:
-        InMemoryCachingRimStoreImpl (std::unique_ptr<IRimStore> inner_client);
+        InMemoryCachingRimStoreImpl (std::shared_ptr<IRimStore> inner_client, uint64_t max_size_bytes, time_t ttl_seconds);
         Error get_rim(const std::string &rim_id, RimDocument& out_rim_document) override;
     private: 
-        std::unique_ptr<IRimStore> inner_client;
+        std::shared_ptr<IRimStore> m_inner_client;
+        std::shared_ptr<INvCache> m_cache;
 };
 
 }

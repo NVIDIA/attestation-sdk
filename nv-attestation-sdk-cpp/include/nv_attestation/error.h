@@ -47,10 +47,12 @@ namespace nvattestation {
     MACRO(RimMeasurementConflict, NVAT_RC_RIM_MEASUREMENT_CONFLICT) \
     MACRO(NrasAttestationError, NVAT_RC_NRAS_ATTESTATION_ERROR) \
     MACRO(NrasTokenInvalid, NVAT_RC_NRAS_TOKEN_INVALID) \
+    MACRO(NrasForbidden, NVAT_RC_NRAS_FORBIDDEN) \
     MACRO(OcspInvalidResponse, NVAT_RC_OCSP_INVALID_RESPONSE) \
     MACRO(OcspServerError, NVAT_RC_OCSP_SERVER_ERROR) \
     MACRO(OcspInvalidRequest, NVAT_RC_OCSP_INVALID_REQUEST) \
     MACRO(OcspStatusNotGood, NVAT_RC_OCSP_STATUS_NOT_GOOD) \
+    MACRO(OcspForbidden, NVAT_RC_OCSP_FORBIDDEN) \
     MACRO(PolicyEvaluationError, NVAT_RC_POLICY_EVALUATION_ERROR) \
     MACRO(SpdmParseError, NVAT_RC_SPDM_PARSE_ERROR) \
     MACRO(SpdmOpaqueDataParseError, NVAT_RC_SPDM_OPAQUE_DATA_PARSE_ERROR) \
@@ -73,16 +75,12 @@ namespace nvattestation {
     MACRO(LibXml2Error, NVAT_RC_LIBXML2_ERROR) \
     MACRO(NscqInitFailed, NVAT_RC_NSCQ_INIT_FAILED) \
     MACRO(NscqError, NVAT_RC_NSCQ_ERROR) \
-    MACRO(NscqUuidError, NVAT_RC_NSCQ_UUID_ERROR) \
-    MACRO(NscqCertChainError, NVAT_RC_NSCQ_CERT_CHAIN_ERROR) \
-    MACRO(NscqAttestationReportError, NVAT_RC_NSCQ_ATTESTATION_REPORT_ERROR) \
-    MACRO(NscqArchitectureError, NVAT_RC_NSCQ_ARCHITECTURE_ERROR) \
-    MACRO(NscqTnvlError, NVAT_RC_NSCQ_TNVL_ERROR) \
+    MACRO(SwitchArchitectureNotSupported, NVAT_RC_SWITCH_ARCHITECTURE_NOT_SUPPORTED) \
     MACRO(SwitchEvidenceNonceMismatch, NVAT_RC_SWITCH_EVIDENCE_NONCE_MISMATCH) \
     MACRO(SwitchEvidenceVbiosRimVersionMismatch, NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH) \
     MACRO(SwitchEvidenceFwidMismatch, NVAT_RC_SWITCH_EVIDENCE_FWID_MISMATCH) \
-    MACRO(SwitchEvidenceInvalidSignature, NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE)
-
+    MACRO(SwitchEvidenceInvalidSignature, NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE) \
+    MACRO(CacheObjectNotFound, NVAT_RC_CACHE_OBJECT_NOT_FOUND)
 // Define both the Enum and an array of enum values
 enum class Error {
     #define ERROR_ENUM_TO_ENUM(name, val) name = (val),
@@ -124,6 +122,7 @@ inline const char* to_string(Error error) {
         case Error::OcspServerError: return "OCSP Server Error";
         case Error::OcspInvalidRequest: return "OCSP Invalid Request";
         case Error::OcspStatusNotGood: return "OCSP Status Not Good";
+        case Error::OcspForbidden: return "OCSP Forbidden";
 
         // Policy errors
         case Error::PolicyEvaluationError: return "Policy Evaluation Error";
@@ -154,15 +153,11 @@ inline const char* to_string(Error error) {
         // NSCQ / Switch errors
         case Error::NscqInitFailed: return "NSCQ Initialization Failed";
         case Error::NscqError: return "NSCQ Error";
-        case Error::NscqUuidError: return "NSCQ UUID Error";
-        case Error::NscqCertChainError: return "NSCQ Certificate Chain Error";
-        case Error::NscqAttestationReportError: return "NSCQ Attestation Report Error";
-        case Error::NscqArchitectureError: return "NSCQ Architecture Error";
-        case Error::NscqTnvlError: return "NSCQ TNVL Error";
-        case Error::SwitchEvidenceNonceMismatch: return "SWITCH Evidence Nonce Mismatch";
-        case Error::SwitchEvidenceVbiosRimVersionMismatch: return "SWITCH Evidence VBIOS RIM Version Mismatch";
-        case Error::SwitchEvidenceFwidMismatch: return "SWITCH Evidence FWID Mismatch";
-        case Error::SwitchEvidenceInvalidSignature: return "SWITCH Evidence Invalid Signature";
+        case Error::SwitchArchitectureNotSupported: return "NVSwitch Architecture Not Supported";
+        case Error::SwitchEvidenceNonceMismatch: return "NVSwitch Evidence Nonce Mismatch";
+        case Error::SwitchEvidenceVbiosRimVersionMismatch: return "NVSwitch Evidence VBIOS RIM Version Mismatch";
+        case Error::SwitchEvidenceFwidMismatch: return "NVSwitch Evidence FWID Mismatch";
+        case Error::SwitchEvidenceInvalidSignature: return "NVSwitch Evidence Invalid Signature";
 
         // JSON serialization errors
         case Error::JsonSerializationError: return "JSON Serialization Error";
@@ -174,6 +169,10 @@ inline const char* to_string(Error error) {
         // NRAS errors
         case Error::NrasAttestationError: return "NRAS Attestation Error";
         case Error::NrasTokenInvalid: return "NRAS Token Invalid";
+        case Error::NrasForbidden: return "NRAS Forbidden";
+
+        // Cache errors
+        case Error::CacheObjectNotFound: return "Cache Object Not Found";
     }
     return "Undefined";
 }

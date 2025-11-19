@@ -72,5 +72,76 @@ namespace nvattest {
         }
     };
 
+    template<> struct DeleterOf<nvat_evidence_policy_t> {
+        using pointer = nvat_evidence_policy_t;
+        void operator()(nvat_evidence_policy_t ptr) const {
+            if (ptr) {
+                nvat_evidence_policy_free(&ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_gpu_evidence_source_t> {
+        void operator()(nvat_gpu_evidence_source_t* ptr) const {
+            if (ptr) {
+                nvat_gpu_evidence_source_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_nonce_t> {
+        void operator()(nvat_nonce_t* ptr) const {
+            if (ptr) {
+                nvat_nonce_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_str_t> {
+        void operator()(nvat_str_t* ptr) const {
+            if (ptr) {
+                nvat_str_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_switch_evidence_source_t> {
+        void operator()(nvat_switch_evidence_source_t* ptr) const {
+            if (ptr) {
+                nvat_switch_evidence_source_free(ptr);
+            }
+        }
+    };
+
+    class GpuEvidenceWrapper {
+    public:
+        nvat_gpu_evidence_t* evidences = nullptr;
+        size_t num_evidences = 0;
+    };
+
+    template<> struct DeleterOf<GpuEvidenceWrapper> {
+        void operator()(GpuEvidenceWrapper* ptr) const {
+            if (ptr && ptr->evidences) {
+                nvat_gpu_evidence_array_free(&ptr->evidences, ptr->num_evidences);
+            }
+            delete ptr;
+        }
+    };
+
+    class SwitchEvidenceWrapper {
+    public:
+        nvat_switch_evidence_t* evidences = nullptr;
+        size_t num_evidences = 0;
+    };
+
+    template<> struct DeleterOf<SwitchEvidenceWrapper> {
+        void operator()(SwitchEvidenceWrapper* ptr) const {
+            if (ptr && ptr->evidences) {
+                nvat_switch_evidence_array_free(&ptr->evidences, ptr->num_evidences);
+            }
+            delete ptr;
+        }
+    };
+
     template<class T> using nv_unique_ptr = std::unique_ptr<T, DeleterOf<T>>;
 }

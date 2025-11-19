@@ -15,14 +15,24 @@
  * limitations under the License.
  */
 
+#include <fstream>
+#include <thread>
+#include <future>
+#include <iostream>
+
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
 #include "nv_attestation/claims.h"
 #include "nv_attestation/switch/verify.h"
+#include "nv_attestation/switch/evidence.h"
 #include "nv_attestation/rim.h"
 #include "nv_attestation/claims_evaluator.h"
 #include "nv_attestation/verify.h"
+#include "nv_attestation/utils.h"
+#include "nv_attestation/nv_x509.h"
+#include "environment.h"
+
 #include "test_utils.h"
 #include "switch_test_utils.h"
 
@@ -70,7 +80,7 @@ TEST_F(SwitchVerifierTest, SuccessfullyVerifySwitchEvidence) {
             return error;
         }));
     std::shared_ptr<NvHttpOcspClient> ocsp_client = std::make_shared<NvHttpOcspClient>();
-    error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     error = LocalSwitchVerifier::create(*verifier, mock_rim_store, ocsp_client, DetachedEATOptions());
     ASSERT_EQ(error, Error::Ok);
@@ -107,7 +117,7 @@ TEST_F(SwitchVerifierTest, SuccessSwitchEvidenceRemoteVerifier) {
     ASSERT_FALSE(evidence_list.empty());
 
     NvRemoteSwitchVerifier verifier;
-    NvRemoteSwitchVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", HttpOptions());
+    NvRemoteSwitchVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", g_env->service_key, HttpOptions());
 
     EvidencePolicy evidence_policy {};
     ClaimsCollection claims;
@@ -129,8 +139,10 @@ TEST_F(SwitchVerifierTest, SuccessSwitchEvidenceRemoteVerifier) {
 TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadNonce) {
     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
     auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
     LocalSwitchVerifier verifier;
-    Error error = LocalSwitchVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
+    error = LocalSwitchVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
     ASSERT_EQ(error, Error::Ok);
     
     // Create mock switch evidence with bad nonce
@@ -167,7 +179,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadRimSignature) {
             return error;
         }));
     std::shared_ptr<NvHttpOcspClient> ocsp_client = std::make_shared<NvHttpOcspClient>();
-    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     error = LocalSwitchVerifier::create(*verifier, mock_rim_store, ocsp_client, DetachedEATOptions());
     ASSERT_EQ(error, Error::Ok);
@@ -205,7 +217,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithDriverMeasurementsMismatch) {
             return error;
         }));    
     std::shared_ptr<NvHttpOcspClient> ocsp_client = std::make_shared<NvHttpOcspClient>();
-    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     error = LocalSwitchVerifier::create(*verifier, mock_rim_store, ocsp_client, DetachedEATOptions());
     ASSERT_EQ(error, Error::Ok);
@@ -249,7 +261,7 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithDriverMeasurementsMismatch) {
 TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithInvalidSignature) {
     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
     auto ocsp_client = std::make_shared<NvHttpOcspClient>();
-    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", HttpOptions());
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     LocalSwitchVerifier verifier;
     error = LocalSwitchVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
@@ -271,4 +283,312 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithInvalidSignature) {
     ASSERT_EQ(error, Error::SwitchEvidenceInvalidSignature) << "Could not verify evidence: " << to_string(error);
     // No claims should be generated when verification fails due to invalid signature
     EXPECT_TRUE(claims.empty());
+}
+
+class SwitchLocalVerifierTestCApi : public ::testing::Test {
+    protected:
+        nvat_switch_evidence_t* m_mock_single_switch_evidence = nullptr;
+        size_t m_num_mock_single_switch_evidence = 1;
+        nvat_switch_evidence_t* m_mock_multi_switch_evidence = nullptr;
+        size_t m_num_mock_multi_switch_evidence = 4;
+        nvat_switch_evidence_t* m_actual_switch_evidence = nullptr;
+        size_t m_num_actual_switch_evidence = 0;
+        nvat_switch_verifier_t m_verifier = nullptr;
+        nvat_switch_verifier_t m_caching_verifier = nullptr;
+        nvat_evidence_policy_t m_evidence_policy = nullptr;
+
+        void SetUp() override {
+            
+            nvat_switch_evidence_source_t evidence_source = nullptr;
+            if (g_env->test_mode == "integration" && g_env->test_device_switch) {
+                time_t start_time = time(nullptr);
+                ASSERT_EQ(nvat_switch_evidence_source_nscq_create(&evidence_source), NVAT_RC_OK);
+                ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nullptr, &m_actual_switch_evidence, &m_num_actual_switch_evidence), NVAT_RC_OK);
+                time_t end_time = time(nullptr);
+                std::cout << "Actual switch evidence collection took " << end_time - start_time << " seconds" << std::endl;
+                nvat_switch_evidence_source_free(&evidence_source);
+
+                nvat_rim_store_t rim_store = nullptr;
+                nvat_ocsp_client_t ocsp_client = nullptr;
+                ASSERT_EQ(nvat_rim_store_create_remote(&rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key.c_str(), nullptr), NVAT_RC_OK);
+                ASSERT_NE(rim_store, nullptr);
+                ASSERT_EQ(nvat_ocsp_client_create_default(&ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key.c_str(), nullptr), NVAT_RC_OK);
+                ASSERT_NE(ocsp_client, nullptr);
+
+                nvat_switch_local_verifier_t local_verifier = nullptr;
+                ASSERT_EQ(nvat_switch_local_verifier_create(&local_verifier, rim_store, ocsp_client, nullptr), NVAT_RC_OK);
+                ASSERT_NE(local_verifier, nullptr);
+                m_verifier = nvat_switch_local_verifier_upcast(local_verifier);
+                ASSERT_NE(m_verifier, nullptr);
+
+                nvat_rim_store_t cached_rim_store = nullptr;
+                nvat_ocsp_client_t cached_ocsp_client = nullptr;
+                ASSERT_EQ(nvat_rim_store_create_cached(&cached_rim_store, rim_store, 1024*1024, 60*60), NVAT_RC_OK);
+                ASSERT_NE(cached_rim_store, nullptr);
+                ASSERT_EQ(nvat_ocsp_client_create_cached(&cached_ocsp_client, ocsp_client, 1024*1024, 60*60), NVAT_RC_OK);
+                ASSERT_NE(cached_ocsp_client, nullptr);
+                nvat_switch_local_verifier_t caching_local_verifier = nullptr;
+                ASSERT_EQ(nvat_switch_local_verifier_create(&caching_local_verifier, cached_rim_store, cached_ocsp_client, nullptr), NVAT_RC_OK);
+                ASSERT_NE(caching_local_verifier, nullptr);
+                m_caching_verifier = nvat_switch_local_verifier_upcast(caching_local_verifier);
+                ASSERT_NE(m_caching_verifier, nullptr);
+
+                nvat_ocsp_client_free(&cached_ocsp_client);
+                nvat_ocsp_client_free(&ocsp_client);
+                nvat_rim_store_free(&rim_store);
+                nvat_rim_store_free(&cached_rim_store);
+            } else {
+                std::string switch_evidence_path = g_env->common_test_data_dir + "/serialized_test_evidence/switch_evidence_ls10.json";
+                ASSERT_EQ(nvat_switch_evidence_source_from_json_file(&evidence_source, switch_evidence_path.c_str()), NVAT_RC_OK);
+                nvat_nonce_t nonce = nullptr;
+                ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+                ASSERT_NE(nonce, nullptr);
+                ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nonce, &m_mock_single_switch_evidence, &m_num_mock_single_switch_evidence), NVAT_RC_OK);
+                nvat_switch_evidence_source_free(&evidence_source);
+
+                switch_evidence_path = g_env->common_test_data_dir + "/serialized_test_evidence/multi_switch_ls10.json";
+                ASSERT_EQ(nvat_switch_evidence_source_from_json_file(&evidence_source, switch_evidence_path.c_str()), NVAT_RC_OK);
+                ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nonce, &m_mock_multi_switch_evidence, &m_num_mock_multi_switch_evidence), NVAT_RC_OK);
+                nvat_switch_evidence_source_free(&evidence_source);
+                nvat_nonce_free(&nonce);
+
+                nvat_rim_store_t rim_store = nullptr;
+                ASSERT_EQ(nvat_rim_store_create_remote(&rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key.c_str(), nullptr), NVAT_RC_OK);
+                ASSERT_NE(rim_store, nullptr);
+
+                nvat_ocsp_client_t ocsp_client = nullptr;
+                ASSERT_EQ(nvat_ocsp_client_create_default(&ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key.c_str(), nullptr), NVAT_RC_OK);
+                ASSERT_NE(ocsp_client, nullptr);
+
+                nvat_switch_local_verifier_t local_verifier = nullptr;
+                ASSERT_EQ(nvat_switch_local_verifier_create(&local_verifier, rim_store, ocsp_client, nullptr), NVAT_RC_OK);
+                ASSERT_NE(local_verifier, nullptr);
+                m_verifier = nvat_switch_local_verifier_upcast(local_verifier);
+                ASSERT_NE(m_verifier, nullptr);
+
+                nvat_rim_store_t cached_rim_store = nullptr;
+                ASSERT_EQ(nvat_rim_store_create_cached(&cached_rim_store, rim_store, 1024*1024, 60*60), NVAT_RC_OK);
+                ASSERT_NE(cached_rim_store, nullptr);
+                nvat_ocsp_client_t cached_ocsp_client = nullptr;
+                ASSERT_EQ(nvat_ocsp_client_create_cached(&cached_ocsp_client, ocsp_client, 1024*1024, 60*60), NVAT_RC_OK);
+                ASSERT_NE(cached_ocsp_client, nullptr);
+                nvat_switch_local_verifier_t caching_local_verifier = nullptr;
+                ASSERT_EQ(nvat_switch_local_verifier_create(&caching_local_verifier, cached_rim_store, cached_ocsp_client, nullptr), NVAT_RC_OK);
+                ASSERT_NE(caching_local_verifier, nullptr);
+                m_caching_verifier = nvat_switch_local_verifier_upcast(caching_local_verifier);
+                ASSERT_NE(m_caching_verifier, nullptr);
+
+                nvat_ocsp_client_free(&ocsp_client);
+                nvat_ocsp_client_free(&cached_ocsp_client);
+                nvat_rim_store_free(&rim_store);
+                nvat_rim_store_free(&cached_rim_store);
+            }
+            
+        ASSERT_EQ(nvat_evidence_policy_create_default(&m_evidence_policy), NVAT_RC_OK);
+        ASSERT_NE(m_evidence_policy, nullptr);
+        }
+
+        void TearDown() override {
+            nvat_evidence_policy_free(&m_evidence_policy);
+            nvat_switch_verifier_free(&m_verifier);
+            nvat_switch_verifier_free(&m_caching_verifier);
+            if (g_env->test_mode == "integration" && g_env->test_device_switch) {
+                nvat_switch_evidence_array_free(&m_actual_switch_evidence, m_num_actual_switch_evidence);
+            } else {
+                nvat_switch_evidence_array_free(&m_mock_single_switch_evidence, m_num_mock_single_switch_evidence);
+                nvat_switch_evidence_array_free(&m_mock_multi_switch_evidence, m_num_mock_multi_switch_evidence);
+            }
+        }
+};
+
+TEST_F(SwitchLocalVerifierTestCApi, SerialVerify) { 
+    if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
+        GTEST_SKIP() << "Skipping switch Integration tests";
+    }
+    time_t start_time = time(nullptr);
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    if (g_env->test_mode == "unit"){
+        ASSERT_EQ(nvat_verify_switch_evidence(m_verifier, m_mock_multi_switch_evidence, m_num_mock_multi_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    } else if (g_env->test_mode == "integration"){
+        ASSERT_EQ(nvat_verify_switch_evidence(m_verifier, m_actual_switch_evidence, m_num_actual_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    }
+    ASSERT_NE(claims, nullptr);
+    ASSERT_NE(detached_eat, nullptr);
+    time_t end_time = time(nullptr);
+    std::cout << "Time taken for serial verify: " << end_time - start_time << " seconds" << std::endl;
+    char* detached_eat_str = nullptr;
+    ASSERT_EQ(nvat_str_get_data(detached_eat, &detached_eat_str), NVAT_RC_OK);
+    ASSERT_NE(detached_eat_str, nullptr);
+    LOG_DEBUG("Detached EAT: " << detached_eat_str);
+    nvat_str_free(&detached_eat);
+    nvat_claims_collection_free(&claims);
+} 
+
+TEST_F(SwitchLocalVerifierTestCApi, SerialVerifyWithCache) { 
+    if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
+        GTEST_SKIP() << "Skipping switch Integration tests";
+    }
+    time_t start_time = time(nullptr);
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    if (g_env->test_mode == "unit"){
+        ASSERT_EQ(nvat_verify_switch_evidence(m_caching_verifier, m_mock_multi_switch_evidence, m_num_mock_multi_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    } else if (g_env->test_mode == "integration"){
+        ASSERT_EQ(nvat_verify_switch_evidence(m_caching_verifier, m_actual_switch_evidence, m_num_actual_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    }
+    ASSERT_NE(claims, nullptr);
+    ASSERT_NE(detached_eat, nullptr);
+    time_t end_time = time(nullptr);
+    std::cout << "Time taken for serial verify with cache: " << end_time - start_time << " seconds" << std::endl;
+    nvat_str_free(&detached_eat);
+    nvat_claims_collection_free(&claims);
+}
+
+TEST_F(SwitchLocalVerifierTestCApi, ParallelVerify) { 
+    if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
+        GTEST_SKIP() << "Skipping switch Integration tests";
+    }
+    nvat_switch_evidence_t* evidences = nullptr;
+    size_t num_evidences = 0;
+    if (g_env->test_mode == "unit"){
+        evidences = m_mock_multi_switch_evidence;
+        num_evidences = m_num_mock_multi_switch_evidence;
+    } else if (g_env->test_mode == "integration"){
+        evidences = m_actual_switch_evidence;
+        num_evidences = m_num_actual_switch_evidence;
+    }
+
+    std::vector<std::future<nvat_rc_t>> futures;
+    const int num_threads = 4;
+    int num_evidences_per_thread = num_evidences / num_threads;
+    time_t start_time = time(nullptr);
+    for (size_t i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+            nvat_claims_collection_t claims = nullptr;
+            nvat_str_t detached_eat = nullptr;
+            int this_thread_evidences = num_evidences_per_thread;
+            if (i == num_threads - 1) {
+                this_thread_evidences = num_evidences - i*num_evidences_per_thread;
+            }
+            nvat_rc_t result = nvat_verify_switch_evidence(m_verifier, evidences+i*num_evidences_per_thread, this_thread_evidences, m_evidence_policy, &detached_eat, &claims);
+            nvat_str_free(&detached_eat);
+            nvat_claims_collection_free(&claims);
+            return result;
+        }));
+    }
+    for (auto& future : futures) {
+        ASSERT_EQ(future.get(), NVAT_RC_OK);
+    }
+    time_t end_time = time(nullptr);
+    std::cout << "Time taken for parallel verify: " << end_time - start_time << " seconds" << std::endl;
+}
+
+TEST_F(SwitchLocalVerifierTestCApi, ParallelVerifyWithWarmCache) { 
+    if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
+        GTEST_SKIP() << "Skipping switch Integration tests";
+    }
+    nvat_switch_evidence_t* evidences = nullptr;
+    size_t num_evidences = 0;
+    if (g_env->test_mode == "unit"){
+        evidences = m_mock_multi_switch_evidence;
+        num_evidences = m_num_mock_multi_switch_evidence;
+    } else if (g_env->test_mode == "integration"){
+        evidences = m_actual_switch_evidence;
+        num_evidences = m_num_actual_switch_evidence;
+    }
+
+    // warm up the cache
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_verify_switch_evidence(m_caching_verifier, evidences, num_evidences, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    ASSERT_NE(claims, nullptr);
+    ASSERT_NE(detached_eat, nullptr);
+    nvat_str_free(&detached_eat);
+    nvat_claims_collection_free(&claims);
+
+    std::vector<std::future<nvat_rc_t>> futures;
+    const int num_threads = 4;
+    int num_evidences_per_thread = num_evidences / num_threads;
+    time_t start_time = time(nullptr);
+    for (size_t i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+            nvat_claims_collection_t claims = nullptr;
+            nvat_str_t detached_eat = nullptr;
+            int this_thread_evidences = num_evidences_per_thread;
+            if (i == num_threads - 1) {
+                this_thread_evidences = num_evidences - i*num_evidences_per_thread;
+            }
+            nvat_rc_t result = nvat_verify_switch_evidence(m_caching_verifier, evidences+i*num_evidences_per_thread, this_thread_evidences, m_evidence_policy, &detached_eat, &claims);
+            nvat_str_free(&detached_eat);
+            nvat_claims_collection_free(&claims);
+            return result;
+        }));
+    }
+    for (auto& future : futures) {
+        ASSERT_EQ(future.get(), NVAT_RC_OK);
+    }
+    time_t end_time = time(nullptr);
+    std::cout << "Time taken for parallel verify with cache: " << end_time - start_time << " seconds" << std::endl;
+}
+
+class SwitchRemoteVerifierTestCApi : public ::testing::Test {
+    protected:
+        nvat_switch_verifier_t m_verifier = nullptr;
+        nvat_switch_evidence_t* m_mock_single_switch_evidence = nullptr;
+        size_t m_num_mock_single_switch_evidence = 1;
+        nvat_evidence_policy_t m_evidence_policy = nullptr;
+
+
+        void SetUp() override {
+            nvat_switch_nras_verifier_t nras_verifier = nullptr;
+            ASSERT_EQ(nvat_switch_nras_verifier_create(&nras_verifier, "https://nras.attestation-stg.nvidia.com", g_env->service_key.c_str(), nullptr), NVAT_RC_OK);
+            ASSERT_NE(nras_verifier, nullptr);
+            m_verifier = nvat_switch_nras_verifier_upcast(nras_verifier);
+            ASSERT_NE(m_verifier, nullptr);
+
+            std::string switch_evidence_path = g_env->common_test_data_dir + "/serialized_test_evidence/switch_evidence_ls10.json";
+            nvat_switch_evidence_source_t evidence_source = nullptr;
+            ASSERT_EQ(nvat_switch_evidence_source_from_json_file(&evidence_source, switch_evidence_path.c_str()), NVAT_RC_OK);
+            nvat_nonce_t nonce = nullptr;
+            ASSERT_EQ(nvat_nonce_from_hex(&nonce, "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"), NVAT_RC_OK);
+            ASSERT_NE(nonce, nullptr);
+            ASSERT_EQ(nvat_switch_evidence_collect(evidence_source, nonce, &m_mock_single_switch_evidence, &m_num_mock_single_switch_evidence), NVAT_RC_OK);
+            nvat_switch_evidence_source_free(&evidence_source);
+            nvat_nonce_free(&nonce);
+
+            ASSERT_EQ(nvat_evidence_policy_create_default(&m_evidence_policy), NVAT_RC_OK);
+            ASSERT_NE(m_evidence_policy, nullptr);
+        }
+
+        void TearDown() override {
+            nvat_switch_evidence_array_free(&m_mock_single_switch_evidence, m_num_mock_single_switch_evidence);
+            nvat_switch_verifier_free(&m_verifier);
+            nvat_evidence_policy_free(&m_evidence_policy);
+        }
+};
+
+TEST_F(SwitchRemoteVerifierTestCApi, VerifySingleSwitchEvidence) {
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_verify_switch_evidence(m_verifier, m_mock_single_switch_evidence, m_num_mock_single_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
+    ASSERT_NE(claims, nullptr);
+    ASSERT_NE(detached_eat, nullptr);
+    nvat_str_free(&detached_eat);
+    nvat_claims_collection_free(&claims);
+}
+
+TEST_F(SwitchRemoteVerifierTestCApi, InvalidServiceKey) {
+    std::string service_key = "invalid_service_key";
+    nvat_switch_nras_verifier_t nras_verifier = nullptr;
+    ASSERT_EQ(nvat_switch_nras_verifier_create(&nras_verifier, "https://nras.attestation-stg.nvidia.com", service_key.c_str(), nullptr), NVAT_RC_OK);
+    ASSERT_NE(nras_verifier, nullptr);
+    nvat_switch_verifier_t verifier = nvat_switch_nras_verifier_upcast(nras_verifier);
+    ASSERT_NE(verifier, nullptr);
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_verify_switch_evidence(verifier, m_mock_single_switch_evidence, m_num_mock_single_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_NRAS_FORBIDDEN);
+    ASSERT_EQ(claims, nullptr);
+    ASSERT_EQ(detached_eat, nullptr);
+    nvat_switch_verifier_free(&verifier);
 }

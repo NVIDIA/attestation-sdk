@@ -76,13 +76,17 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             if (error != Error::Ok) {
                 return error;
             }
-            
+            error = add_gpu_mode_claim(attestation_report, *serializable_claims);
+            if (error != Error::Ok) {
+                return error;
+            }
             std::string driver_rim_id;
 
             error = attestation_report.get_driver_rim_id(cur_evidence->get_gpu_architecture(), driver_rim_id);
             if (error != Error::Ok) {
                 return error;
             }
+            LOG_DEBUG("GPU Driver RIM ID: " << driver_rim_id);
             RimDocument driver_rim_document;
             error = m_rim_store->get_rim(driver_rim_id, driver_rim_document);
             if (error != Error::Ok) {
@@ -374,7 +378,32 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error NvRemoteGpuVerifier::init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url, HttpOptions http_options) {
+    Error LocalGpuVerifier::add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV3& out_serializable_claims) {
+        uint64_t opaque_data_version = 0;
+        Error error = attestation_report.get_opaque_data_version(opaque_data_version);
+        if (error == Error::SpdmFieldNotFound) {
+            LOG_DEBUG("Opaque data version not found in attestation report, will not add gpu mode claim");
+            return Error::Ok;
+        }
+        if (error != Error::Ok) {
+            return error;
+        }
+        // todo (p2): check if there were any hopper drivers which supported multiple modes but did not have this feature flag 
+        // if not, we can assign a default value for the gpu mode claim to make it easier to write rp policy
+        if (opaque_data_version < MIN_OPAQUE_DATA_VERSION_FOR_FEATURE_FLAG) {
+            LOG_DEBUG("Opaque data version is less than minimum supported version for feature flag, will not add gpu mode claim");
+            return Error::Ok;
+        }
+        GpuEvidence::AttestationReport::OpaqueDataFeatureFlag feature_flag = GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::INVALID;
+        error = attestation_report.get_feature_flag(feature_flag);
+        if (error != Error::Ok) {
+            return error;
+        }
+        out_serializable_claims.m_mode = to_string(feature_flag);
+        return Error::Ok;
+    }
+
+    Error NvRemoteGpuVerifier::init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url, const std::string& service_key, const HttpOptions& http_options) {
         std::string nras_url_str;
         if (nras_url == nullptr || *nras_url == '\0') {
             nras_url_str = get_env_or_default("NVAT_NRAS_BASE_URL", DEFAULT_BASE_URL);
@@ -385,7 +414,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_verifier.m_nras_url = nras_url_str + "/v4/attest/gpu";
         out_verifier.m_eat_issuer = nras_url_str;
 
-        Error err = NvHttpClient::create(out_verifier.m_http_client, http_options);
+        Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options);
         if (err != Error::Ok) {
             return err;
         }
@@ -393,10 +422,15 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         // TODO(p1): JwkStore should be shared across thread and between verifiers
         std::string jwks_url = nras_url_str + "/.well-known/jwks.json";
         out_verifier.m_jwk_store = std::make_shared<JwkStore>();
-        err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, http_options);
+        err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, service_key, http_options);
         if (err != Error::Ok) {
             return err;
         }
+
+        LOG_TRACE("Create remote gpu verifier with nras url: " << out_verifier.m_nras_url << 
+        " and jwks url: " << jwks_url <<
+        " using service key: " << (service_key.empty() ? "none" : "provided")
+        );
 
         return Error::Ok;
     }
@@ -439,7 +473,11 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         if (error != Error::Ok) {
             return error;
         }
-        NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, {{"Content-Type", "application/json"}}, request_payload);
+        std::unordered_map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+        if (evidence_policy.ocsp_options.get_allow_cert_hold()) {
+            headers["X-NVIDIA-OCSP-ALLOW-CERT-HOLD"] = "true";
+        }
+        NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, headers, request_payload);
 
         long status = 0;
         std::string attest_response_str;
@@ -450,6 +488,9 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         if (status != NvHttpStatus::HTTP_STATUS_OK) {
             LOG_ERROR("NRAS attestation service returned non-200 status: " << static_cast<int>(status));
+            if (status == NvHttpStatus::HTTP_STATUS_FORBIDDEN || status == NvHttpStatus::HTTP_STATUS_UNAUTHORIZED) {
+                return Error::NrasForbidden;
+            }
             return Error::NrasAttestationError;
         }
 

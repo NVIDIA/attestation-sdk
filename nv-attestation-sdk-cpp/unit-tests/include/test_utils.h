@@ -42,6 +42,10 @@ using ::testing::SetArgReferee;
 using ::testing::Invoke;
 
 // Mock evidence data class containing test constants
+const std::unordered_map<std::string, std::string> evidence_to_nonce_map = {
+    {"hopper_590_12", "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576"},
+    {"hopper_latest", "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576"}
+};
 class MockGpuEvidenceData {
 public:
     GpuArchitecture architecture;

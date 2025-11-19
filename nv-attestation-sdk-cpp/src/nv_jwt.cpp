@@ -75,11 +75,11 @@ namespace nvattestation {
         return Error::Ok;
     }
 
-    Error JwkStore::init_from_env(std::shared_ptr<JwkStore>& jwk_store, const std::string& jwks_url, HttpOptions http_options, long long cache_duration_ms) {
+    Error JwkStore::init_from_env(std::shared_ptr<JwkStore>& jwk_store, const std::string& jwks_url, const std::string& service_key, const HttpOptions& http_options, long long cache_duration_ms) {
         jwk_store->m_jwks_url = jwks_url;
         jwk_store->m_last_update_unix_ms = 0;
         jwk_store->m_cache_duration_ms = cache_duration_ms;
-        Error err = NvHttpClient::create(jwk_store->m_http_client, http_options);
+        Error err = NvHttpClient::create(jwk_store->m_http_client, service_key, http_options);
         if (err != Error::Ok) {
             return err;
         }

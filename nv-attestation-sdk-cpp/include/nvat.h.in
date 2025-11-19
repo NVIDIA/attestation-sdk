@@ -26,6 +26,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 // === Package Version ===
 
@@ -97,6 +98,8 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_OVERALL_RESULT_FALSE           (12)
 /// @brief Indicates an error with JSON serialization/deserialization.
 #define NVAT_RC_JSON_SERIALIZATION_ERROR       (13)
+/// @brief Indicates an error occurred when fetching an object from the cache.
+#define NVAT_RC_CACHE_OBJECT_NOT_FOUND         (14)
 /// @brief Indicates the client is not authorized to call the NVIDIA RIM service.
 #define NVAT_RC_RIM_FORBIDDEN                  (101)
 /// @brief Indicates an HTTP internal error occurred when calling the NVIDIA RIM service.
@@ -121,6 +124,8 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_OCSP_INVALID_REQUEST           (203)
 /// @brief Indicates an error occurred when the OCSP response status was not good.
 #define NVAT_RC_OCSP_STATUS_NOT_GOOD           (204)
+/// @brief Indicates client is not authorized to call the NVIDIA OCSP service.
+#define NVAT_RC_OCSP_FORBIDDEN                 (205)
 /// @brief Indicates an error occurred when attempting to apply a relying party policy to a set of claims.
 #define NVAT_RC_POLICY_EVALUATION_ERROR        (301)
 /// @brief Indicates a general error while parsing an SPDM transcript.
@@ -156,28 +161,22 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_NSCQ_INIT_FAILED               (600)
 /// @brief Indicates a generic error when invoking NSCQ.
 #define NVAT_RC_NSCQ_ERROR                     (601)
-/// @brief Indicates an error occurred when fetching the list of connected switch UUIDs.
-#define NVAT_RC_NSCQ_UUID_ERROR                (602)
-/// @brief Indicates an error occurred when fetching the certificate chains of connected switches.
-#define NVAT_RC_NSCQ_CERT_CHAIN_ERROR          (603)
-/// @brief Indicates an error occurred when fetching the attestation reports of connected switches.
-#define NVAT_RC_NSCQ_ATTESTATION_REPORT_ERROR  (604)
-/// @brief Indicates an error occurred when fetching or interpreting a switch architecture.
-#define NVAT_RC_NSCQ_ARCHITECTURE_ERROR        (605)
-/// @brief Indicates an error fetching the TNVL status of a switch.
-#define NVAT_RC_NSCQ_TNVL_ERROR                (606)
+/// @brief Indicates the system has at least one NVSwitch connected that does not support attestation.
+#define NVAT_RC_SWITCH_ARCHITECTURE_NOT_SUPPORTED (602)
 /// @brief Indicates the nonce in the switch evidence does not match the nonce in the switch attestation report.
-#define NVAT_RC_SWITCH_EVIDENCE_NONCE_MISMATCH (607)
+#define NVAT_RC_SWITCH_EVIDENCE_NONCE_MISMATCH (603)
 /// @brief Indicates the VBIOS RIM version from the RIM file does not match the VBIOS RIM version in the switch attestation report.
-#define NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH (608)
+#define NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH (604)
 /// @brief Indicates the FWID in the switch evidence does not match the expected FWID.
-#define NVAT_RC_SWITCH_EVIDENCE_FWID_MISMATCH (609)
+#define NVAT_RC_SWITCH_EVIDENCE_FWID_MISMATCH (605)
 /// @brief Indicates a signature verification error occurred when validating switch evidence.
-#define NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE (610)
+#define NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE (606)
 /// @brief Indicates an error occurred when calling the NVIDIA Remote Attestation Service.
 #define NVAT_RC_NRAS_ATTESTATION_ERROR         (700)
 /// @brief Indicates an error occurred when verifying a token from the NVIDIA Remote Attestation Service.
 #define NVAT_RC_NRAS_TOKEN_INVALID             (701)
+/// @brief Indicates client is not authorized to call the NVIDIA NRAS service.
+#define NVAT_RC_NRAS_FORBIDDEN                 (702)
 /// @brief Indicates a given GPU device certificate did not contain a required firmware id.
 #define NVAT_RC_CERT_FWID_NOT_FOUND            (800)
 /// @brief Indicates an internal error occurred when traversing a certificate chain.
@@ -293,7 +292,7 @@ nvat_rc_t nvat_sdk_init(nvat_sdk_opts_t opts);
  * of @ref nvat_sdk_init and free any resources owned by the active
  * @ref nvat_sdk_opts_t.
  */
-void nvat_sdk_shutdown();
+void nvat_sdk_shutdown(void);
 
 /**
  * @brief Create a new SPDLog Logger backend with the given name and
@@ -419,12 +418,33 @@ typedef struct nvat_ocsp_client_st* nvat_ocsp_client_t;
  *                verifier components.
  * @param base_url If NULL, the default base URL of the NVIDIA OCSP Response is used.
  * @param http_options If NULL, default HTTP options will be used.
+ * 
+ * URL can also be set using the NVAT_OCSP_RESPONSE_BASE_URL environment variable.
  */
 nvat_rc_t nvat_ocsp_client_create_default(
     nvat_ocsp_client_t* out_client,
     const char* base_url,
+    const char* service_key,
     const nvat_http_options_t http_options
 );
+
+/**
+ * @brief Create a cached OCSP client that wraps an existing OCSP client.
+ * 
+ * **Ownership**: On success, the inner_client is safe to be free'd as it is 
+ *                refcounted
+ * @param inner_client The inner OCSP client to wrap. Must not be NULL.
+ * @param max_size_bytes The maximum size of the cache in bytes.
+ * @param ttl_seconds The time-to-live for cached items in seconds. The ocsp 
+ * response will be cached for min(ttl_seconds, ocsp response next update time)
+ */
+nvat_rc_t nvat_ocsp_client_create_cached(
+    nvat_ocsp_client_t* out_client,
+    const nvat_ocsp_client_t inner_client,
+    uint64_t max_size_bytes,
+    time_t ttl_seconds
+);
+
 void nvat_ocsp_client_free(nvat_ocsp_client_t* ocsp_client);
 
 /** @} ocsp_client */
@@ -439,7 +459,7 @@ void nvat_ocsp_client_free(nvat_ocsp_client_t* ocsp_client);
 typedef struct nvat_rim_store_st* nvat_rim_store_t;
 
 /**
- * @brief Create a remote RIM store backed by the [NVIDIA RIM service](https://docs.nvidia.com/attestation/api-docs-rim/latest/rim_api.html).
+ * @brief Create a remote RIM store backed by the [NVIDIA RIM service](https://docs.nvidia.com/attestation/cloud-services/latest/rim/rim_api.html).
  * 
  * If the `base_url` is empty, 
  * the RIM store will use the default NVIDIA RIM service base URL to fetch RIMs.
@@ -451,11 +471,15 @@ typedef struct nvat_rim_store_st* nvat_rim_store_t;
  *
  * @param base_url If NULL, the default base URL of the NVIDIA RIM Service is used.
  * @param http_options If NULL, default HTTP options will be used.
+ * 
+ * URL can also be set using the NVAT_RIM_SERVICE_BASE_URL environment variable.
+ * 
  */
  // TODO(p2): auth
 nvat_rc_t nvat_rim_store_create_remote(
     nvat_rim_store_t* out_store,
     const char* base_url,
+    const char* service_key,
     const nvat_http_options_t http_options
 );
 
@@ -469,6 +493,26 @@ nvat_rc_t nvat_rim_store_create_remote(
  *                verifier components.
  */
 nvat_rc_t nvat_rim_store_create_filesystem(nvat_rim_store_t* out_store, const char* base_path);
+
+/**
+ * @brief Create a RIM store with in-memory caching that wraps an existing RIM store.
+ *
+ * The cached RIM store will cache RIM documents retrieved from the inner store
+ * to reduce redundant fetches and improve performance.
+ *
+ * **Ownership**: On success, the caller assumes ownership of the allocated
+ *                @ref nvat_rim_store_t.
+ *                The client is refcounted and safe to share between multiple
+ *                verifier components.
+ *
+ * @param out_store Output parameter for the cached RIM store handle.
+ * @param inner_store The underlying RIM store to wrap with caching. Must not be NULL.
+ * @param max_size_bytes Maximum total size of cached items in bytes.
+ * @param ttl_seconds Time-to-live for cached items in seconds. Must be non-negative.
+ * @return @ref NVAT_RC_OK on success, error code on failure.
+ */
+
+nvat_rc_t nvat_rim_store_create_cached(nvat_rim_store_t* out_store, const nvat_rim_store_t inner_store, uint64_t max_size_bytes, time_t ttl_seconds);
 
 void nvat_rim_store_free(nvat_rim_store_t* rim_store);
 
@@ -900,10 +944,13 @@ typedef struct nvat_gpu_local_verifier_st* nvat_gpu_local_verifier_t;
  *
  * @param base_url If `NULL`, will use the default NRAS production base URL
  * @param http_options If `NULL`, will use default HTTP options
+ * 
+ * URL can also be set using the NVAT_NRAS_BASE_URL environment variable.
  */
 nvat_rc_t nvat_gpu_nras_verifier_create(
     nvat_gpu_nras_verifier_t* out_verifier,
     const char* base_url,
+    const char* service_key,
     const nvat_http_options_t http_options
 );
 
@@ -989,6 +1036,7 @@ typedef struct nvat_switch_local_verifier_st* nvat_switch_local_verifier_t;
 nvat_rc_t nvat_switch_nras_verifier_create(
     nvat_switch_nras_verifier_t* out_verifier,
     const char* base_url,
+    const char* service_key,
     const nvat_http_options_t http_options
 );
 
@@ -1214,6 +1262,11 @@ nvat_rc_t nvat_attestation_ctx_set_gpu_evidence_source_json_file(nvat_attestatio
  */
 nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attestation_ctx_t ctx, const char* file_path);
 
+/**
+ * @brief Set the service key to use when creating the remote verifiers, rim
+ * store or the OCSP client.
+ */
+nvat_rc_t nvat_attestation_ctx_set_service_key(nvat_attestation_ctx_t ctx, const char* service_key);
 /**
  * @brief Set the detached EAT options to use when generating the detached EAT.
  * If this function is not called, a default set of options will be used.
