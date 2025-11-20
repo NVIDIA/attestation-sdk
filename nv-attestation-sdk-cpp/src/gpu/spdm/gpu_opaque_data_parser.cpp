@@ -239,6 +239,7 @@ Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaq
 Error GpuOpaqueDataParser::get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const {
     auto it = m_fields.find(type);
     if (it == m_fields.end()) {
+        LOG_ERROR("GpuOpaqueDataParser::get_field: Field not found: " << to_string(type));
         return Error::SpdmFieldNotFound;
     }
     out_field = &it->second;

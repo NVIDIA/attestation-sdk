@@ -17,7 +17,7 @@ class Environment : public ::testing::Environment {
   bool test_device_gpu=false;
   bool test_device_switch=false;
   std::string common_test_data_dir;
-
+  std::string service_key = "";
   ~Environment() override {
   }
 
@@ -67,6 +67,10 @@ class Environment : public ::testing::Environment {
     std::string git_repo_root;
     ASSERT_EQ(get_git_repo_root(git_repo_root), Error::Ok);
     common_test_data_dir = git_repo_root + "/common-test-data";
+
+    
+    service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
+    ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
   }
 
   // Override this to define how to tear down the environment.

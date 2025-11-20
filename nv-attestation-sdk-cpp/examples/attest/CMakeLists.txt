@@ -3,10 +3,5 @@ add_executable(attest
 )
 
 target_link_libraries(attest
-    spdlog::spdlog
-    xmlsec::xmlsec
-    OpenSSL::SSL
-    OpenSSL::Crypto
     nvat
-    nlohmann_json::nlohmann_json
 )

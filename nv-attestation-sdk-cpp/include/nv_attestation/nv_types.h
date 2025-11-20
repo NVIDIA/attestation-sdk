@@ -31,9 +31,6 @@
 #include <openssl/asn1.h>
 #include <libxml/xmlschemas.h>
 #include <curl/curl.h>
-#ifdef ENABLE_NSCQ
-#include "nv_attestation/switch/nscq_attestation.h"
-#endif // ENABLE_NSCQ
 
 namespace nvattestation {
 
@@ -92,10 +89,6 @@ template<> struct DeleterOf<xmlSchemaParserCtxt> { void operator()(xmlSchemaPars
 template<> struct DeleterOf<xmlSchemaValidCtxt> { void operator()(xmlSchemaValidCtxt* ptr) const { xmlSchemaFreeValidCtxt(ptr);}};
 template<> struct DeleterOf<curl_slist> { void operator()(curl_slist* ptr) const { curl_slist_free_all(ptr);}};
 template<> struct DeleterOf<CURL> { void operator()(CURL* ptr) const { curl_easy_cleanup(ptr);}};
-
-#ifdef ENABLE_NSCQ
-template<> struct DeleterOf<nscq_session_st> {void operator()(nscq_session_st* ptr) const {if (ptr) {nscq_session_destroy(ptr);}}};
-#endif // ENABLE_NSCQ
 
 template<class T>
 using nv_unique_ptr = std::unique_ptr<T, DeleterOf<T>>;

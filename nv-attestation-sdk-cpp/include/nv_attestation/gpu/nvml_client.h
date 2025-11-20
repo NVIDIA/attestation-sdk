@@ -17,14 +17,9 @@
 
 #pragma once
 
-
 #include <string>
 #include <vector>
 #include <memory>
-
-#ifdef ENABLE_NVML
-#include <nvml.h>
-#endif // ENABLE_NVML
 
 #include "nv_attestation/error.h"
 #include "nv_attestation/gpu/evidence.h"
@@ -32,24 +27,11 @@
 namespace nvattestation {
 
 extern bool g_nvml_initialized;
+
 Error init_nvml();
 void shutdown_nvml();
-
-#ifdef ENABLE_NVML
-bool set_gpu_ready_state(bool ready);
-std::unique_ptr<bool> is_cc_enabled();
-std::unique_ptr<bool> is_cc_dev_mode();
-std::unique_ptr<int> get_gpu_ready_state();
-
-std::unique_ptr<std::string> get_attestation_cert_chain(nvmlDevice_t device_handle);
-std::unique_ptr<std::vector<uint8_t>> get_attestation_report(nvmlDevice_t device_handle, const std::vector<uint8_t>& nonce_input);
-std::unique_ptr<std::string> get_driver_version();
-std::unique_ptr<std::string> get_vbios_version(nvmlDevice_t device_handle);
-std::unique_ptr<std::string> get_uuid(nvmlDevice_t device_handle);
-
-
-std::unique_ptr<GpuArchitecture> get_gpu_architecture(nvmlDevice_t device_handle);
-#endif // ENABLE_NVML
+Error get_driver_version(std::string& out_driver_version);
+Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence);
 
 } // namespace nvattestation
 

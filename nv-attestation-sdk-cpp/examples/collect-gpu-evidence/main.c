@@ -141,13 +141,13 @@ nvat_rc_t attest(void) {
     //   that connects to NVIDIA's remote service
     // - nvat_ocsp_client_create_default: Sets up OCSP client for certificate revocation checking
     // - nvat_gpu_local_verifier_create: Combines RIM store and OCSP client into a local verifier
-    err = nvat_rim_store_create_remote(&ctx.rim_store, NULL, NULL);
+    err = nvat_rim_store_create_remote(&ctx.rim_store, NULL, NULL, NULL);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
     }
 
-    err = nvat_ocsp_client_create_default(&ctx.ocsp_client, NULL, NULL);
+    err = nvat_ocsp_client_create_default(&ctx.ocsp_client, NULL, NULL, NULL);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;

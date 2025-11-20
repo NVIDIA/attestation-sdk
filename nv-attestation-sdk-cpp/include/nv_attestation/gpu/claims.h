@@ -75,6 +75,7 @@ class SerializableGpuClaimsV3 : public Claims {
         bool m_vbios_rim_measurements_available;
         bool m_vbios_index_no_conflict;
 
+        std::string m_mode;
         std::string m_version;
 
         

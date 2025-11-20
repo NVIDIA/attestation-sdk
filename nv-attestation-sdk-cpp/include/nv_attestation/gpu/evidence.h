@@ -22,10 +22,6 @@
 #include <vector>
 #include <cstdint>
 
-#ifdef ENABLE_NVML
-#include <nvml.h>
-#endif
-
 #include "nv_attestation/spdm/spdm_resp.hpp"
 #include "nv_attestation/spdm/spdm_req.hpp"
 #include "nv_attestation/gpu/spdm/gpu_opaque_data_parser.hpp"
@@ -98,6 +94,12 @@ class GpuEvidence {
     public:
         class AttestationReport {
             public:
+                enum class OpaqueDataFeatureFlag {
+                    MPT = 0, 
+                    SPT = 1,
+                    PPCIE = 2,
+                    INVALID = -1
+                };
                 Error generate_attestation_report_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, GpuArchitectureData arch_data, GpuEvidenceClaims::AttestationReportClaims& out_attestation_report_claims) const;
                 std::unique_ptr<bool> verify_attestation_report_signature();
                 Error get_spdm_request(const SpdmMeasurementRequestMessage11*& out_spdm_request) const;
@@ -108,6 +110,8 @@ class GpuEvidence {
                 Error get_vbios_rim_id(std::string& out_vbios_rim_id) const;
                 Error get_nvdec0_status(uint8_t& out_nvdec0_status) const;
                 Error get_measurements(std::unordered_map<int, std::vector<uint8_t>>& out_measurements) const;
+                Error get_opaque_data_version(uint64_t& out_opaque_data_version) const;
+                Error get_feature_flag(OpaqueDataFeatureFlag& out_feature_flag) const;
                 AttestationReport() = default;
                 static Error create(const std::vector<uint8_t>& attestation_report, const std::string& ar_cert_chain, GpuArchitecture architecture, AttestationReport& out_attestation_report);
             private:
@@ -115,6 +119,9 @@ class GpuEvidence {
             SpdmMeasurementRequestMessage11 m_spdm_request;
             GpuOpaqueDataParser m_gpu_opaque_data_parser;
             X509CertChain m_attestation_cert_chain;
+
+            static constexpr const size_t MAX_OPAQUE_DATA_VERSION_SIZE = 8;
+            static constexpr const size_t MAX_FEATURE_FLAG_SIZE = 8;
         };
         GpuEvidence(
             GpuArchitecture architecture,
@@ -179,6 +186,7 @@ class GpuEvidence {
 
 std::ostream& operator<<(std::ostream& os, const GpuEvidence& evidence);
 
+std::string to_string(GpuEvidence::AttestationReport::OpaqueDataFeatureFlag feature_flag);
 /**
  * @brief Provides a source of GPU evidence.
  * 

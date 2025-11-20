@@ -22,6 +22,7 @@
 
 #include "CLI/CLI.hpp"
 #include "nvat.h"
+#include "nvattest_options.h"
 
 namespace nvattest {
 
@@ -45,7 +46,6 @@ namespace nvattest {
      * @brief Creates and adds the 'attest' subcommand to the main CLI application.
      *
      * @param app The CLI11 application to which the subcommand will be added.
-     * @param device String specifying which devices to use ("gpu", "nvswitch", etc.).
      * @param verifier Reference to a string for verifier type, typically "local" or "remote".
      * @param gpu_evidence Path to a local file which contains GPU evidence. Used instead of calling NVML
      * @param switch_evidence Path to a local file which contains GPU evidence.  Used instead of calling NSCQ
@@ -58,16 +58,9 @@ namespace nvattest {
      */
     CLI::App* create_attest_subcommand(
         CLI::App& app,
-        std::string& nonce,
-        std::string& device,
-        std::string& verifier,
-        std::string& gpu_evidence, 
-        std::string& switch_evidence,
-        std::string& relying_party_policy,
-        std::string& rim_url,
-        std::string& ocsp_url,
-        std::string& nras_url,
-        std::string& log_level
+        EvidenceCollectionOptions& evidence_collection_options,
+        EvidenceVerificationOptions& evidence_verification_options,
+        EvidencePolicyOptions& evidence_policy_options
     );
 
     /**
@@ -85,16 +78,10 @@ namespace nvattest {
      * @return Exit code for the subcommand handler (0 = success, 1 = failure, 2 = policy mismatch).
      */
     int handle_attest_subcommand(
-        std::string& nonce,
-        std::string& device,
-        std::string& verifier,
-        std::string& gpu_evidence, 
-        std::string& switch_evidence,
-        std::string& relying_party_policy,
-        std::string& rim_url,
-        std::string& ocsp_url,
-        std::string& nras_url,
-        std::string& log_level
+        const EvidenceCollectionOptions& evidence_collection_options,
+        const EvidenceVerificationOptions& evidence_verification_options,
+        const EvidencePolicyOptions& evidence_policy_options,
+        const CommonOptions& common_options
     );
 
 }

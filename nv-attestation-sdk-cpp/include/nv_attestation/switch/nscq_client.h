@@ -17,43 +17,34 @@
 
 #pragma once
 
-#include <string>
 #include <vector>
-#include <memory>
-
-#ifdef ENABLE_NSCQ
-#include "nv_attestation/switch/nscq_attestation.h"
-#include "nv_attestation/switch/nscq_attestation_path.h"
-#endif // ENABLE_NSCQ
 
 #include "nv_attestation/error.h"
 #include "nv_attestation/switch/evidence.h"
 
 namespace nvattestation {
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+constexpr unsigned int NSCQ_ATTESTATION_REPORT_NONCE_SIZE = 0x20;
+
 extern bool g_nscq_initialized;
+
+enum class SwitchTnvlMode {
+    Unknown = -1,
+    Disabled = 0,
+    Enabled = 1,
+    Failure = 2,
+    Locked = 3
+};
+
 Error init_nscq();
 void shutdown_nscq();
 
-#ifdef ENABLE_NSCQ
-
-enum class SwitchTnvlMode {
-    Unknown = NSCQ_DEVICE_TNVL_MODE_UNKNOWN,
-    Disabled = NSCQ_DEVICE_TNVL_MODE_DISABLED,
-    Enabled = NSCQ_DEVICE_TNVL_MODE_ENABLED,
-    Failure = NSCQ_DEVICE_TNVL_MODE_FAILURE,
-    Locked = NSCQ_DEVICE_TNVL_MODE_LOCKED
-};
+Error collect_evidence_nscq(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence);
 
 Error get_all_switch_uuid(std::vector<std::string>& out_uuids);
 Error get_switch_tnvl_status(const std::string& uuid, SwitchTnvlMode& out_tnvl_mode);
-
 Error get_attestation_cert_chain(const std::string& uuid, std::string& out_cert_chain);
 Error get_attestation_report(const std::string& uuid, const std::vector<uint8_t>& nonce_input, std::vector<uint8_t>& out_attestation_report);
-
 Error get_switch_architecture(SwitchArchitecture& out_arch);
 
-#endif // ENABLE_NSCQ
-
-}
+} // namespace nvattestation

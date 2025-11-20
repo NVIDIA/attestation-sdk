@@ -29,7 +29,9 @@
 #include "nv_attestation/rim.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/utils.h"
+#include "nv_attestation/nv_ocsp.h"
 #include "nv_attestation/nv_x509.h" // Added for IOcspHttpClient and create_default_ocsp_http_client
+#include "environment.h"
 
 // OpenSSL headers needed for crafting mock OCSP responses
 #include <openssl/ocsp.h>
@@ -46,8 +48,8 @@ public:
     // Call base constructor with some dummy values as it's pure virtual otherwise
     MockOcspHttpClient() : IOcspHttpClient() {}
 
-    MOCK_METHOD(Error, transfer_ocsp_request,
-                (BIO* req_bio, nv_unique_ptr<OCSP_RESPONSE>& out_ocsp_resp), (override));
+    MOCK_METHOD(Error, get_ocsp_response,
+                (const nv_unique_ptr<X509>& subject_cert, const nv_unique_ptr<X509>& issuer_cert, const nv_unique_ptr<stack_st_X509>& intermediates, const nv_unique_ptr<X509_STORE>& trust_store, NvOcspResponse& out_ocsp_response), (override));
 };
 
 // mock for RimClient using gmock
@@ -79,7 +81,7 @@ TEST(InvalidRimDocument, VerifyIncorrectSignature) {
 class RimDocumentFixture : public ::testing::Test {
     protected:
         RimDocument m_rim_document;
-
+        std::string m_service_key = "";
         void SetUp() override {
             Error error = RimDocument::create_from_file("testdata/NV_GPU_DRIVER_GH100_550.144.03.xml", m_rim_document);
             ASSERT_EQ(error, Error::Ok);
@@ -138,7 +140,7 @@ TEST_F(RimDocumentFixture, OcspValidation) {
     EXPECT_EQ(error, Error::Ok);
     OCSPClaims ocsp_claims;
     NvHttpOcspClient ocsp_client;
-    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis.nvidia.com", HttpOptions());
+    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
     ocsp_verify_options.set_nonce_enabled(true);
@@ -167,7 +169,7 @@ TEST_F(RimDocumentFixture, OcspValidationTLS) {
     EXPECT_EQ(error, Error::Ok);
     OCSPClaims ocsp_claims;
     NvHttpOcspClient ocsp_client;
-    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis.nvidia.com", HttpOptions());
+    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
     ocsp_verify_options.set_nonce_enabled(true);
@@ -203,7 +205,7 @@ TEST_F(RimDocumentFixture, OcspServerError) {
     http_options.set_max_retry_count(3);
     OCSPClaims ocsp_claims;
     NvHttpOcspClient ocsp_client;
-    Error client_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.invalid", http_options);
+    Error client_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.invalid", g_env->service_key, http_options);
     ASSERT_EQ(client_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
     ocsp_verify_options.set_nonce_enabled(true);
@@ -223,7 +225,7 @@ TEST_F(RimDocumentFixture, OcspInvalidResponse) {
     EXPECT_EQ(error, Error::Ok);
     OCSPClaims ocsp_claims;
     NvHttpOcspClient ocsp_client;
-    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis.nvidia.com", HttpOptions());
+    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
     ocsp_verify_options.set_nonce_enabled(true);
@@ -241,8 +243,8 @@ TEST_F(RimDocumentFixture, OcspInvalidRequest) {
     auto mock_ocsp_client = std::make_unique<MockOcspHttpClient>();
     EXPECT_EQ(error, Error::Ok);
 
-    EXPECT_CALL(*mock_ocsp_client, transfer_ocsp_request(_, _))
-        .WillOnce(Invoke([](BIO* req_bio, nv_unique_ptr<OCSP_RESPONSE>& out_ocsp_resp) -> Error {
+    EXPECT_CALL(*mock_ocsp_client, get_ocsp_response(_, _, _, _, _))
+        .WillOnce(Invoke([](const nv_unique_ptr<X509>& subject_cert, const nv_unique_ptr<X509>& issuer_cert, const nv_unique_ptr<stack_st_X509>& intermediates, const nv_unique_ptr<X509_STORE>& trust_store, NvOcspResponse& out_ocsp_response) -> Error {
             // Return UNAUTHORIZED status - this should result in Error::OcspInvalidRequest
             return Error::OcspInvalidRequest;
         }));
@@ -276,7 +278,7 @@ TEST_F(RimDocumentFixture, OcspInvalidRequest) {
 
 TEST(RimClientTest, DownloadGetRim) {
     NvRemoteRimStoreImpl rim_store;
-    Error error = NvRemoteRimStoreImpl::init_from_env(rim_store, "https://rim.attestation.nvidia.com", HttpOptions());
+    Error error = NvRemoteRimStoreImpl::init_from_env(rim_store, "https://rim.attestation.nvidia.com", g_env->service_key, HttpOptions());
     EXPECT_EQ(error, Error::Ok);
     std::string driver_version = "550.144.03";
     std::string rim_id = "NV_GPU_DRIVER_GH100_" + driver_version;
@@ -326,7 +328,7 @@ TEST_F(RimDocumentFixture, GenerateCertChainClaims) {
     // Use typical timeout and backoff values as in other tests
     CertChainClaims claims;
     NvHttpOcspClient ocsp_client;
-    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis.nvidia.com:80/", HttpOptions());
+    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com:80/", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
     ocsp_verify_options.set_nonce_enabled(true);

@@ -28,6 +28,7 @@
 #include "nv_attestation/error.h"
 #include "nv_attestation/verify.h"
 #include "nv_attestation/nv_http.h"
+#include "nv_attestation/nv_ocsp.h"
 
 namespace nvattestation {
 
@@ -141,69 +142,6 @@ struct CertChainClaims {
 
 std::ostream& operator<<(std::ostream& os, const CertChainClaims& claims);
 
-/**
- * @brief Interface for an OCSP HTTP client.
- * This allows for mocking the HTTP transfer part of OCSP requests during testing.
- */
-class IOcspHttpClient {
-public:
-    virtual ~IOcspHttpClient() = default;
-
-    IOcspHttpClient() = default;
-
-    /**
-     * @brief Performs the HTTP transfer for an OCSP request with retry logic and response processing.
-     *
-     * @param req_bio The BIO containing the serialized OCSP request.
-     * @param out_ocsp_resp Output parameter for the successfully parsed OCSP response.
-     * @return Error code indicating the result of the operation.
-     */
-    virtual Error transfer_ocsp_request(
-        BIO* req_bio,
-        nv_unique_ptr<OCSP_RESPONSE>& out_ocsp_resp
-    ) = 0;
-
-};
-
-/**
- * @brief NvHttpClient-based implementation of IOcspHttpClient.
- * This implementation uses NvHttpClient for OCSP requests with direct request/response parsing.
- */
-class NvHttpOcspClient : public IOcspHttpClient {
-public:
-    NvHttpOcspClient() = default;
-    static constexpr const char* DEFAULT_BASE_URL = "https://ocsp.ndis.nvidia.com";
-
-    Error transfer_ocsp_request(
-        BIO* req_bio,
-        nv_unique_ptr<OCSP_RESPONSE>& out_ocsp_resp
-    ) override;
-
-    static Error create(
-        NvHttpOcspClient& out_client,
-        const std::string& base_url,
-        HttpOptions http_options
-    );
-
-    /**
-     * @brief Creates an NvHttpOcspClient instance.
-     * 
-     * @param out_client Output parameter for the created client
-     * @param ocsp_url The OCSP server URL
-     * @param http_options HTTP options for the client
-     * @return Error::Ok on success, error code on failure
-     */
-    static Error init_from_env(
-        NvHttpOcspClient& out_client,
-        const char * base_url = nullptr,
-        HttpOptions http_options = HttpOptions()
-    );
-
-private:
-    HttpOptions m_http_options;
-    std::string m_ocsp_url;
-    NvHttpClient m_http_client;
-};
 
 class X509CertChain{
     private:

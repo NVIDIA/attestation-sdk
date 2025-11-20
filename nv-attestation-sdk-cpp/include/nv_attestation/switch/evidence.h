@@ -24,12 +24,6 @@
 
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/error.h"
-
-
-#ifdef ENABLE_NSCQ
-#include "nv_attestation/switch/nscq_attestation.h"
-#endif
-
 #include "nv_attestation/spdm/spdm_resp.hpp"
 #include "nv_attestation/spdm/spdm_req.hpp"
 #include "nv_attestation/switch/spdm/switch_opaque_data_parser.hpp"

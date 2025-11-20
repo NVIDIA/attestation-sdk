@@ -7,13 +7,17 @@ option(SANITIZER "Select a sanitizer" OFF)
 
 add_executable(nv-attestation-cli-tests
     main.cpp
-    cli_tests.cpp
+    attest_tests.cpp
+    collect_evidence_tests.cpp
+    test_utils.h
     environment.h
-    ${nvattest_SOURCE_DIR}/attest.cpp
+    ${nvattest_SOURCE_DIR}/src/attest.cpp
+    ${nvattest_SOURCE_DIR}/src/collect_evidence.cpp
+    ${nvattest_SOURCE_DIR}/src/utils.cpp
 )
 
 target_include_directories(nv-attestation-cli-tests PRIVATE 
-    ${nvattest_SOURCE_DIR}
+    ${nvattest_SOURCE_DIR}/src
 )
 
 if (SANITIZER)

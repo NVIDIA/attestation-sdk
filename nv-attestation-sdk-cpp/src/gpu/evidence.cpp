@@ -19,24 +19,20 @@
 #include <string>
 #include <memory>
 #include <iostream>
-#include <iomanip>
 #include <ctime>
 #include <stdexcept>
 
-#include "nv_attestation/gpu/evidence.h"
-#include "nv_attestation/log.h"
-#include "nv_attestation/error.h"
 #include <nlohmann/json.hpp>
 
-#ifdef ENABLE_NVML
+#include "nv_attestation/error.h"
+#include "nv_attestation/gpu/evidence.h"
 #include "nv_attestation/gpu/nvml_client.h"
-#include <nvml.h>
-#endif // ENABLE_NVML
-
+#include "nv_attestation/log.h"
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/spdm/spdm_req.hpp"
 #include "nv_attestation/spdm/spdm_resp.hpp"
 #include "nv_attestation/utils.h"
+
 #include "internal/certs.h"
 
 using json = nlohmann::json;
@@ -185,93 +181,17 @@ void from_string(const std::string& arch_str, GpuArchitecture& out_arch) {
 
 Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const // NOLINT(readability-function-cognitive-complexity)
 {
-#ifdef ENABLE_NVML
-    init_nvml();
-    // Calculate the number of devices
-    unsigned int device_count = 0;
-    nvmlReturn_t result = nvmlDeviceGetCount(&device_count);
-    if (result != NVML_SUCCESS) {
-        LOG_ERROR("Failed to get device count: " << std::string(nvmlErrorString(result)));
-        return Error::NvmlError;
+    Error err = init_nvml();
+    if (err != Error::Ok) {
+        return err;
     }
 
-    if (device_count == 0) {
-        LOG_ERROR("No GPUs available");
-        return Error::NvmlError;
+    err = collect_evidence_nvml(nonce_input, out_evidence);
+    if (err != Error::Ok) {
+        return err;
     }
 
-    auto evidence_list = std::make_unique<std::vector<GpuEvidence>>();
-
-    // Driver version
-    std::unique_ptr<std::string> driver_version_ptr = get_driver_version();
-    if (!driver_version_ptr) {
-        LOG_ERROR("Failed to get driver version");
-        return Error::NvmlError;
-    }
-
-    for (unsigned int i = 0; i < device_count; ++i) {
-        nvmlDevice_t device_handle{};
-        result = nvmlDeviceGetHandleByIndex(i, &device_handle);
-        if (result != NVML_SUCCESS) {
-            LOG_ERROR("Failed to get handle for GPU index " << i << ": " << nvmlErrorString(result));
-            return Error::NvmlError;
-        }
-
-        std::unique_ptr<GpuArchitecture> architecture_enum_ptr = get_gpu_architecture(device_handle);
-        if (!architecture_enum_ptr) {
-            LOG_ERROR("Failed to get GPU architecture for GPU index " << i);
-            return Error::NvmlError;
-        }
-
-        unsigned int board_id = 0;
-        result = nvmlDeviceGetBoardId(device_handle, &board_id);
-        if (result != NVML_SUCCESS) {
-                LOG_ERROR("Failed to get board ID for GPU index " << i << ": " << nvmlErrorString(result));
-                return Error::NvmlError;
-        }
-        
-        std::unique_ptr<std::string> uuid_ptr = get_uuid(device_handle);
-        if (!uuid_ptr){
-            LOG_ERROR("Failed to get UUID for GPU index " << i);
-            return Error::NvmlError;
-        }
-
-        std::unique_ptr<std::string> vbios_version_ptr = get_vbios_version(device_handle);
-        if (!vbios_version_ptr){
-            LOG_ERROR("Failed to get VBIOS version for GPU index " << i);
-            return Error::NvmlError;
-        }
-        
-        std::unique_ptr<std::vector<uint8_t>> attestation_report_ptr = get_attestation_report(device_handle, nonce_input);
-        if (!attestation_report_ptr) {
-            LOG_ERROR("Failed to fetch attestation report for GPU index " << i);
-            return Error::NvmlError;
-        }
-
-        std::unique_ptr<std::string> attestation_cert_chain_ptr = get_attestation_cert_chain(device_handle);
-        if (!attestation_cert_chain_ptr) {
-            LOG_ERROR("Failed to get GPU certificate for GPU index " << i);
-            return Error::NvmlError;
-        }
-        
-        std::shared_ptr<GpuEvidence> evidence = std::make_shared<GpuEvidence>(
-            *architecture_enum_ptr,
-            board_id,
-            *uuid_ptr,
-            *vbios_version_ptr,
-            *driver_version_ptr,
-            *attestation_report_ptr,
-            *attestation_cert_chain_ptr,
-            nonce_input
-        );
-        out_evidence.push_back(evidence);
-    }
-    
     return Error::Ok;
-#else
-    LOG_ERROR("ENABLE_NVML feature was not enabled during compilation");
-    return Error::FeatureNotEnabled;
-#endif // ENABLE_NVML
 }
 
 Error GpuEvidence::get_parsed_attestation_report(GpuEvidence::AttestationReport& out_attestation_report) const {
@@ -330,8 +250,8 @@ Error GpuEvidence::generate_gpu_evidence_claims(const GpuEvidence::AttestationRe
 
     error = attestation_report.generate_attestation_report_claims(ocsp_verify_options, ocsp_client, arch_data, out_gpu_evidence_claims.m_attestation_report_claims);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to generate attestation report claims.");
-        return Error::InternalError;
+        LOG_ERROR("Failed to generate attestation report claims.");
+        return error;
     }
     return Error::Ok;
 }
@@ -444,6 +364,7 @@ Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attesta
         LOG_PUSH_ERROR(Error::InternalError, "Failed to parse GPU opaque data.");
         return Error::InternalError;
     }
+    LOG_TRACE("GPU opaque data: " << out_attestation_report.m_gpu_opaque_data_parser);
 
     return Error::Ok;
 }
@@ -524,11 +445,27 @@ Error GpuEvidence::AttestationReport::get_driver_rim_id(GpuArchitecture architec
         return error;
     }
 
-    // todo(p0): take the chip type
     if (architecture == GpuArchitecture::Hopper) {
         out_driver_rim_id = "NV_GPU_DRIVER_GH100_" + driver_version;
     } else if (architecture == GpuArchitecture::Blackwell) {
-        out_driver_rim_id = "NV_GPU_CC_DRIVER_GB100_" + driver_version;
+        const GpuParsedOpaqueFieldData* chip_info_field = nullptr;
+        error = m_gpu_opaque_data_parser.get_field(GpuOpaqueDataType::CHIP_INFO, chip_info_field);
+        if (error == Error::SpdmFieldNotFound) {
+            LOG_DEBUG("Chip info field not found in blackwell attestation report, falling back to NV_GPU_CC_DRIVER_GB100_ as rim id prefix");
+            out_driver_rim_id = "NV_GPU_CC_DRIVER_GB100_" + driver_version;
+            return Error::Ok;
+        }
+        if (error != Error::Ok) {
+            return error;
+        }
+        const std::vector<uint8_t>* chip_info_data = nullptr;
+        error = chip_info_field->get_byte_vector(chip_info_data);
+        if (error != Error::Ok) {
+            return error;
+        }
+        std::string chip_type_string(chip_info_data->begin(), chip_info_data->end());
+        LOG_TRACE("Chip type string: " << chip_type_string);
+        out_driver_rim_id = "NV_GPU_CC_DRIVER_" + chip_type_string + "_" + driver_version;
     } else {
         LOG_ERROR("Unsupported GPU architecture: ");
         return Error::InternalError;
@@ -628,6 +565,62 @@ Error GpuEvidence::AttestationReport::get_measurements(std::unordered_map<int, s
     return Error::Ok;
 }
 
+Error GpuEvidence::AttestationReport::get_opaque_data_version(uint64_t& out_opaque_data_version) const {
+    const GpuParsedOpaqueFieldData* opaque_data_version_field = nullptr;
+    Error error = m_gpu_opaque_data_parser.get_field(GpuOpaqueDataType::OPAQUE_DATA_VERSION, opaque_data_version_field);
+    if (error != Error::Ok) {
+        return error;
+    }
+    const std::vector<uint8_t>* opaque_data_version_data = nullptr;
+    error = opaque_data_version_field->get_byte_vector(opaque_data_version_data);
+    if (error != Error::Ok) {
+        return error;
+    }
+    // do not know the actual size of the opaque data version, but assume it is less than 8 bytes
+    if (opaque_data_version_data->size() > MAX_OPAQUE_DATA_VERSION_SIZE) {
+        LOG_ERROR("Opaque data version vector greater than 8 bytes");
+    }
+    if(!read_little_endian(*opaque_data_version_data, 0, opaque_data_version_data->size(), out_opaque_data_version)) {
+        LOG_ERROR("Failed to read opaque data version");
+        return Error::InternalError;
+    }
+    LOG_TRACE("Opaque data version: " << out_opaque_data_version);
+    return Error::Ok;
+}
+
+Error GpuEvidence::AttestationReport::get_feature_flag(OpaqueDataFeatureFlag& out_feature_flag) const {
+    const GpuParsedOpaqueFieldData* feature_flag_field = nullptr;
+    Error error = m_gpu_opaque_data_parser.get_field(GpuOpaqueDataType::FEATURE_FLAG, feature_flag_field);
+    if (error != Error::Ok) {
+        return error;
+    }
+    const std::vector<uint8_t>* feature_flag_data = nullptr;
+    error = feature_flag_field->get_byte_vector(feature_flag_data);
+    if (error != Error::Ok) {
+        return error;
+    }
+    // do not know the actual size of the feature flag, but assume it is less than 8 bytes
+    if (feature_flag_data->size() > MAX_FEATURE_FLAG_SIZE) {
+        LOG_ERROR("Feature flag vector greater than 8 bytes");
+    }
+    uint64_t feature_flag = 0;
+    if(!read_little_endian(*feature_flag_data, 0, feature_flag_data->size(), feature_flag)) {
+        LOG_ERROR("Failed to read feature flag");
+        return Error::InternalError;
+    }
+    LOG_TRACE("Feature flag: " << feature_flag);
+    out_feature_flag = static_cast<OpaqueDataFeatureFlag>(feature_flag);
+    return Error::Ok;
+}
+
+std::string to_string(GpuEvidence::AttestationReport::OpaqueDataFeatureFlag feature_flag) {
+    switch (feature_flag) {
+        case GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::MPT: return "mpt";
+        case GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::SPT: return "spt";
+        case GpuEvidence::AttestationReport::OpaqueDataFeatureFlag::PPCIE: return "ppcie";
+        default: return "invalid";
+    }
+}
 std::string GpuEvidence::get_hex_nonce() const {
     return to_hex_string(m_nonce);
 }
@@ -647,8 +640,14 @@ Error GpuEvidenceSourceFromJsonFile::create(const std::string& file_path, GpuEvi
     }
 
     // deserialize the evidence from the string
-    LOG_DEBUG("Deserializing gpu evidence from file: " << file_path);
-    return GpuEvidence::collection_from_json(file_contents, out_source.m_evidence);
+    LOG_TRACE("Deserializing gpu evidence from file: " << file_path);
+    error = GpuEvidence::collection_from_json(file_contents, out_source.m_evidence);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to deserialize gpu evidence from file: " << file_path);
+        return error;
+    }
+    LOG_TRACE("Deserialized num gpu evidence: " << out_source.m_evidence.size());
+    return Error::Ok;
 
 }
 

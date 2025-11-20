@@ -430,13 +430,13 @@ NvRemoteRimStoreImpl::NvRemoteRimStoreImpl(const std::string &server_host) {
     m_base_url = server_host;
 }
 
-Error NvRemoteRimStoreImpl::init_from_env(NvRemoteRimStoreImpl& out_rim_store, const char* base_url, HttpOptions http_options) {
+Error NvRemoteRimStoreImpl::init_from_env(NvRemoteRimStoreImpl& out_rim_store, const char* base_url, const std::string& service_key, const HttpOptions& http_options) {
     if (base_url == nullptr || *base_url == '\0') {
         out_rim_store.m_base_url = get_env_or_default("NVAT_RIM_SERVICE_BASE_URL", DEFAULT_BASE_URL);
     } else {
         out_rim_store.m_base_url = std::string(base_url);
     }
-    Error error = NvHttpClient::create(out_rim_store.m_http_client, http_options);
+    Error error = NvHttpClient::create(out_rim_store.m_http_client, service_key, http_options);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to create NvHttpClient");
         return error;
@@ -455,6 +455,7 @@ static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, voi
 Error NvRemoteRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_rim_document) {
     
    std::string url = m_base_url + "/v1/rim/" + rim_id;
+   LOG_TRACE("Getting RIM from URL: " << url);
 
     NvRequest request(url, NvHttpMethod::HTTP_METHOD_GET);
     long http_code = 0;
@@ -508,6 +509,39 @@ Error NvRemoteRimStoreImpl::extract_rim_document(const std::string &rim_response
         return Error::InternalError;
     }
     out_rim_document = std::move(rim_document);
+    return Error::Ok;
+}
+
+InMemoryCachingRimStoreImpl::InMemoryCachingRimStoreImpl(std::shared_ptr<IRimStore> inner_client, uint64_t max_size_bytes, time_t ttl_seconds) {
+    m_cache = std::make_shared<NvCache>(std::make_shared<NvCacheOptions>(max_size_bytes, ttl_seconds));
+    m_inner_client = std::move(inner_client);
+}
+
+Error InMemoryCachingRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_rim_document) {
+    std::shared_ptr<void> rim_document_data;
+    Error error = m_cache->get(rim_id, rim_document_data);
+    if (error == Error::CacheObjectNotFound) {
+        LOG_TRACE("RIM with id " << rim_id << " not found in cache, getting from inner client");
+        error = m_inner_client->get_rim(rim_id, out_rim_document);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to get RIM from inner client");
+            return error;
+        }
+        error = m_cache->put(rim_id, std::make_shared<std::string>(out_rim_document.get_raw_rim_data()), out_rim_document.get_raw_rim_data().size());
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to put RIM into cache");
+            return error;
+        }
+        LOG_TRACE("RIM with id " << rim_id << " put into cache");
+        return Error::Ok;
+    }
+    LOG_TRACE("RIM with id " << rim_id << " found in cache");
+    std::shared_ptr<std::string> rim_document_data_str = std::static_pointer_cast<std::string>(rim_document_data);
+    error = RimDocument::create_from_rim_data(*rim_document_data_str, out_rim_document);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to create RimDocument from RIM data");
+        return error;
+    }
     return Error::Ok;
 }
 

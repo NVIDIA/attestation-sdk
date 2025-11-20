@@ -24,6 +24,7 @@
 #include "nvat.h"
 #include "nvattest_types.h"
 #include "spdlog/spdlog.h"
+#include "utils.h"
 
 namespace nvattest {
 
@@ -68,40 +69,17 @@ namespace nvattest {
     }
 
     CLI::App* create_attest_subcommand(
-        CLI::App& app, 
-        std::string& nonce,
-        std::string& device, 
-        std::string& verifier, 
-        std::string& gpu_evidence, 
-        std::string& switch_evidence, 
-        std::string& relying_party_policy,
-        std::string& rim_url,
-        std::string& ocsp_url,
-        std::string& nras_url, 
-        std::string& log_level) {
+        CLI::App& app,
+        EvidenceCollectionOptions& evidence_collection_options,
+        EvidenceVerificationOptions& evidence_verification_options,
+        EvidencePolicyOptions& evidence_policy_options) {
 
         auto* subcommand = app.add_subcommand("attest", "Run attestation and print results as JSON");
-        subcommand->add_option("--nonce", nonce, "Nonce for the attestation (in hex format). If not provided, a nonce will be generated.")
-                    ->default_val("");
-        subcommand->add_option("--device", device, "Device to attest ('gpu', 'nvswitch')")
-                  ->check(CLI::IsMember({"gpu", "nvswitch"}))
-                  ->default_val("gpu");
+
+        add_evidence_collection_options(subcommand, evidence_collection_options);
+        add_evidence_verification_options(subcommand, evidence_verification_options);
+        add_evidence_policy_options(subcommand, evidence_policy_options);
         
-
-        subcommand->add_option("--verifier", verifier, "Verifier type ('local' or 'remote')")
-                  ->check(CLI::IsMember({"local", "remote"}))
-                  ->default_val("local");
-
-        subcommand->add_option("--gpu-evidence", gpu_evidence, "Path to a local file which contains GPU evidence. Used instead of calling NVML")->default_val("");
-        subcommand->add_option("--switch-evidence", switch_evidence, "Path to a local file which contains Switch evidence. Used instead of calling NSCQ")->default_val("");
-        subcommand->add_option("--relying-party-policy", relying_party_policy, "Path to a local file which contains a Relying Party Rego policy")->default_val("");
-        // TODO: If these params are reused, move them to the common options
-        subcommand->add_option("--rim-url", rim_url, "Base URL for the NVIDIA RIM service")->default_val("https://rim.attestation.nvidia.com");
-        subcommand->add_option("--ocsp-url", ocsp_url, "Base URL for the OCSP responder")->default_val("https://ocsp.ndis.nvidia.com");
-        subcommand->add_option("--nras-url", nras_url, "Base URL for the NVIDIA Remote Attestation Service")->default_val("https://nras.attestation.nvidia.com");
-        subcommand->add_option("--log-level", log_level, "Log level ('trace', 'debug', 'info', 'warn', 'error', 'off')")
-                  ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "off"}))
-                  ->default_val("warn");
         return subcommand;
     }
 
@@ -147,16 +125,10 @@ namespace nvattest {
 
 
     AttestOutput attest(
-        const std::string& nonce,
-        const std::string& device, 
-        const std::string& verifier, 
-        const std::string& gpu_evidence, 
-        const std::string& switch_evidence,
-        const std::string& relying_party_policy,
-        const std::string& rim_url,
-        const std::string& ocsp_url,
-        const std::string& nras_url,
-        const std::string& log_level) {
+        const EvidenceCollectionOptions& evidence_collection_options,
+        const EvidenceVerificationOptions& evidence_verification_options,
+        const EvidencePolicyOptions& evidence_policy_options,
+        const CommonOptions& common_options) {
 
         nvat_rc_t err;
 
@@ -171,15 +143,15 @@ namespace nvattest {
 
         nvat_logger_t logger = nullptr;
         nvat_log_level_t log_level_nvat = NVAT_LOG_LEVEL_OFF;
-        if (log_level == "trace") {
+        if (common_options.log_level == "trace") {
             log_level_nvat = NVAT_LOG_LEVEL_TRACE;
-        } else if (log_level == "debug") {
+        } else if (common_options.log_level == "debug") {
             log_level_nvat = NVAT_LOG_LEVEL_DEBUG;
-        } else if (log_level == "info") {
+        } else if (common_options.log_level == "info") {
             log_level_nvat = NVAT_LOG_LEVEL_INFO;
-        } else if (log_level == "warn") {
+        } else if (common_options.log_level == "warn") {
             log_level_nvat = NVAT_LOG_LEVEL_WARN;
-        } else if (log_level == "error") {
+        } else if (common_options.log_level == "error") {
             log_level_nvat = NVAT_LOG_LEVEL_ERROR;
         }
         err = nvat_logger_spdlog_create(&logger, "nvattest", log_level_nvat);
@@ -187,6 +159,7 @@ namespace nvattest {
             return AttestOutput(err);
         }
         nvat_sdk_opts_set_logger(*(opts.get()), logger);
+        nvat_logger_free(&logger);
 
         // todo (p1): in case more subcommands are added which required SDK init, 
         // refactor this whole thing to a common function
@@ -201,38 +174,60 @@ namespace nvattest {
         if (err != NVAT_RC_OK) return AttestOutput(err);
         ctx.reset(&raw_ctx);
 
-        if (device == "gpu") {
+        nv_unique_ptr<nvat_evidence_policy_t> evidence_policy;
+        nvat_evidence_policy_t raw_policy = nullptr;
+        err = nvat_evidence_policy_create_default(&raw_policy);
+        if (err != NVAT_RC_OK) {
+            return AttestOutput(err);
+        }
+        evidence_policy.reset(raw_policy);
+        nvat_evidence_policy_t policy_handle = evidence_policy.release();
+        err = nvat_attestation_ctx_set_evidence_policy(*(ctx.get()), &policy_handle);
+        if (err != NVAT_RC_OK) {
+            nvat_evidence_policy_free(&policy_handle);
+            return AttestOutput(err);
+        }
+
+        if (evidence_collection_options.device == "gpu") {
             err = nvat_attestation_ctx_set_device_type(*(ctx.get()), NVAT_DEVICE_GPU);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
-        } else if (device == "nvswitch") {
+        } else if (evidence_collection_options.device == "nvswitch") {
             err = nvat_attestation_ctx_set_device_type(*(ctx.get()), NVAT_DEVICE_NVSWITCH);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
         }
 
-        if (!gpu_evidence.empty()) {
-            err = nvat_attestation_ctx_set_gpu_evidence_source_json_file(*(ctx.get()), gpu_evidence.c_str());
+        if (!evidence_verification_options.gpu_evidence.empty()) {
+            err = nvat_attestation_ctx_set_gpu_evidence_source_json_file(*(ctx.get()), evidence_verification_options.gpu_evidence.c_str());
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
         }
 
-        if (!switch_evidence.empty()) {
-            err = nvat_attestation_ctx_set_switch_evidence_source_json_file(*(ctx.get()), switch_evidence.c_str());
+        if (!evidence_verification_options.switch_evidence.empty()) {
+            err = nvat_attestation_ctx_set_switch_evidence_source_json_file(*(ctx.get()), evidence_verification_options.switch_evidence.c_str());
+            if (err != NVAT_RC_OK) {
+                return AttestOutput(err);
+            }
+        }
+
+        if (!evidence_verification_options.service_key.empty()) {
+            err = nvat_attestation_ctx_set_service_key(*(ctx.get()), evidence_verification_options.service_key.c_str());
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
         }
 
         // Configure service endpoints if provided
-        if (!rim_url.empty()) {
-            std::string rim_base = rim_url;
+        if (!evidence_verification_options.rim_url.empty()) {
+            std::string rim_base = evidence_verification_options.rim_url;
             nv_unique_ptr<nvat_rim_store_t> rim_store;
             nvat_rim_store_t rim_store_raw = nullptr;
-            err = nvat_rim_store_create_remote(&rim_store_raw, rim_base.c_str(), nullptr);
+            const char* service_key_cstr = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
+            err = nvat_rim_store_create_remote(&rim_store_raw, rim_base.c_str(), service_key_cstr, nullptr);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
@@ -243,11 +238,12 @@ namespace nvattest {
             }
         }
 
-        if (!ocsp_url.empty()) {
-            std::string ocsp_base = ocsp_url;
+        if (!evidence_verification_options.ocsp_url.empty()) {
+            std::string ocsp_base = evidence_verification_options.ocsp_url;
             nv_unique_ptr<nvat_ocsp_client_t> ocsp_client;
             nvat_ocsp_client_t ocsp_client_raw = nullptr;
-            err = nvat_ocsp_client_create_default(&ocsp_client_raw, ocsp_base.c_str(), nullptr);
+            const char* service_key_cstr = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
+            err = nvat_ocsp_client_create_default(&ocsp_client_raw, ocsp_base.c_str(), service_key_cstr, nullptr);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
@@ -258,23 +254,23 @@ namespace nvattest {
             }
         }
 
-        if (!nras_url.empty()) {
-            std::string nras_base = nras_url;
+        if (!evidence_verification_options.nras_url.empty()) {
+            std::string nras_base = evidence_verification_options.nras_url;
             // Ensure remote verifiers use the user-specified NRAS base URL
             setenv("NVAT_NRAS_BASE_URL", nras_base.c_str(), 1);
         }
 
-        err = set_relying_party_policy(*(ctx.get()), relying_party_policy);
+        err = set_relying_party_policy(*(ctx.get()), evidence_verification_options.relying_party_policy);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
 
-        if (verifier == "local") {
+        if (evidence_verification_options.verifier == "local") {
             err = nvat_attestation_ctx_set_verifier_type(*(ctx.get()), NVAT_VERIFY_LOCAL);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
-        } else if (verifier == "remote") {
+        } else if (evidence_verification_options.verifier == "remote") {
             err = nvat_attestation_ctx_set_verifier_type(*(ctx.get()), NVAT_VERIFY_REMOTE);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
@@ -285,70 +281,58 @@ namespace nvattest {
 
         nv_unique_ptr<nvat_claims_collection_t> claims;
         nvat_claims_collection_t raw_claims = nullptr;
-        nvat_str_t detached_eat = nullptr;
-        nvat_nonce_t nonce_ptr = nullptr; 
-        if (!nonce.empty()) {
-            err = nvat_nonce_from_hex(&nonce_ptr, nonce.c_str());
+        nv_unique_ptr<nvat_str_t> detached_eat;
+        nvat_str_t raw_detached_eat = nullptr;
+        nvat_nonce_t nonce = nullptr; 
+        if (!evidence_collection_options.nonce.empty()) {
+            err = nvat_nonce_from_hex(&nonce, evidence_collection_options.nonce.c_str());
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
         }
-        err = nvat_attest_device(*(ctx.get()), nonce_ptr, &detached_eat, &raw_claims);
+        err = nvat_attest_device(*(ctx.get()), nonce, &raw_detached_eat, &raw_claims);
         if (err != NVAT_RC_OK && err != NVAT_RC_RP_POLICY_MISMATCH && err != NVAT_RC_OVERALL_RESULT_FALSE) {
             return AttestOutput(err);
         }
-
-        if (raw_claims == nullptr) {
-            SPDLOG_ERROR("Failed to get claims");
-            return AttestOutput(NVAT_RC_INTERNAL_ERROR);
-        }
-
-        if (detached_eat == nullptr) {
-            SPDLOG_ERROR("Failed to get detached EAT");
-            return AttestOutput(NVAT_RC_INTERNAL_ERROR);
-        }
+        detached_eat.reset(&raw_detached_eat);
+        claims.reset(&raw_claims);
 
         AttestOutput final_output(err);
 
-        nvat_str_t serialized_claims;
-        claims.reset(&raw_claims);
-        err = nvat_claims_collection_serialize_json(*(claims.get()), &serialized_claims);
+        nv_unique_ptr<nvat_str_t> serialized_claims;
+        nvat_str_t raw_serialized_claims;
+        err = nvat_claims_collection_serialize_json(*(claims.get()), &raw_serialized_claims);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
+        serialized_claims.reset(&raw_serialized_claims);
 
         char * serialized_claims_data = nullptr;
-        err = nvat_str_get_data(serialized_claims, &serialized_claims_data);
+        err = nvat_str_get_data(*serialized_claims.get(), &serialized_claims_data);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
+        final_output.claims = std::string(serialized_claims_data);
 
         char * detached_eat_data = nullptr;
-        err = nvat_str_get_data(detached_eat, &detached_eat_data);
+        err = nvat_str_get_data(*detached_eat.get(), &detached_eat_data);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
-
-        final_output.claims = std::string(serialized_claims_data);
         final_output.detached_eat = std::string(detached_eat_data);
+
         return final_output;
 
     }
 
 
     int handle_attest_subcommand(
-        std::string& nonce,
-        std::string& device,
-        std::string& verifier,
-        std::string& gpu_evidence, 
-        std::string& switch_evidence,
-        std::string& relying_party_policy,
-        std::string& rim_url,
-        std::string& ocsp_url,
-        std::string& nras_url,
-        std::string& log_level) {
+        const EvidenceCollectionOptions& evidence_collection_options,
+        const EvidenceVerificationOptions& evidence_verification_options,
+        const EvidencePolicyOptions& evidence_policy_options,
+        const CommonOptions& common_options) {
 
-        AttestOutput attest_output = attest(nonce, device, verifier, gpu_evidence, switch_evidence, relying_party_policy, rim_url, ocsp_url, nras_url, log_level);
+        AttestOutput attest_output = attest(evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
         nvat_sdk_shutdown();
 
         auto json = attest_output.to_json();

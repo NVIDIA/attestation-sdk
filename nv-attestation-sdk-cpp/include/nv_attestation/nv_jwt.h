@@ -40,7 +40,8 @@ public:
     static Error init_from_env(
         std::shared_ptr<JwkStore>& jwk_store,
         const std::string& jwks_url,
-        HttpOptions http_options,
+        const std::string& service_key,
+        const HttpOptions& http_options,
         long long cache_duration_ms = DEFAULT_JWKS_CACHE_DURATION_MS
     );
     ~JwkStore() = default;

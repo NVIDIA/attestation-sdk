@@ -60,7 +60,7 @@ class NvRemoteSwitchVerifier : public ISwitchVerifier {
     public:
         static constexpr const char* DEFAULT_BASE_URL = "https://nras.attestation.nvidia.com";
 
-        static Error init_from_env(NvRemoteSwitchVerifier& out_verifier, const char* nras_url=DEFAULT_BASE_URL, HttpOptions http_options = HttpOptions());
+        static Error init_from_env(NvRemoteSwitchVerifier& out_verifier, const char* nras_url, const std::string& service_key, const HttpOptions& http_options);
         Error verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) override;
     private:
         std::string m_nras_url;

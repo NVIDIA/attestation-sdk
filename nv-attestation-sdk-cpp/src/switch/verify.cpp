@@ -221,7 +221,7 @@ Error LocalSwitchVerifier::generate_set_measurement_claims(const Measurements& g
     return Error::Ok;
 }
 
-Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier, const char* nras_url, HttpOptions http_options) {
+Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier, const char* nras_url, const std::string& service_key, const HttpOptions& http_options) {
     std::string nras_url_str;
     if (nras_url == nullptr || *nras_url == '\0') {
         nras_url_str = get_env_or_default("NVAT_NRAS_BASE_URL", DEFAULT_BASE_URL);
@@ -232,14 +232,14 @@ Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier
     out_verifier.m_nras_url = nras_url_str + "/v4/attest/switch";
     out_verifier.m_eat_issuer = nras_url_str;
 
-    Error err = NvHttpClient::create(out_verifier.m_http_client, http_options);
+    Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options);
     if (err != Error::Ok) {
         return err;
     }
 
     std::string jwks_url = nras_url_str + "/.well-known/jwks.json";
     out_verifier.m_jwk_store = std::make_shared<JwkStore>();
-    err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, http_options);
+    err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, service_key, http_options);
     if (err != Error::Ok) {
         return err;
     }
@@ -282,7 +282,11 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
     if (error != Error::Ok) {
         return error;
     }
-    NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, {{"Content-Type", "application/json"}}, request_payload);
+    std::unordered_map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
+    if (evidence_policy.ocsp_options.get_allow_cert_hold()) {
+        headers["X-NVIDIA-OCSP-ALLOW-CERT-HOLD"] = "true";
+    }
+    NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, headers, request_payload);
 
     long status = 0;
     std::string attest_response_str;
@@ -293,6 +297,9 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
 
     if (status != NvHttpStatus::HTTP_STATUS_OK) {
         LOG_ERROR("NRAS attestation service returned non-200 status: " << static_cast<int>(status));
+        if (status == NvHttpStatus::HTTP_STATUS_FORBIDDEN || status == NvHttpStatus::HTTP_STATUS_UNAUTHORIZED) {
+            return Error::NrasForbidden;
+        }
         return Error::NrasAttestationError;
     }
     

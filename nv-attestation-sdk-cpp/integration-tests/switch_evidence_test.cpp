@@ -15,13 +15,10 @@
  * limitations under the License.
  */
 
-#ifdef ENABLE_NSCQ
 #include <gtest/gtest.h>
 #include <vector>
 #include <memory>
 #include <string>
-
-#include "nv_attestation/switch/nscq_attestation.h"
 
 #include "nv_attestation/switch/nscq_client.h"
 #include "nv_attestation/switch/evidence.h"
@@ -108,4 +105,3 @@ TEST_F(NscqIntegrationTest, NscqEvidenceCollectorGetEvidence) {
         }
     }
 }
-#endif // ENABLE_NSCQ

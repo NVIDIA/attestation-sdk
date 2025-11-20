@@ -18,89 +18,218 @@
 #include <string>
 #include <cstring>
 #include <vector>
-#include <iostream>
-#include <memory>
-
-#ifdef ENABLE_NSCQ
-#include "nv_attestation/switch/nscq_attestation.h"
-#endif // ENABLE_NSCQ
+#include <mutex>
+#include <dlfcn.h>
 
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
 #include "nv_attestation/switch/nscq_client.h"
 #include "nv_attestation/switch/evidence.h"
-#include "nv_attestation/nv_types.h"
 
 namespace nvattestation {
+
+using nscq_rc_t = int8_t;
+
+constexpr nscq_rc_t NSCQ_RC_SUCCESS = 0;
+
+struct nscq_session_st;
+using nscq_session_t = nscq_session_st*;
+
+using nscq_fn_t = void (*)(void);
+
+constexpr unsigned int NSCQ_UUID_SIZE = 16;
+
+struct nscq_uuid_t {
+    uint8_t bytes[NSCQ_UUID_SIZE];
+};
+
+using nscq_arch_t = int8_t;
+
+constexpr nscq_arch_t NSCQ_ARCH_SV10 = 0;
+constexpr nscq_arch_t NSCQ_ARCH_LR10 = 1;
+constexpr nscq_arch_t NSCQ_ARCH_LS10 = 2;
+
+constexpr unsigned int NSCQ_LABEL_SIZE = 64;
+
+struct nscq_label_t {
+    char data[NSCQ_LABEL_SIZE];
+};
+
+using nscq_tnvl_status_t = int8_t;
+
+constexpr nscq_tnvl_status_t NSCQ_DEVICE_TNVL_MODE_UNKNOWN = -1;
+constexpr nscq_tnvl_status_t NSCQ_DEVICE_TNVL_MODE_DISABLED = 0;
+constexpr nscq_tnvl_status_t NSCQ_DEVICE_TNVL_MODE_ENABLED = 1;
+constexpr nscq_tnvl_status_t NSCQ_DEVICE_TNVL_MODE_FAILURE = 2;
+constexpr nscq_tnvl_status_t NSCQ_DEVICE_TNVL_MODE_LOCKED = 3;
+
+constexpr unsigned int NSCQ_ATTESTATION_REPORT_SIZE = 0x2000;
+
+struct nscq_attestation_report_t {
+    uint32_t report_size;
+    uint8_t report[NSCQ_ATTESTATION_REPORT_SIZE];
+};
+
+constexpr unsigned int NSCQ_CERTIFICATE_CERT_CHAIN_MAX_SIZE = 0x1400;
+
+struct nscq_attestation_certificate_t {
+    uint8_t cert_chain[NSCQ_CERTIFICATE_CERT_CHAIN_MAX_SIZE];
+    uint32_t cert_chain_size;
+};
+
+struct nscq_session_result_t {
+    nscq_rc_t rc;
+    nscq_session_t session;
+};
+
+constexpr uint32_t NSCQ_SESSION_CREATE_MOUNT_DEVICES = 0x1U;
+
+constexpr const char* NSCQ_PATH_NVSWITCH_UUID = "/drv/nvswitch/{device}/uuid";
+constexpr const char* NSCQ_PATH_NVSWITCH_ARCH = "/{nvswitch}/id/arch";
+constexpr const char* NSCQ_PATH_PCIE_MODE = "/config/pcie_mode";
+constexpr const char* NSCQ_PATH_CERTIFICATE = "/config/certificate";
+constexpr const char* NSCQ_PATH_ATTESTATION_REPORT = "/config/attestation_report";
+
+using nscq_session_create_t = nscq_session_result_t (*)(uint32_t);
+using nscq_session_destroy_t = void (*)(nscq_session_t);
+using nscq_session_path_observe_t = nscq_rc_t (*)(nscq_session_t, const char*, nscq_fn_t, void*, uint32_t);
+using nscq_session_set_input_t = nscq_rc_t (*)(nscq_session_t, uint32_t, void*, uint32_t);
+using nscq_uuid_to_label_t = nscq_rc_t (*)(const nscq_uuid_t*, nscq_label_t*, uint32_t);
+
+struct NscqFunctions {
+    void* library_handle = nullptr;
+
+    nscq_session_create_t session_create = nullptr;
+    nscq_session_destroy_t session_destroy = nullptr;
+    nscq_session_path_observe_t session_path_observe = nullptr;
+    nscq_session_set_input_t session_set_input = nullptr;
+    nscq_uuid_to_label_t uuid_to_label = nullptr;
+
+    NscqFunctions() = default;
+};
+
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+static NscqFunctions g_nscq_funcs;
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 bool g_nscq_initialized = false;
 
-#ifdef ENABLE_NSCQ
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-static nv_shared_ptr<nscq_session_st> g_nscq_session;
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 static std::once_flag g_nscq_initialized_flag;
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+static nscq_session_t g_nscq_session = nullptr;
+
 static std::string nscq_rc_to_string(nscq_rc_t rc) {
-    switch (rc) {
-        case NSCQ_RC_SUCCESS: return "NSCQ_RC_SUCCESS";
-        case NSCQ_RC_WARNING_RDT_INIT_FAILURE: return "NSCQ_RC_WARNING_RDT_INIT_FAILURE";
-        case NSCQ_RC_ERROR_NOT_IMPLEMENTED: return "NSCQ_RC_ERROR_NOT_IMPLEMENTED";
-        case NSCQ_RC_ERROR_INVALID_UUID: return "NSCQ_RC_ERROR_INVALID_UUID";
-        case NSCQ_RC_ERROR_RESOURCE_NOT_MOUNTABLE: return "NSCQ_RC_ERROR_RESOURCE_NOT_MOUNTABLE";
-        case NSCQ_RC_ERROR_OVERFLOW: return "NSCQ_RC_ERROR_OVERFLOW";
-        case NSCQ_RC_ERROR_UNEXPECTED_VALUE: return "NSCQ_RC_ERROR_UNEXPECTED_VALUE";
-        case NSCQ_RC_ERROR_UNSUPPORTED_DRV: return "NSCQ_RC_ERROR_UNSUPPORTED_DRV";
-        case NSCQ_RC_ERROR_DRV: return "NSCQ_RC_ERROR_DRV";
-        case NSCQ_RC_ERROR_TIMEOUT: return "NSCQ_RC_ERROR_TIMEOUT";
-        case NSCQ_RC_ERROR_EXT: return "NSCQ_RC_ERROR_EXT";
-        case NSCQ_RC_ERROR_UNSPECIFIED: return "NSCQ_RC_ERROR_UNSPECIFIED";
-        default: return "Unknown NSCQ error code: " + std::to_string(rc);
+    if (rc == NSCQ_RC_SUCCESS) {
+        return "NSCQ_RC_SUCCESS";
     }
+    if (rc > 0) {
+        return "NSCQ_RC_WARNING(" + std::to_string(rc) + ")";
+    }
+    return "NSCQ_RC_ERROR(" + std::to_string(rc) + ")";
 }
 
-#endif // ENABLE_NSCQ
+template<typename T>
+static bool load_symbol(void* handle, const char* name, T& func_ptr) {
+    dlerror();
+    
+    void* symbol = dlsym(handle, name);
+    const char* error = dlerror();
+    
+    if (error != nullptr || symbol == nullptr) {
+        LOG_ERROR("Failed to load symbol '" << name << "': " << (error ? error : "symbol not found"));
+        return false;
+    }
+    
+    func_ptr = reinterpret_cast<T>(symbol);
+    return true;
+}
 
-Error init_nscq() {
-#ifdef ENABLE_NSCQ
+static bool load_all_symbols(void* handle) {
+    bool success = true;
+    
+    success = load_symbol(handle, "nscq_session_create", g_nscq_funcs.session_create) && success;
+    success = load_symbol(handle, "nscq_session_destroy", g_nscq_funcs.session_destroy) && success;
+    success = load_symbol(handle, "nscq_session_path_observe", g_nscq_funcs.session_path_observe) && success;
+    success = load_symbol(handle, "nscq_session_set_input", g_nscq_funcs.session_set_input) && success;
+    success = load_symbol(handle, "nscq_uuid_to_label", g_nscq_funcs.uuid_to_label) && success;
+    
+    return success;
+}
+
+Error init_nscq()
+{
+    // If already initialized, return Ok
+    if (g_nscq_initialized) {
+        return Error::Ok;
+    }
+    
     Error init_result = Error::NscqInitFailed;
     std::call_once(g_nscq_initialized_flag, [&init_result]() {
-        LOG_DEBUG("Initializing NSCQ");
-        nscq_session_result_t result = nscq_session_create(NSCQ_SESSION_CREATE_MOUNT_DEVICES);
-        if (!NSCQ_SUCCESS(result.rc)) {
-            LOG_ERROR("Failed to create NSCQ session, error code: " << nscq_rc_to_string(result.rc));
+        LOG_DEBUG("Initializing NSCQ with dlopen");
+
+        const std::string nscq_so = "libnvidia-nscq.so.2";
+        g_nscq_funcs.library_handle = dlopen(nscq_so.c_str(), RTLD_LAZY | RTLD_LOCAL);
+        if (g_nscq_funcs.library_handle == nullptr) {
+            const char* error = dlerror();
+            LOG_TRACE("Failed to load NSCQ library: " << nscq_so << "': " << (error ? error : "unknown error"));
             init_result = Error::NscqInitFailed;
+            return;
         }
-        g_nscq_session = nv_shared_ptr<nscq_session_st>(result.session, DeleterOf<nscq_session_st>{});
-        LOG_DEBUG("Succesfully initialized NSCQ");
+        LOG_TRACE("Successfully loaded NSCQ library: " << nscq_so);
+
+        if (!load_all_symbols(g_nscq_funcs.library_handle)) {
+            LOG_ERROR("Failed to load required NSCQ symbols");
+            dlclose(g_nscq_funcs.library_handle);
+            g_nscq_funcs.library_handle = nullptr;
+            init_result = Error::NscqInitFailed;
+            return;
+        }
+        LOG_TRACE("Successfully loaded all NSCQ symbols");
+        
+        nscq_session_result_t result = g_nscq_funcs.session_create(NSCQ_SESSION_CREATE_MOUNT_DEVICES);
+        if (result.rc != NSCQ_RC_SUCCESS) {
+            LOG_ERROR("Failed to create NSCQ session: " << nscq_rc_to_string(result.rc));
+            dlclose(g_nscq_funcs.library_handle);
+            g_nscq_funcs.library_handle = nullptr;
+            init_result = Error::NscqInitFailed;
+            return;
+        }
+        
+        g_nscq_session = result.session;
+        LOG_DEBUG("Successfully initialized NSCQ");
         g_nscq_initialized = true;
         init_result = Error::Ok;
     });
+    
     return init_result;
-#else // ENABLE_NSCQ
-    LOG_ERROR("ENABLE_NSCQ feature was not enabled during compilation");
-    return Error::FeatureNotEnabled;
-#endif // ENABLE_NSCQ
 }
 
-void shutdown_nscq() {
-#ifdef ENABLE_NSCQ
-    if (!g_nscq_session) {
-        LOG_WARN("NSCQ session not initialized or already shut down.");
+void shutdown_nscq()
+{
+    if (!g_nscq_initialized || g_nscq_funcs.library_handle == nullptr) {
         return;
     }
+    
     LOG_DEBUG("Shutting down NSCQ");
-    g_nscq_session.reset();
-#endif // ENABLE_NSCQ
+    
+    g_nscq_funcs.session_destroy(g_nscq_session);
+    g_nscq_session = nullptr;
+    
+    if (dlclose(g_nscq_funcs.library_handle) != 0) {
+        const char* error = dlerror();
+        LOG_ERROR("Failed to close NSCQ library: " << (error != nullptr ? error : "unknown error"));
+    }
+    
+    g_nscq_funcs = NscqFunctions();
+    g_nscq_initialized = false;
+    LOG_DEBUG("Successfully shut down NSCQ");
 }
 
-#ifdef ENABLE_NSCQ
-
-//UUID
 static void uuid_callback(const nscq_uuid_t* device, nscq_rc_t rc, const nscq_uuid_t* uuid, void* user_data)
 {
-    if (!NSCQ_SUCCESS(rc)) {
+    if (rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("Error in UUID callback: " + nscq_rc_to_string(rc));
         return;
     }
@@ -113,8 +242,8 @@ static void uuid_callback(const nscq_uuid_t* device, nscq_rc_t rc, const nscq_uu
     auto* uuids = static_cast<std::vector<std::string>*>(user_data);
     nscq_label_t label{};
 
-    nscq_rc_t label_rc = nscq_uuid_to_label(uuid, &label, 0);
-    if (!NSCQ_SUCCESS(label_rc)) {
+    nscq_rc_t label_rc = g_nscq_funcs.uuid_to_label(uuid, &label, 0);
+    if (label_rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("Failed to convert NSCQ UUID to label: " + nscq_rc_to_string(label_rc));
         return;
     }
@@ -122,27 +251,8 @@ static void uuid_callback(const nscq_uuid_t* device, nscq_rc_t rc, const nscq_uu
     uuids->emplace_back(std::string(label.data));
 }
 
-Error get_all_switch_uuid(std::vector<std::string>& out_uuids) {
-    if (!g_nscq_session) {
-        LOG_ERROR("NSCQ session not initialized");
-        return Error::NscqError;
-    }
-
-    out_uuids.clear();
-    const char* path = "/drv/nvswitch/{device}/uuid";
-
-    nscq_rc_t observe_rc = nscq_session_path_observe(g_nscq_session.get(), path, NSCQ_FN(uuid_callback), static_cast<void*>(&out_uuids), 0);
-
-    if (!NSCQ_SUCCESS(observe_rc)) {
-        LOG_ERROR("nscq_session_path_observe failed for switch UUIDs, error code: " + nscq_rc_to_string(observe_rc));
-        return Error::NscqUuidError;
-    }
-    return Error::Ok;
-}
-
-//TNVL status
 static void tnvl_status_callback(const nscq_uuid_t* device, nscq_rc_t rc, nscq_tnvl_status_t tnvl_status, void* user_data) {
-    if (!NSCQ_SUCCESS(rc)) {
+    if (rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("TNVL status callback error: " + nscq_rc_to_string(rc));
         return;
     }
@@ -155,32 +265,8 @@ static void tnvl_status_callback(const nscq_uuid_t* device, nscq_rc_t rc, nscq_t
     *static_cast<SwitchTnvlMode*>(user_data) = static_cast<SwitchTnvlMode>(tnvl_status);
 }
 
-Error get_switch_tnvl_status(const std::string& uuid, SwitchTnvlMode& out_tnvl_mode) {
-    if (!g_nscq_session) {
-        LOG_ERROR("NSCQ session not initialized");
-        return Error::NscqError;
-    }
-
-    if (uuid.empty()) {
-        LOG_ERROR("Empty UUID provided");
-        return Error::NscqTnvlError;
-    }
-
-    out_tnvl_mode = SwitchTnvlMode::Unknown;
-    std::string path_str = "/" + uuid + "/config/pcie_mode";
-
-    nscq_rc_t observe_rc = nscq_session_path_observe(g_nscq_session.get(), path_str.c_str(), NSCQ_FN(tnvl_status_callback), &out_tnvl_mode, 0);
-
-    if (!NSCQ_SUCCESS(observe_rc)) {
-        LOG_ERROR("nscq_session_path_observe failed for TNVL status, error code: " + nscq_rc_to_string(observe_rc));
-        return Error::NscqTnvlError;
-    }
-    return Error::Ok;
-}
-
-//Attestation cert chain
 static void attestation_cert_chain_callback(const nscq_uuid_t* device, nscq_rc_t rc, const nscq_attestation_certificate_t cert, void* user_data) {
-    if (!NSCQ_SUCCESS(rc)) {
+    if (rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("Cert chain callback error: " + nscq_rc_to_string(rc));
         return;
     }
@@ -194,38 +280,8 @@ static void attestation_cert_chain_callback(const nscq_uuid_t* device, nscq_rc_t
     *cert_chain = std::string(reinterpret_cast<const char*>(cert.cert_chain), cert.cert_chain_size);
 }
 
-Error get_attestation_cert_chain(const std::string& uuid, std::string& out_cert_chain) {
-    if (!g_nscq_session) {
-        LOG_ERROR("NSCQ session not initialized");
-        return Error::NscqError;
-    }
-
-    if (uuid.empty()) {
-        LOG_ERROR("Empty UUID provided");
-        return Error::NscqCertChainError;
-    }
-
-    out_cert_chain.clear();
-    std::string path = "/" + uuid + "/config/certificate";
-
-    nscq_rc_t observe_rc = nscq_session_path_observe(g_nscq_session.get(), path.c_str(), NSCQ_FN(attestation_cert_chain_callback), &out_cert_chain, 0);
-
-    if (!NSCQ_SUCCESS(observe_rc)) {
-        LOG_ERROR("Observe failed for cert chain: " + nscq_rc_to_string(observe_rc));
-        return Error::NscqCertChainError;
-    }
-
-    if (out_cert_chain.empty()) {
-        LOG_ERROR("Empty certificate chain received");
-        return Error::NscqCertChainError;
-    }
-
-    return Error::Ok;
-}
-
-//Attestation report
 static void attestation_report_callback(const nscq_uuid_t* device, nscq_rc_t rc, const nscq_attestation_report_t report, void* user_data) {
-    if (!NSCQ_SUCCESS(rc)) {
+    if (rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("Attestation report callback error: " + nscq_rc_to_string(rc));
         return;
     }
@@ -239,49 +295,8 @@ static void attestation_report_callback(const nscq_uuid_t* device, nscq_rc_t rc,
     report_data->assign(report.report, report.report + report.report_size);
 }
 
-Error get_attestation_report(const std::string& uuid, const std::vector<uint8_t>& nonce_input, std::vector<uint8_t>& out_attestation_report) {
-    if (!g_nscq_session) {
-        LOG_ERROR("NSCQ session not initialized");
-        return Error::NscqError;
-    }
-
-    if (uuid.empty()) {
-        LOG_ERROR("Empty UUID provided for attestation report");
-        return Error::NscqAttestationReportError;
-    }
-
-    if (nonce_input.size() != NSCQ_ATTESTATION_REPORT_NONCE_SIZE) {
-        LOG_ERROR("Nonce size is not " + std::to_string(NSCQ_ATTESTATION_REPORT_NONCE_SIZE));
-        return Error::NscqAttestationReportError;
-    }
-
-    nscq_rc_t set_input_rc = nscq_session_set_input(g_nscq_session.get(), 0, const_cast<uint8_t*>(nonce_input.data()), nonce_input.size());
-    if (!NSCQ_SUCCESS(set_input_rc)) {
-        LOG_ERROR("nscq_session_set_input failed for attestation report nonce, error code: " + nscq_rc_to_string(set_input_rc));
-        return Error::NscqAttestationReportError;
-    }
-    
-    out_attestation_report.clear();
-    std::string path = "/" + uuid + "/config/attestation_report";
-
-    nscq_rc_t observe_rc = nscq_session_path_observe(g_nscq_session.get(), path.c_str(), NSCQ_FN(attestation_report_callback), &out_attestation_report, 0);
-
-    if (!NSCQ_SUCCESS(observe_rc)) {
-        LOG_ERROR("nscq_session_path_observe failed for attestation report, error code: " + nscq_rc_to_string(observe_rc));
-        return Error::NscqAttestationReportError;
-    }
-    
-    if (out_attestation_report.empty()) {
-        LOG_ERROR("Attestation report is empty.");
-        return Error::NscqAttestationReportError;
-    }
-
-    return Error::Ok;
-}
-
-//Architecture
 static void architecture_callback(const nscq_uuid_t* device, nscq_rc_t rc, nscq_arch_t arch, void* user_data) {
-    if (!NSCQ_SUCCESS(rc)) {
+    if (rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("Architecture callback error: " + nscq_rc_to_string(rc));
         return;
     }
@@ -295,19 +310,18 @@ static void architecture_callback(const nscq_uuid_t* device, nscq_rc_t rc, nscq_
 }
 
 Error get_switch_architecture(SwitchArchitecture& out_arch) {
-    if (!g_nscq_session) {
+    if (g_nscq_session == nullptr || g_nscq_funcs.session_path_observe == nullptr) {
         LOG_ERROR("NSCQ session not initialized");
         return Error::NscqError;
     }
 
     nscq_arch_t arch_val = static_cast<nscq_arch_t>(-1);
-    const char* path = "/{nvswitch}/id/arch"; 
 
-    nscq_rc_t observe_rc = nscq_session_path_observe(g_nscq_session.get(), path, NSCQ_FN(architecture_callback), &arch_val, 0);
+    nscq_rc_t observe_rc = g_nscq_funcs.session_path_observe(g_nscq_session, NSCQ_PATH_NVSWITCH_ARCH, reinterpret_cast<nscq_fn_t>(architecture_callback), &arch_val, 0);
 
-    if (!NSCQ_SUCCESS(observe_rc)) {
+    if (observe_rc != NSCQ_RC_SUCCESS) {
         LOG_ERROR("nscq_session_path_observe failed for switch architecture, error code: " + nscq_rc_to_string(observe_rc));
-        return Error::NscqArchitectureError;
+        return Error::NscqError;
     }
 
     switch (arch_val) {
@@ -322,10 +336,183 @@ Error get_switch_architecture(SwitchArchitecture& out_arch) {
             return Error::Ok;
         default: 
             LOG_ERROR("Unknown switch architecture: " + std::to_string(arch_val));
-            return Error::NscqArchitectureError;
+            return Error::NscqError;
     }
 }
 
-#endif // ENABLE_NSCQ
+Error get_all_switch_uuid(std::vector<std::string>& out_uuids) {
+    if (g_nscq_session == nullptr || g_nscq_funcs.session_path_observe == nullptr) {
+        LOG_ERROR("NSCQ session not initialized");
+        return Error::NscqError;
+    }
 
+    out_uuids.clear();
+
+    nscq_rc_t observe_rc = g_nscq_funcs.session_path_observe(g_nscq_session, NSCQ_PATH_NVSWITCH_UUID, reinterpret_cast<nscq_fn_t>(uuid_callback), static_cast<void*>(&out_uuids), 0);
+
+    if (observe_rc != NSCQ_RC_SUCCESS) {
+        LOG_ERROR("nscq_session_path_observe failed for switch UUIDs, error code: " + nscq_rc_to_string(observe_rc));
+        return Error::NscqError;
+    }
+    return Error::Ok;
 }
+
+Error get_switch_tnvl_status(const std::string& uuid, SwitchTnvlMode& out_tnvl_mode) {
+    if (g_nscq_session == nullptr || g_nscq_funcs.session_path_observe == nullptr) {
+        LOG_ERROR("NSCQ session not initialized");
+        return Error::NscqError;
+    }
+
+    if (uuid.empty()) {
+        LOG_ERROR("Empty UUID provided");
+        return Error::NscqError;
+    }
+
+    out_tnvl_mode = SwitchTnvlMode::Unknown;
+    std::string path_str = "/" + uuid + NSCQ_PATH_PCIE_MODE;
+
+    nscq_rc_t observe_rc = g_nscq_funcs.session_path_observe(g_nscq_session, path_str.c_str(), reinterpret_cast<nscq_fn_t>(tnvl_status_callback), &out_tnvl_mode, 0);
+
+    if (observe_rc != NSCQ_RC_SUCCESS) {
+        LOG_ERROR("nscq_session_path_observe failed for TNVL status, error code: " + nscq_rc_to_string(observe_rc));
+        return Error::NscqError;
+    }
+    return Error::Ok;
+}
+
+Error get_attestation_cert_chain(const std::string& uuid, std::string& out_cert_chain) {
+    if (g_nscq_session == nullptr || g_nscq_funcs.session_path_observe == nullptr) {
+        LOG_ERROR("NSCQ session not initialized");
+        return Error::NscqError;
+    }
+
+    if (uuid.empty()) {
+        LOG_ERROR("Empty UUID provided");
+        return Error::NscqError;
+    }
+
+    out_cert_chain.clear();
+    std::string path = "/" + uuid + NSCQ_PATH_CERTIFICATE;
+
+    nscq_rc_t observe_rc = g_nscq_funcs.session_path_observe(g_nscq_session, path.c_str(), reinterpret_cast<nscq_fn_t>(attestation_cert_chain_callback), &out_cert_chain, 0);
+
+    if (observe_rc != NSCQ_RC_SUCCESS) {
+        LOG_ERROR("Observe failed for cert chain: " + nscq_rc_to_string(observe_rc));
+        return Error::NscqError;
+    }
+
+    if (out_cert_chain.empty()) {
+        LOG_ERROR("Empty certificate chain received");
+        return Error::NscqError;
+    }
+
+    return Error::Ok;
+}
+
+Error get_attestation_report(const std::string& uuid, const std::vector<uint8_t>& nonce_input, std::vector<uint8_t>& out_attestation_report) {
+    if (g_nscq_session == nullptr || g_nscq_funcs.session_set_input == nullptr || g_nscq_funcs.session_path_observe == nullptr) {
+        LOG_ERROR("NSCQ session not initialized");
+        return Error::NscqError;
+    }
+
+    if (uuid.empty()) {
+        LOG_ERROR("Empty UUID provided for attestation report");
+        return Error::NscqError;
+    }
+
+    if (nonce_input.size() != NSCQ_ATTESTATION_REPORT_NONCE_SIZE) {
+        LOG_ERROR("Nonce size is not " + std::to_string(NSCQ_ATTESTATION_REPORT_NONCE_SIZE));
+        return Error::NscqError;
+    }
+
+    nscq_rc_t set_input_rc = g_nscq_funcs.session_set_input(g_nscq_session, 0, const_cast<uint8_t*>(nonce_input.data()), nonce_input.size());
+    if (set_input_rc != NSCQ_RC_SUCCESS) {
+        LOG_ERROR("nscq_session_set_input failed for attestation report nonce, error code: " + nscq_rc_to_string(set_input_rc));
+        return Error::NscqError;
+    }
+    
+    out_attestation_report.clear();
+    std::string path = "/" + uuid + NSCQ_PATH_ATTESTATION_REPORT;
+
+    nscq_rc_t observe_rc = g_nscq_funcs.session_path_observe(g_nscq_session, path.c_str(), reinterpret_cast<nscq_fn_t>(attestation_report_callback), &out_attestation_report, 0);
+
+    if (observe_rc != NSCQ_RC_SUCCESS) {
+        LOG_ERROR("nscq_session_path_observe failed for attestation report, error code: " + nscq_rc_to_string(observe_rc));
+        return Error::NscqError;
+    }
+    
+    if (out_attestation_report.empty()) {
+        LOG_ERROR("Attestation report is empty.");
+        return Error::NscqError;
+    }
+
+    return Error::Ok;
+}
+
+Error collect_evidence_nscq(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) {
+    if (!g_nscq_initialized) {
+        LOG_ERROR("NSCQ is not initialized");
+        return Error::NscqError;
+    }
+
+    std::vector<std::string> uuids;
+    Error error = get_all_switch_uuid(uuids);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to get switch UUIDs");
+        return error;
+    }
+
+    if (uuids.empty()) {
+        LOG_ERROR("No switch UUIDs found");
+        return Error::NscqError;
+    }
+
+    auto arch = SwitchArchitecture::Unknown;
+    error = get_switch_architecture(arch);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to get switch architecture");
+        return error;
+    }
+
+    for (const auto& uuid : uuids) {
+        std::vector<uint8_t> attestation_report;
+        error = get_attestation_report(uuid, nonce_input, attestation_report);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to get attestation report for UUID: " + uuid);
+            return error;
+        }
+
+        std::string attestation_cert_chain;
+        error = get_attestation_cert_chain(uuid, attestation_cert_chain);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to get attestation certificate chain for UUID: " + uuid);
+            return error;
+        }
+
+        auto tnvl_mode_status = SwitchTnvlMode::Unknown;
+        error = get_switch_tnvl_status(uuid, tnvl_mode_status);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to get TNVL mode for UUID: " + uuid);
+            return error;
+        }
+        bool tnvl_mode = (tnvl_mode_status == SwitchTnvlMode::Enabled);
+        bool lock_mode = (tnvl_mode_status == SwitchTnvlMode::Locked);
+
+        LOG_DEBUG("Collected evidence for switch with UUID: " << uuid);
+
+        auto evidence = std::make_shared<SwitchEvidence>(
+            arch,
+            uuid,
+            attestation_report,
+            attestation_cert_chain,
+            tnvl_mode,
+            lock_mode,
+            nonce_input
+        );
+        out_evidence.push_back(evidence);
+    }
+
+    return Error::Ok;
+}
+
+} // namespace nvattestation

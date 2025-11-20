@@ -27,7 +27,7 @@ using namespace nvattestation;
 
 TEST(NvHttpClient, DISABLED_GetAsString) {
     NvHttpClient client;
-    Error error = NvHttpClient::create(client);
+    Error error = NvHttpClient::create(client, "", HttpOptions());
     NvRequest request("https://httpbin.org/get", NvHttpMethod::HTTP_METHOD_GET);
     long status;
     std::string response;
@@ -39,7 +39,7 @@ TEST(NvHttpClient, DISABLED_GetAsString) {
 
 TEST(NvHttpClient, DISABLED_GetAsStruct) {
     NvHttpClient client;
-    Error error = NvHttpClient::create(client);
+    Error error = NvHttpClient::create(client, "", HttpOptions());
     NvRequest request("https://httpbin.org/get", NvHttpMethod::HTTP_METHOD_GET);
     long status;
     nlohmann::json json_response;
@@ -53,7 +53,7 @@ TEST(NvHttpClient, DISABLED_GetAsStruct) {
 
 TEST(NvHttpClient, DISABLED_PostAsString) {
     NvHttpClient client;
-    Error error = NvHttpClient::create(client);
+    Error error = NvHttpClient::create(client, "", HttpOptions());
     NvRequest request("https://httpbin.org/post", NvHttpMethod::HTTP_METHOD_POST, {}, "{\"test\": \"test\"}");
     long status;
     std::string response;
@@ -65,7 +65,7 @@ TEST(NvHttpClient, DISABLED_PostAsString) {
 
 TEST(NvHttpClient, DISABLED_PostAsStruct) {
     NvHttpClient client;
-    Error error = NvHttpClient::create(client);
+    Error error = NvHttpClient::create(client, "", HttpOptions());
     NvRequest request("https://httpbin.org/post", NvHttpMethod::HTTP_METHOD_POST, {}, "{\"test\": \"test\"}");
     long status;
     nlohmann::json json_response;
