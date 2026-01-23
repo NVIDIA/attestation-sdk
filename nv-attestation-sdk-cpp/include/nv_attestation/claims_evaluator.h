@@ -87,6 +87,8 @@ class ClaimsEvaluatorFactory {
          * @return A unique pointer to a [IClaimsEvaluator](@ref IClaimsEvaluator) instance that evaluates claims using the given Rego policy.
          */
         static std::shared_ptr<IClaimsEvaluator> create_rego_claims_evaluator(const std::string &policy);
+
+        static std::shared_ptr<IClaimsEvaluator> create_overall_result_evaluator();
 };
 
 }

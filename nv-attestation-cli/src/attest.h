@@ -23,6 +23,7 @@
 #include "CLI/CLI.hpp"
 #include "nvat.h"
 #include "nvattest_options.h"
+#include "logging.h"
 
 namespace nvattest {
 
@@ -33,12 +34,12 @@ namespace nvattest {
      */
     class AttestOutput {
         public:
-            int result_code;
+            nvat_rc_t result_code;
             std::string claims;
             std::string detached_eat;
         
-            AttestOutput(const int result_code);
-            AttestOutput(const int result_code, const std::string& claims, const std::string& detached_eat);
+            AttestOutput(const nvat_rc_t result_code);
+            AttestOutput(const nvat_rc_t result_code, const std::string& claims, const std::string& detached_eat);
             nlohmann::json to_json() const;
     };
 
@@ -78,6 +79,7 @@ namespace nvattest {
      * @return Exit code for the subcommand handler (0 = success, 1 = failure, 2 = policy mismatch).
      */
     int handle_attest_subcommand(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const EvidenceVerificationOptions& evidence_verification_options,
         const EvidencePolicyOptions& evidence_policy_options,

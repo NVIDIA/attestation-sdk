@@ -40,14 +40,11 @@ namespace nvattestation
 
     Error gpu_claims_version_from_c(uint8_t value, GpuClaimsVersion& out_version) {
         switch(value) {
-            case NVAT_GPU_CLAIMS_VERSION_V2:
-                out_version = GpuClaimsVersion::V2;
-                return Error::Ok;
             case NVAT_GPU_CLAIMS_VERSION_V3:
                 out_version = GpuClaimsVersion::V3;
                 return Error::Ok;
             default:
-                LOG_ERROR("unknown gpu claims version: " << static_cast<int>(value));
+                LOG_ERROR("Unknown gpu claims version: " << static_cast<int>(value));
                 return Error::BadArgument;
         }
     }
@@ -87,11 +84,6 @@ namespace nvattestation
 
     Error SerializableGpuClaimsV3::get_nonce(std::string& out_nonce) const {
         out_nonce = m_nonce;
-        return Error::Ok;
-    }
-
-    Error SerializableGpuClaimsV3::get_overall_result(bool& out_result) const {
-        out_result = m_measurements_matching == SerializableMeasresClaim::Success;
         return Error::Ok;
     }
 
@@ -144,9 +136,10 @@ namespace nvattestation
         out_claims.m_vbios_rim_measurements_available = js.at("x-nvidia-gpu-vbios-rim-measurements-available").get<bool>();
         out_claims.m_vbios_index_no_conflict = js.at("x-nvidia-gpu-vbios-index-no-conflict").get<bool>();
 
-        if (js.contains("x-nvidia-gpu-mode")) {
-            out_claims.m_mode = js.at("x-nvidia-gpu-mode").get<std::string>();
-        }
+        // todo (p0): emit this claim once nras has it
+        // if (js.contains("x-nvidia-gpu-mode")) {
+        //     out_claims.m_mode = js.at("x-nvidia-gpu-mode").get<std::string>();
+        // }
 
         out_claims.m_version = "3.0";
     }
@@ -189,9 +182,9 @@ namespace nvattestation
         js["x-nvidia-gpu-vbios-rim-measurements-available"] = claims.m_vbios_rim_measurements_available;
         js["x-nvidia-gpu-vbios-index-no-conflict"] = claims.m_vbios_index_no_conflict;
 
-        if (!claims.m_mode.empty()) {
-            js["x-nvidia-gpu-mode"] = claims.m_mode;
-        }
+        // if (!claims.m_mode.empty()) {
+        //     js["x-nvidia-gpu-mode"] = claims.m_mode;
+        // }
         js["x-nvidia-gpu-claims-version"] = "3.0";
     }
     

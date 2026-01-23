@@ -1,11 +1,51 @@
+# Environment and build directories
 */env/*
 */target/*
-.vscode
-.idea
-.DS_Store
 */build/*
 *_build*
 *_repo*
-*.pyc
 build_docs/
 build/
+
+# IDE and editor files
+.vscode
+.idea
+*.code-workspace
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+
+# Python
+*.pyc
+
+# Node
+node_modules/
+
+# CMake
+.cache/
+.cmake/
+CMakeFiles/
+CMakeUserPresets.json
+CMakePresets.json
+CMakeCache.txt
+
+# Compiled artifacts
+*.o
+*.a
+*.so
+_obj
+
+# Build outputs
+out
+dist
+generated
+mocks
+reports
+
+# Local config
+*-local.*
+core
+.cache/
+.spectral.yaml

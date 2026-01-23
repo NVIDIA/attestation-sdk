@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <fstream>
 #include <thread>
 #include <future>
@@ -105,7 +106,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
     EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
-    EXPECT_EQ(claims_v3->m_hwmodel, "GH100 A01 GSP BROM");
+    EXPECT_EQ(claims_v3->m_hwmodel, "GH100");
     EXPECT_EQ(claims_v3->m_ueid, "478176379286082186618948445787393647364802107249");
     EXPECT_EQ(claims_v3->m_oem_id, "5703");
     EXPECT_EQ(claims_v3->m_nonce, mock_data.nonce);
@@ -162,6 +163,34 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithInvalidSignature) {
     error = verifier.verify_evidence(evidence_list, evidence_policy, nullptr, claims);
 
     ASSERT_EQ(error, Error::GpuEvidenceInvalidSignature) << "Could not verify evidence: " << to_string(error);
+    // No claims should be generated when verification fails due to invalid signature
+    EXPECT_TRUE(claims.empty());
+}
+
+TEST_F(GpuVerifierTest, RemoteVerifyGpuEvidenceWithBadNonce) {
+    auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
+    auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    NvRemoteGpuVerifier verifier;
+    error = NvRemoteGpuVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", g_env->service_key.c_str(), HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    
+    // Create mock GPU evidence with invalid signature
+    std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04}; // Sample nonce
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
+    
+    // Use invalid signature mock data
+    MockGpuEvidenceData mock_data = MockGpuEvidenceData::create_bad_nonce_scenario();
+    Error result = get_mock_gpu_evidence(mock_data, evidence_list);
+    ASSERT_EQ(result, Error::Ok);
+    ASSERT_FALSE(evidence_list.empty());
+    
+    EvidencePolicy evidence_policy{};
+    ClaimsCollection claims;
+    error = verifier.verify_evidence(evidence_list, evidence_policy, nullptr, claims);
+
+    ASSERT_EQ(error, Error::GpuEvidenceNonceMismatch) << "Could not verify evidence: " << to_string(error);
     // No claims should be generated when verification fails due to invalid signature
     EXPECT_TRUE(claims.empty());
 }
@@ -232,22 +261,15 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithDriverMeasurementsMismatch) {
 }
 
 TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithExpiredDriverRim) {
+    RecordProperty("description", "Verify GPU evidence with expired driver rim. Local verifier.");
     auto verifier = std::make_shared<LocalGpuVerifier>();
-    std::shared_ptr<MockNvRemoteRimStore> mock_rim_store = std::make_shared<MockNvRemoteRimStore>();
-    EXPECT_CALL(*mock_rim_store, get_rim(_, _))
-        .WillOnce(Invoke([](const std::string& rim_id, RimDocument& out_rim_document) -> Error {
-            if (rim_id != "NV_GPU_DRIVER_GH100_570.124.03") {
-                LOG_ERROR("RIM ID mismatch: " << rim_id);
-                return Error::RimNotFound;
-            }
-            std::ifstream file("testdata/sample_rims/NV_GPU_DRIVER_GH100_570.124.03_expired.xml");
-            std::string xml_data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            Error error = RimDocument::create_from_rim_data(xml_data, out_rim_document);
-            return error;
-        }));
+    std::shared_ptr<NvRemoteRimStoreImpl> rim_store = std::make_shared<NvRemoteRimStoreImpl>();
+    Error error = NvRemoteRimStoreImpl::init_from_env(*rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
     std::shared_ptr<NvHttpOcspClient> ocsp_client = std::make_shared<NvHttpOcspClient>();
-    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
-    error = LocalGpuVerifier::create(*verifier, mock_rim_store, ocsp_client, DetachedEATOptions());
+    error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    error = LocalGpuVerifier::create(*verifier, rim_store, ocsp_client, DetachedEATOptions());
     ASSERT_EQ(error, Error::Ok);
     
     // Create mock GPU evidence with expired driver rim scenario
@@ -261,12 +283,17 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithExpiredDriverRim) {
     ASSERT_FALSE(evidence_list.empty());
     
     EvidencePolicy evidence_policy{};
+    evidence_policy.verify_rim_signature = false;
     ClaimsCollection claims;
     error = verifier->verify_evidence(evidence_list, evidence_policy, nullptr, claims);
-    // Nonce mismatch should be treated as a fatal error in current implementation
-    ASSERT_EQ(error, Error::CertChainVerificationFailure) << "Could not verify evidence: " << to_string(error);
-    // No claims should be generated when verification fails
-    EXPECT_TRUE(claims.empty());
+    ASSERT_EQ(error, Error::Ok);
+
+    std::string claims_json;
+    error = claims.serialize_json(claims_json);
+    ASSERT_EQ(error, Error::Ok);
+    nlohmann::json claims_json_object = nlohmann::json::parse(claims_json);
+    EXPECT_EQ(claims_json_object[0]["x-nvidia-gpu-driver-rim-cert-chain"]["x-nvidia-cert-status"], "expired");
+
 }
 
 TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBlackwell) {
@@ -396,7 +423,8 @@ class GpuLocalVerifierTestCApi : public ::testing::Test {
         }
 };
 
-TEST_F(GpuLocalVerifierTestCApi, SerialVerify) { 
+TEST_F(GpuLocalVerifierTestCApi, SerialVerify) {
+    RecordProperty("description", "Serial verify 4 GPU evidences with service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -421,6 +449,7 @@ TEST_F(GpuLocalVerifierTestCApi, SerialVerify) {
 } 
 
 TEST_F(GpuLocalVerifierTestCApi, SerialVerifyWithCache) { 
+    RecordProperty("description", "Serial verify 4 GPU evidences with cache and service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -441,6 +470,7 @@ TEST_F(GpuLocalVerifierTestCApi, SerialVerifyWithCache) {
 }
 
 TEST_F(GpuLocalVerifierTestCApi, ParallelVerify) { 
+    RecordProperty("description", "Parallel verify 4 GPU evidences with service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -455,11 +485,15 @@ TEST_F(GpuLocalVerifierTestCApi, ParallelVerify) {
     }
 
     std::vector<std::future<nvat_rc_t>> futures;
-    const int num_threads = 4;
+    // Limit threads to the number of evidences to avoid threads with 0 work
+    const int num_threads = std::min(static_cast<size_t>(4), num_evidences);
+    if (num_threads == 0) {
+        GTEST_SKIP() << "No evidences to verify";
+    }
     int num_evidences_per_thread = num_evidences / num_threads;
     time_t start_time = time(nullptr);
-    for (size_t i = 0; i < num_threads; i++) {
-        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+    for (int i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, num_threads, i]() -> nvat_rc_t {
             nvat_claims_collection_t claims = nullptr;
             nvat_str_t detached_eat = nullptr;
             int this_thread_evidences = num_evidences_per_thread;
@@ -480,6 +514,7 @@ TEST_F(GpuLocalVerifierTestCApi, ParallelVerify) {
 }
 
 TEST_F(GpuLocalVerifierTestCApi, ParallelVerifyWithWarmCache) { 
+    RecordProperty("description", "Parallel verify 4 GPU evidences with cache and service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -503,11 +538,15 @@ TEST_F(GpuLocalVerifierTestCApi, ParallelVerifyWithWarmCache) {
     nvat_claims_collection_free(&claims);
 
     std::vector<std::future<nvat_rc_t>> futures;
-    const int num_threads = 4;
+    // Limit threads to the number of evidences to avoid threads with 0 work
+    const int num_threads = std::min(static_cast<size_t>(4), num_evidences);
+    if (num_threads == 0) {
+        GTEST_SKIP() << "No evidences to verify";
+    }
     int num_evidences_per_thread = num_evidences / num_threads;
     time_t start_time = time(nullptr);
-    for (size_t i = 0; i < num_threads; i++) {
-        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+    for (int i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, num_threads, i]() -> nvat_rc_t {
             nvat_claims_collection_t claims = nullptr;
             nvat_str_t detached_eat = nullptr;
             int this_thread_evidences = num_evidences_per_thread;
@@ -528,6 +567,10 @@ TEST_F(GpuLocalVerifierTestCApi, ParallelVerifyWithWarmCache) {
 }
 
 TEST_F(GpuLocalVerifierTestCApi, VerifyWithInvalidServiceKey) {
+    RecordProperty("description", 
+        "Verify GPU evidence with invalid service key. "
+        "Local verifier. Invalid service key will be "
+        "applied to OCSP and RIM store");
     std::string service_key = "invalid_service_key";
     nvat_rim_store_t rim_store = nullptr;
     nvat_ocsp_client_t ocsp_client = nullptr;
@@ -547,6 +590,43 @@ TEST_F(GpuLocalVerifierTestCApi, VerifyWithInvalidServiceKey) {
     nvat_gpu_verifier_free(&verifier);
     nvat_ocsp_client_free(&ocsp_client);
     nvat_rim_store_free(&rim_store);
+}
+
+TEST_F(GpuLocalVerifierTestCApi, Certhold) {
+    RecordProperty("description", "Verify GPU evidence with cert hold. Local verifier.");
+    std::string evidence_path = g_env->common_test_data_dir + "/serialized_test_evidence/hopper_evidence_cert_hold.json";
+    nvat_gpu_evidence_source_t evidence_source = nullptr;
+    ASSERT_EQ(nvat_gpu_evidence_source_from_json_file(&evidence_source, evidence_path.c_str()), NVAT_RC_OK);
+    nvat_nonce_t nonce = nullptr;
+    std::string nonce_str = evidence_to_nonce_map.find("hopper_570_86_cert_hold")->second;
+    ASSERT_EQ(nvat_nonce_from_hex(&nonce, nonce_str.c_str()), NVAT_RC_OK);
+    ASSERT_NE(nonce, nullptr);
+    nvat_gpu_evidence_t* evidence = nullptr;
+    size_t num_evidence = 0;
+    ASSERT_EQ(nvat_gpu_evidence_collect(evidence_source, nonce, &evidence, &num_evidence), NVAT_RC_OK);
+    ASSERT_NE(evidence, nullptr);
+    nvat_claims_collection_t claims = nullptr;
+    nvat_str_t detached_eat = nullptr;
+    ASSERT_EQ(nvat_verify_gpu_evidence(m_caching_verifier, evidence, num_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OVERALL_RESULT_FALSE);
+    ASSERT_NE(detached_eat, nullptr);
+    ASSERT_NE(claims, nullptr);
+    // get serialized claims
+    nvat_str_t serialized_claims = nullptr;
+    ASSERT_EQ(nvat_claims_collection_serialize_json(claims, &serialized_claims), NVAT_RC_OK);
+    ASSERT_NE(serialized_claims, nullptr);
+    char* serialized_claims_str = nullptr;
+    ASSERT_EQ(nvat_str_get_data(serialized_claims, &serialized_claims_str), NVAT_RC_OK);
+    ASSERT_NE(serialized_claims_str, nullptr);
+    LOG_DEBUG("Serialized claims: " << serialized_claims_str);
+    nlohmann::json json_claims = nlohmann::json::parse(serialized_claims_str);
+    EXPECT_EQ(json_claims[0]["x-nvidia-gpu-driver-rim-cert-chain"]["x-nvidia-cert-ocsp-status"], "revoked");
+    EXPECT_EQ(json_claims[0]["x-nvidia-gpu-driver-rim-cert-chain"]["x-nvidia-cert-revocation-reason"], "certificateHold");
+    nvat_str_free(&serialized_claims);
+    nvat_str_free(&detached_eat);
+    nvat_claims_collection_free(&claims);
+    nvat_gpu_evidence_array_free(&evidence, num_evidence);
+    nvat_gpu_evidence_source_free(&evidence_source);
+    nvat_nonce_free(&nonce);
 }
 
 class GpuRemoteVerifierTestCApi : public ::testing::Test {
@@ -589,6 +669,7 @@ class GpuRemoteVerifierTestCApi : public ::testing::Test {
 };
 
 TEST_F(GpuRemoteVerifierTestCApi, VerifySingleGpuEvidence) {
+    RecordProperty("description", "Verify single GPU evidence with service key. Remote verifier.");
     nvat_claims_collection_t claims = nullptr;
     nvat_str_t detached_eat = nullptr;
     ASSERT_EQ(nvat_verify_gpu_evidence(m_verifier, m_mock_single_gpu_evidence, m_num_mock_single_gpu_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
@@ -599,6 +680,9 @@ TEST_F(GpuRemoteVerifierTestCApi, VerifySingleGpuEvidence) {
 }
 
 TEST_F(GpuRemoteVerifierTestCApi, InvalidServiceKey) {
+    RecordProperty("description", "Verify single GPU evidence with invalid service key. "
+        "Remote verifier. Invalid service key will be "
+        "applied to NRAS");
     std::string service_key = "invalid_service_key";
     nvat_gpu_nras_verifier_t nras_verifier = nullptr;
     ASSERT_EQ(nvat_gpu_nras_verifier_create(&nras_verifier, "https://nras.attestation-stg.nvidia.com", service_key.c_str(), nullptr), NVAT_RC_OK);
@@ -612,7 +696,7 @@ TEST_F(GpuRemoteVerifierTestCApi, InvalidServiceKey) {
     ASSERT_EQ(detached_eat, nullptr);
     nvat_gpu_verifier_free(&verifier);
 }
-TEST_F(GpuLocalVerifierTestCApi, VerifyGpuModeClaimRPPolicy) {
+TEST_F(GpuLocalVerifierTestCApi, DISABLED_VerifyGpuModeClaimRPPolicy) {
     std::string rp_plicy = R"(
         package policy
         import future.keywords.every

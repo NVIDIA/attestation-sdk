@@ -41,7 +41,7 @@ TEST_F(CliTest, CollectEvidenceGPU) { //integration
     if (g_cli_env->test_mode != "integration" || !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
-    std::string nvattest_bin = "../nvattest";
+    std::string nvattest_bin = g_cli_env->nvattest_bin;
     std::string cmd = nvattest_bin + " collect-evidence";
     cmd += " --device gpu";
     cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";
@@ -62,7 +62,7 @@ TEST_F(CliTest, CollectEvidenceNVSwitch) { //integration
     if (g_cli_env->test_mode != "integration" || !g_cli_env->test_device_switch) {
         GTEST_SKIP() << "Skipping Switch Integration tests";
     }
-    std::string nvattest_bin = "../nvattest";
+    std::string nvattest_bin = g_cli_env->nvattest_bin;
     std::string cmd = nvattest_bin + " collect-evidence";
     cmd += " --device nvswitch";
     cmd += " --nonce 0x931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb";

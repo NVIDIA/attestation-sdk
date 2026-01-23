@@ -426,13 +426,6 @@ Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector
         return Error::NvmlError;
     }
 
-    std::string driver_version;
-    err = get_driver_version(driver_version);
-    if (err != Error::Ok) {
-        LOG_ERROR("Failed to get driver version");
-        return err;
-    }
-    LOG_DEBUG("System driver version: " << driver_version);
 
     for (unsigned int i = 0; i < device_count; ++i) {
         nvmlDevice_t device_handle{};
@@ -463,13 +456,6 @@ Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector
             return err;
         }
 
-        std::string vbios_version;
-        err = get_vbios_version(device_handle, vbios_version);
-        if (err != Error::Ok) {
-            LOG_ERROR("Failed to get VBIOS version for GPU index " << i);
-            return err;
-        }
-
         std::vector<uint8_t> attestation_report;
         err = get_attestation_report(device_handle, nonce_input, attestation_report);
         if (err != Error::Ok) {
@@ -490,8 +476,6 @@ Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector
             architecture,
             board_id,
             uuid,
-            vbios_version,
-            driver_version,
             attestation_report,
             attestation_cert_chain,
             nonce_input

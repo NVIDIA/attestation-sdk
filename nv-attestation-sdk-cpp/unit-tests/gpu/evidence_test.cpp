@@ -58,8 +58,6 @@ TEST_F(GpuEvidenceTest, CanCreateEvidence) {
     EXPECT_EQ(m_evidence->get_gpu_architecture(), m_mock_data.architecture);
     EXPECT_EQ(m_evidence->get_board_id(), m_mock_data.board_id);
     EXPECT_EQ(m_evidence->get_uuid(), m_mock_data.uuid);
-    EXPECT_EQ(m_evidence->get_vbios_version(), m_mock_data.vbios_version);
-    EXPECT_EQ(m_evidence->get_driver_version(), m_mock_data.driver_version);
     
     EXPECT_FALSE(m_evidence->get_attestation_report().empty());
 }

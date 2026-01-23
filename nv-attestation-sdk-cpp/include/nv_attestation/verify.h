@@ -42,15 +42,9 @@ namespace nvattestation
    class OcspVerifyOptions
    {
    private:
-      bool m_nonce_enabled;
-      bool m_allow_cert_hold;
 
    public:
-      OcspVerifyOptions() : m_nonce_enabled(true), m_allow_cert_hold(false) {}
-      void set_nonce_enabled(bool enabled);
-      bool get_nonce_enabled() const;
-      void set_allow_cert_hold(bool allow_cert_hold);
-      bool get_allow_cert_hold() const;
+      OcspVerifyOptions() {}
    };
 
    class EvidencePolicy {
@@ -59,12 +53,14 @@ namespace nvattestation
              ocsp_options(OcspVerifyOptions()),
              gpu_claims_version(GpuClaimsVersion::V3),
              switch_claims_version(SwitchClaimsVersion::V3),
-             verify_rim_signature(true) {}
+             verify_rim_signature(true),
+             verify_rim_cert_chain(true) {}
 
          OcspVerifyOptions ocsp_options;
          GpuClaimsVersion gpu_claims_version;
          SwitchClaimsVersion switch_claims_version;
          bool verify_rim_signature;
+         bool verify_rim_cert_chain;
    };
 
    Error validate_and_decode_EAT(
@@ -73,7 +69,8 @@ namespace nvattestation
       std::string& eat_issuer,
       NvHttpClient& http_client,
       std::vector<uint8_t>& out_eat_nonce,
-      std::unordered_map<std::string, std::string>& out_claims
+      std::unordered_map<std::string, std::string>& out_claims,
+      bool& out_overall_result
    );
 
    class NRASAttestRequestV4 {
@@ -86,5 +83,7 @@ namespace nvattestation
    };
 
    void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request);
+
+   Error handle_nras_error_claim(const nlohmann::json& nras_claims, nvat_devices_t device_type, const EvidencePolicy& evidence_policy);
 
 }

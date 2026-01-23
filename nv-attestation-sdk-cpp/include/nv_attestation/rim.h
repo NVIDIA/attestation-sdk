@@ -28,6 +28,10 @@
 #include "nv_types.h"
 
 namespace nvattestation {
+
+constexpr const char* TCG_EXT = ".xml";
+constexpr const char* CORIM_EXT = ".corim";
+
 struct RimResponse {
     std::string id;
     std::string rim;
@@ -164,7 +168,10 @@ class RimDocument{
         static Error create_from_rim_data(const std::string &rim_data, RimDocument& out_rim_document); // TODO(p2): create_from_string
         static Error create_from_file(const std::string &rim_path, RimDocument& out_rim_document);
         const std::string& get_raw_rim_data() const { return m_rim_data; }
+        void set_rim_id(const std::string& rim_id);
+        std::string get_rim_id() const;
     private:
+        std::string m_rim_id = "";
         nv_unique_ptr<xmlDoc> m_doc;
         std::string m_rim_data;
 };
@@ -201,12 +208,9 @@ class NvRemoteRimStoreImpl : public IRimStore {
 /**
  * @brief RIM store backed by the local filesystem.
  */
-// TODO(p1): implement, taking care to use a reasonable filesystem layout and file format.
-//       it may not be sufficient to store the raw RIM files because we normally have the rim_format 
-//       to inform our parser. do we just store entire RIM service responses on disk?
 class FilesystemRimStoreImpl : public IRimStore {
     public:
-        FilesystemRimStoreImpl(const std::string &path); // TODO: is there a better data structure?
+        FilesystemRimStoreImpl(const std::string &path) : path(path) {};
         Error get_rim(const std::string &rim_id, RimDocument& out_rim_document) override;
     private: 
         std::string path;

@@ -24,19 +24,15 @@
 #include "collect_evidence.h"
 #include "nvattest_options.h"
 #include "utils.h"
+#include "logging.h"
 
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/stdout_sinks.h"
 
 
 int main(int argc, char** argv) {
-    // Configure logger
-    auto console = spdlog::stdout_logger_mt("console");
-    spdlog::set_default_logger(console);
-    spdlog::set_pattern("%v");
 
-    CLI::App app{"NVIDIA attestation CLI for collecting evidence and verifying device integrity in confidential computing environments"};
-    app.set_config("--config", "config.toml", "Read options from a TOML configuration file");
+    CLI::App app{"NVIDIA attestation CLI for collecting evidence and verifying device integrity"};
 
     nvattest::EvidenceCollectionOptions evidence_collection_options;
     nvattest::EvidenceVerificationOptions evidence_verification_options;
@@ -51,13 +47,16 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
+    nvattest::CliLogger logger(common_options.get_log_level());
+    logger.install();
+
     // Dispatch subcommands
     if (version_subcommand->parsed()) {
         return nvattest::handle_version_subcommand();
     } else if (attest_subcommand->parsed()) {
-        return nvattest::handle_attest_subcommand(evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
+        return nvattest::handle_attest_subcommand(logger, evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
     } else if (collect_evidence_subcommand->parsed()) {
-        return nvattest::handle_collect_evidence_subcommand(evidence_collection_options, common_options);
+        return nvattest::handle_collect_evidence_subcommand(logger, evidence_collection_options, common_options);
     } else {
         // Default behavior is to display the help message
         std::cout << app.help() << std::endl;

@@ -108,7 +108,6 @@ class MockClaims : public Claims {
         MOCK_METHOD(nlohmann::json, to_json_object, (), (const));
 
         MOCK_METHOD(Error, get_nonce, (std::string& out_nonce), (const, override));
-        MOCK_METHOD(Error, get_overall_result, (bool& out_result), (const, override));
         MOCK_METHOD(Error, get_version, (std::string& out_version), (const, override));
         MOCK_METHOD(Error, get_device_type, (std::string& out_device_type), (const, override));
 

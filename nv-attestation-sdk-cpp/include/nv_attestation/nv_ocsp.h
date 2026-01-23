@@ -38,6 +38,7 @@ struct NvOcspResponse {
     int reason;
     int status;
     bool nonce_matches;
+    bool response_valid;
 };
 
 /**
@@ -123,15 +124,15 @@ private:
         nv_unique_ptr<OCSP_REQUEST>& ocsp_req,
         nv_unique_ptr<OCSP_BASICRESP>& basic_resp,
         const nv_unique_ptr<stack_st_X509>& intermediates,
-        const nv_unique_ptr<X509_STORE>& trust_store,
-        bool& nonce_matches
+        const nv_unique_ptr<X509_STORE>& trust_store
     );
 
-    static Error get_nv_ocsp_response(
+    static Error get_ocsp_status(
         nv_unique_ptr<OCSP_BASICRESP>& basic_resp,
         nv_unique_ptr<OCSP_CERTID>& id,
         NvOcspResponse& out_ocsp_response
     );
+
 };
 
 class NvHttpOcspCacheClient: public IOcspHttpClient {

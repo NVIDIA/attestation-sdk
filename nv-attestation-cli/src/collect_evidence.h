@@ -23,6 +23,7 @@
 #include "CLI/CLI.hpp"
 #include "nvat.h"
 #include "nvattest_options.h"
+#include "logging.h"
 
 namespace nvattest {
     /**
@@ -32,11 +33,11 @@ namespace nvattest {
      */
     class CollectEvidenceOutput {
         public:
-            int result_code;
+            nvat_rc_t result_code;
             std::string evidences;
         
-            CollectEvidenceOutput(const int result_code);
-            CollectEvidenceOutput(const int result_code, const std::string& evidences);
+            CollectEvidenceOutput(const nvat_rc_t result_code);
+            CollectEvidenceOutput(const nvat_rc_t result_code, const std::string& evidences);
             nlohmann::json to_json() const;
     };
 
@@ -59,6 +60,7 @@ namespace nvattest {
      * @return Exit code for the subcommand handler (0 = success, 1 = failure).
      */
     int handle_collect_evidence_subcommand(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const CommonOptions& common_options
     );

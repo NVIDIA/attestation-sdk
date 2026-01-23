@@ -51,7 +51,7 @@ Error NvHttpOcspClient::get_ocsp_response_from_raw(
             // Extract the basic response
             nv_unique_ptr<OCSP_BASICRESP> basic_resp(OCSP_response_get1_basic(ocsp_resp.get()));
             if (!basic_resp) {
-                LOG_ERROR("could not extract basic response from OCSP response: " << get_openssl_error());
+                LOG_ERROR("Could not extract basic response from OCSP response: " << get_openssl_error());
                 return Error::OcspInvalidResponse;
             }
             out_ocsp_resp = std::move(basic_resp);
@@ -188,22 +188,29 @@ Error NvHttpOcspClient::get_ocsp_response(
         ocsp_req,
         openssl_ocsp_resp,
         intermediates,
-        trust_store,
-        out_ocsp_response.nonce_matches
+        trust_store
     );
-    if (error != Error::Ok) {
+    if (error == Error::Ok) {
+        out_ocsp_response.response_valid = true;
+    } else if (error == Error::OcspInvalidResponse) {
+        out_ocsp_response.response_valid = false;
+    } else {
         return error;
     }
 
-    return get_nv_ocsp_response(openssl_ocsp_resp, id_orig, out_ocsp_response);
+    // see here for information about return values of the check nonce function:  https://docs.openssl.org/1.1.1/man3/OCSP_check_nonce.html
+    int result = OCSP_check_nonce(ocsp_req.get(), openssl_ocsp_resp.get());
+    LOG_DEBUG("OCSP_check_nonce returned: " << result);
+    out_ocsp_response.nonce_matches = result == 1;
+
+    return get_ocsp_status(openssl_ocsp_resp, id_orig, out_ocsp_response);
 }
 
 Error NvHttpOcspClient::validate_ocsp_response(
     nv_unique_ptr<OCSP_REQUEST>& ocsp_req,
     nv_unique_ptr<OCSP_BASICRESP>& basic_resp,
     const nv_unique_ptr<stack_st_X509>& intermediates,
-    const nv_unique_ptr<X509_STORE>& trust_store,
-    bool& out_nonce_matches
+    const nv_unique_ptr<X509_STORE>& trust_store
 ) {
 
 
@@ -258,21 +265,11 @@ Error NvHttpOcspClient::validate_ocsp_response(
 
     LOG_DEBUG("OCSP basic verification successful");
 
-    int result = OCSP_check_nonce(ocsp_req.get(), basic_resp.get());
-    LOG_DEBUG("OCSP_check_nonce returned: " << result);
-    /** 
-     * OCSP_check_nonce() returns the result of the nonce comparison between req and resp. 
-     * The return value indicates the result of the comparison. If nonces are present and equal 1 is returned. 
-     * If the nonces are absent 2 is returned. If a nonce is present in the response only 3 is returned.
-     * If nonces are present and unequal 0 is returned. If the nonce is present in the request only then -1 is returned.
-     * https://docs.openssl.org/1.1.1/man3/OCSP_check_nonce.html
-     */
-    out_nonce_matches = result == 1;
 
     return Error::Ok;
 }
 
-Error NvHttpOcspClient::get_nv_ocsp_response(
+Error NvHttpOcspClient::get_ocsp_status(
     nv_unique_ptr<OCSP_BASICRESP>& basic_resp,
     nv_unique_ptr<OCSP_CERTID>& id,
     NvOcspResponse& out_ocsp_response
@@ -298,7 +295,7 @@ Error NvHttpOcspClient::get_nv_ocsp_response(
         // generate expiration time claim
         struct tm next_update_tm{};
         if (ASN1_TIME_to_tm((const ASN1_TIME *)nextupd, &next_update_tm) != 1) {
-            LOG_ERROR("unable to convert ASN1_TIME to tm: " << get_openssl_error());
+            LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
             return Error::InternalError;
         }
         
@@ -309,7 +306,7 @@ Error NvHttpOcspClient::get_nv_ocsp_response(
 
         struct tm this_update_tm{};
         if (ASN1_TIME_to_tm((const ASN1_TIME *)thisupd, &this_update_tm) != 1) {
-            LOG_ERROR("unable to convert ASN1_TIME to tm: " << get_openssl_error());
+            LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
             return Error::InternalError;
         }
         

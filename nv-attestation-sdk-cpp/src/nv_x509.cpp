@@ -354,13 +354,16 @@ Error X509CertChain::verify() const {
         return Error::InternalError;
     }
     
+    // Skip certificate expiration checks
+    X509_VERIFY_PARAM* param = X509_STORE_CTX_get0_param(ctx.get());
+    X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_NO_CHECK_TIME);
     
     int ret = X509_verify_cert(ctx.get());
     if(ret != 1) {
         int err = X509_STORE_CTX_get_error(ctx.get());
         LOG_PUSH_ERROR(Error::InternalError, "Certificate chain verification failed: " 
                 << X509_verify_cert_error_string(err));
-        return Error::InternalError;
+        return Error::CertChainVerificationFailure;
     } 
     
     return Error::Ok;
@@ -432,11 +435,19 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
     }
     
     out_cert_chain_claims.expiration_date = min_expiration_time_str; 
-    out_cert_chain_claims.status = CertChainStatus::VALID; 
+    out_cert_chain_claims.status = CertChainStatus::INVALID;
+
+    // generate cert chain status claim
+    if (min_expiration_time < time(nullptr)) {
+        LOG_WARN("certificate chain has expired");
+        out_cert_chain_claims.status = CertChainStatus::EXPIRED;
+    } else {
+        out_cert_chain_claims.status = CertChainStatus::VALID;
+    }
 
     error = verify();
     if (error != Error::Ok) {
-        return Error::CertChainVerificationFailure;
+        return error;
     }
 
     OCSPClaims ocsp_claims;
@@ -446,13 +457,6 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
     }
     out_cert_chain_claims.ocsp_claims = ocsp_claims;
     
-    // generate cert chain status claim
-    out_cert_chain_claims.status = CertChainStatus::INVALID;
-    if (min_expiration_time < time(nullptr)) {
-        out_cert_chain_claims.status = CertChainStatus::EXPIRED;
-    } else {
-        out_cert_chain_claims.status = CertChainStatus::VALID;
-    }
 
     return Error::Ok;
 }
@@ -468,6 +472,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
     }
 
     out_ocsp_claims = OCSPClaims();
+    bool claims_initialized = false;
 
     int start_indx = 0;
     if (m_type == CertificateChainType::GPU_DEVICE_IDENTITY || m_type == CertificateChainType::NVSWITCH_DEVICE_IDENTITY) {
@@ -497,38 +502,54 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
             return error;
         }
 
-        out_ocsp_claims.nonce_matches = ocsp_resp.nonce_matches;
+        if (!ocsp_resp.response_valid) {
+            LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+        }
+        // response is invalid if its invalid for any cert in the chain
+        if (!claims_initialized) {
+            out_ocsp_claims.ocsp_response_valid = ocsp_resp.response_valid;
+        } else {
+            out_ocsp_claims.ocsp_response_valid = out_ocsp_claims.ocsp_response_valid && ocsp_resp.response_valid;
+        }
+
+        // nonce match is true if its true for all certs in the chain, else it is false
+        if (!claims_initialized) {
+            out_ocsp_claims.nonce_matches = ocsp_resp.nonce_matches;
+        } else {
+            out_ocsp_claims.nonce_matches = out_ocsp_claims.nonce_matches && ocsp_resp.nonce_matches;
+        }
         if (!ocsp_resp.nonce_matches) {
             LOG_WARN("OCSP nonce mismatch for cert: " << subject_idx << ": " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
-            if (ocsp_verify_options.get_nonce_enabled()) {
-                return Error::OcspInvalidResponse;
-            }
         }
 
-        // generate status claim
+        LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
+        OCSPStatus mapped_status = OCSPStatus::UNDEFINED;
         switch(ocsp_resp.status) {
             case V_OCSP_CERTSTATUS_REVOKED:
-                out_ocsp_claims.status = OCSPStatus::REVOKED;
-                out_ocsp_claims.revocation_reason = std::make_shared<std::string>(OCSP_crl_reason_str(ocsp_resp.reason));
-                LOG_DEBUG("Certificate is revoked");
-                if (ocsp_verify_options.get_allow_cert_hold() && ocsp_resp.reason == OCSP_REVOKED_STATUS_CERTIFICATEHOLD) {
-                    out_ocsp_claims.status = OCSPStatus::GOOD;
-                    break;
-                }
-                return Error::OcspStatusNotGood; // If any cert is revoked, return immediately
+                mapped_status = OCSPStatus::REVOKED;
                 break;
             case V_OCSP_CERTSTATUS_GOOD:
-                out_ocsp_claims.status = OCSPStatus::GOOD; // This will be overwritten by next good cert, or a final revoked/unknown
+                mapped_status = OCSPStatus::GOOD;
                 break;
             case V_OCSP_CERTSTATUS_UNKNOWN:
-                out_ocsp_claims.status = OCSPStatus::UNKOWN;
-                LOG_ERROR("Certificate status is unknown");
-                return Error::OcspStatusNotGood; // If any cert status is unknown, return immediately
+                mapped_status = OCSPStatus::UNKOWN;
+                break;
             default:
-                LOG_ERROR("OCSP certificate status in ocsp response is not valid");
-                return Error::OcspInvalidResponse;
+                mapped_status = OCSPStatus::UNDEFINED;
+                break;
         }
 
+        if (!claims_initialized) {
+            out_ocsp_claims.status = mapped_status;
+        } else {
+            // keep the highest cert ocsp status (which is "not good") in the chain i.e L1 > L2 > L3 > L4
+            if (out_ocsp_claims.status == OCSPStatus::GOOD) {
+                if (mapped_status == OCSPStatus::REVOKED) {
+                    out_ocsp_claims.revocation_reason = std::make_shared<std::string>(OCSP_crl_reason_str(ocsp_resp.reason)); 
+                }
+                out_ocsp_claims.status = mapped_status;
+            }
+        }
 
         LOG_DEBUG("Generating expiration time claim");
         // The OCSP response expiration time is for this specific response.
@@ -544,12 +565,9 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
             LOG_PUSH_ERROR(Error::InternalError, "Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
             return Error::InternalError;
         }
+
+        claims_initialized = true;
     }
-    // After the loop, if all certs were 'good', claims->status will be "good".
-    // If the loop didn't run (e.g. m_certs.size() < 2 or adjusted start_indx is too high),
-    // claims will be in its initial state ("unknown", expiration 0).
-    // This might need adjustment if no certs are processed - what should be returned?
-    // Current behavior: if loop doesn't run, returns initial "unknown" claims. This seems acceptable.
     return Error::Ok;
 }
 size_t X509CertChain::size() const {
@@ -678,14 +696,14 @@ Error X509CertChain::get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_da
     // https://trustedcomputinggroup.org/wp-content/uploads/TCG_DICE_Attestation_Architecture_r22_02dec2020.pdf
     // NOLINTNEXTLINE(readability-magic-numbers)
     if (sk_ASN1_TYPE_num(seq.get()) <= 6) {
-        LOG_ERROR("expected at least 7 elements in the FWID 2.23.133.5.4.1.1 extension");
+        LOG_ERROR("Expected at least 7 elements in the FWID 2.23.133.5.4.1.1 extension");
         return Error::InternalError;
     }
 
     ASN1_TYPE* fwid_list_asn = sk_ASN1_TYPE_value(seq.get(), 6);
 
     if(fwid_list_asn == nullptr || fwid_list_asn->value.sequence == nullptr) {
-        LOG_ERROR("expected a list of fwid elements");
+        LOG_ERROR("Expected a list of fwid elements");
         return Error::InternalError;
     }
 

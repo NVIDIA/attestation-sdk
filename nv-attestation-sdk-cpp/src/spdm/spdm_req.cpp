@@ -69,7 +69,7 @@ Error SpdmMeasurementRequestMessage11::parse(const std::vector<uint8_t>& request
     offset += kSlotIDParamSize;
 
     if (offset != kRequestLength) {
-        LOG_ERROR("trailing bytes after parsing in SPDM Measurement Request Message11");
+        LOG_ERROR("Trailing bytes after parsing in SPDM Measurement Request Message11");
         return Error::SpdmRequestParseError;
     }
 

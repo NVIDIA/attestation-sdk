@@ -25,8 +25,11 @@
 #include "nv_attestation/error.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/utils.h"
+#include "nvat.h"
 
 namespace nvattestation {
+
+
 /**
  * @brief Represents certificate chain claims for attestation
  * 
@@ -37,12 +40,16 @@ class SerializableCertChainClaims {
     std::string m_cert_status;
     std::string m_cert_ocsp_status;
     std::shared_ptr<std::string> m_cert_revocation_reason;
+    bool m_ocsp_nonce_matches;
+    bool m_ocsp_response_valid;
 
     SerializableCertChainClaims() 
         : m_cert_expiration_date("")
         , m_cert_status("")
         , m_cert_ocsp_status("")
-        , m_cert_revocation_reason(nullptr) {}
+        , m_cert_revocation_reason(nullptr)
+        , m_ocsp_nonce_matches(false)
+        , m_ocsp_response_valid(false) {}
 };
 
 /**
@@ -55,6 +62,8 @@ inline void to_json(nlohmann::json& j, const SerializableCertChainClaims& claims
     j["x-nvidia-cert-status"] = claims.m_cert_status;
     j["x-nvidia-cert-ocsp-status"] = claims.m_cert_ocsp_status;
     j["x-nvidia-cert-revocation-reason"] = serialize_optional_shared_ptr(claims.m_cert_revocation_reason.get());
+    j["x-nvidia-cert-ocsp-nonce-matches"] = claims.m_ocsp_nonce_matches;
+    j["x-nvidia-cert-ocsp-response-valid"] = claims.m_ocsp_response_valid;
 }
 
 /* @brief Deserializes SerializableCertChainClaims from JSON
@@ -67,6 +76,20 @@ inline void from_json(const nlohmann::json& j, SerializableCertChainClaims& out_
     out_claims.m_cert_status = j.at("x-nvidia-cert-status").get<std::string>();
     out_claims.m_cert_ocsp_status = j.at("x-nvidia-cert-ocsp-status").get<std::string>();
     out_claims.m_cert_revocation_reason = deserialize_optional_shared_ptr<std::string>(j, "x-nvidia-cert-revocation-reason");
+    // todo (p0): we are conditionally checking these fields because nras does implement 
+    // them yet. in the remote verifier implementation, we try to deserialize the nras 
+    // detached eat and if we do not conditionally check here, it will fail there.
+    // once nras implements these fields, we should always expect these fields to be present.
+    if (j.contains("x-nvidia-cert-ocsp-nonce-matches")) {
+        out_claims.m_ocsp_nonce_matches = j.at("x-nvidia-cert-ocsp-nonce-matches").get<bool>();
+    } else {
+        out_claims.m_ocsp_nonce_matches = true;
+    }
+    if (j.contains("x-nvidia-cert-ocsp-response-valid")) {
+        out_claims.m_ocsp_response_valid = j.at("x-nvidia-cert-ocsp-response-valid").get<bool>();
+    } else {
+        out_claims.m_ocsp_response_valid = true;
+    }
 }
 
 enum class SerializableMeasresClaim {
@@ -83,18 +106,12 @@ NLOHMANN_JSON_SERIALIZE_ENUM(SerializableMeasresClaim, {
     {SerializableMeasresClaim::Absent, "absent"}
 });
 
-
 class SerializableMismatchedMeasurements {
     public: 
         enum class MeasurementSource {
             VBIOS,
             DRIVER
         };
-
-        NLOHMANN_JSON_SERIALIZE_ENUM(MeasurementSource, {
-            {MeasurementSource::VBIOS, "firmware"},
-            {MeasurementSource::DRIVER, "driver"}
-        })
 
         uint32_t m_index;
         uint32_t m_golden_size;
@@ -121,6 +138,11 @@ class SerializableMismatchedMeasurements {
             , m_source(source) {}
 
 };
+
+NLOHMANN_JSON_SERIALIZE_ENUM(SerializableMismatchedMeasurements::MeasurementSource, {
+    {SerializableMismatchedMeasurements::MeasurementSource::VBIOS, "Firmware"},
+    {SerializableMismatchedMeasurements::MeasurementSource::DRIVER, "Driver"}
+})
 
 inline void to_json(nlohmann::json& j, const SerializableMismatchedMeasurements& mismatched_measurements) {
     j["index"] = mismatched_measurements.m_index;
@@ -153,6 +175,29 @@ inline bool operator==(const SerializableMismatchedMeasurements& lhs, const Seri
 // Operator== for SerializableCertChainClaims
 bool operator==(const SerializableCertChainClaims& lhs, const SerializableCertChainClaims& rhs);
 
+// todo (p0): remove after error claims are deprecated
+class NrasErrorClaim {
+    public:
+        int code;
+        std::string http_status;
+        std::string description;
+        std::string message;
+};
+
+inline void from_json(const nlohmann::json& j, NrasErrorClaim& out_nras_error) {
+    out_nras_error.code = j.at("code").get<int>();
+    out_nras_error.http_status = j.at("httpStatus").get<std::string>();
+    out_nras_error.description = j.at("description").get<std::string>();
+    out_nras_error.message = j.at("message").get<std::string>();
+}
+
+inline void to_json(nlohmann::json& j, const NrasErrorClaim& nras_error_claim) {
+    j["code"] = nras_error_claim.code;
+    j["httpStatus"] = nras_error_claim.http_status;
+    j["description"] = nras_error_claim.description;
+    j["message"] = nras_error_claim.message;
+}
+
 /**
  * @brief Virtual base class for claims
  * 
@@ -164,7 +209,6 @@ class Claims {
         virtual Error serialize_json(std::string& out_json) const = 0;
         // these functions are used to create the detached EAT
         virtual Error get_nonce(std::string& out_nonce) const = 0;
-        virtual Error get_overall_result(bool& out_result) const = 0;
         virtual Error get_version(std::string& out_version) const = 0;
         virtual Error get_device_type(std::string& out_device_type) const = 0;
         // this is needed because Claims is a virtual class and when working with 

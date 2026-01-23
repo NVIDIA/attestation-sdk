@@ -127,16 +127,12 @@ class GpuEvidence {
             GpuArchitecture architecture,
             unsigned int board_id,
             const std::string& uuid,
-            const std::string& vbios_version,
-            const std::string& driver_version,
             const std::vector<uint8_t>& attestation_report,
             const std::string& attestation_cert_chain,
             const std::vector<uint8_t>& nonce)
             : m_gpu_architecture(architecture),
               m_board_id(board_id),
               m_uuid(uuid),
-              m_vbios_version(vbios_version),
-              m_driver_version(driver_version),
               m_attestation_report(attestation_report),
               m_attestation_cert_chain(attestation_cert_chain),
               m_nonce(nonce) {}
@@ -158,14 +154,10 @@ class GpuEvidence {
         GpuArchitecture get_gpu_architecture() const { return m_gpu_architecture; }
         unsigned int get_board_id() const { return m_board_id; }
         const std::string& get_uuid() const { return m_uuid; }
-        const std::string& get_vbios_version() const { return m_vbios_version; }
-        const std::string& get_driver_version() const { return m_driver_version; }
         const std::vector<uint8_t>& get_attestation_report() const { return m_attestation_report; }
         const std::vector<uint8_t>& get_nonce() const { return m_nonce; }
 
         void set_gpu_architecture(GpuArchitecture gpu_architecture) { m_gpu_architecture = gpu_architecture; }
-        void set_vbios_version(const std::string& vbios_version) { m_vbios_version = vbios_version; }
-        void set_driver_version(const std::string& driver_version) { m_driver_version = driver_version; }
         void set_attestation_report(const std::vector<uint8_t>& attestation_report) { m_attestation_report = attestation_report; }
         void set_attestation_cert_chain(const std::string& attestation_cert_chain) { m_attestation_cert_chain = attestation_cert_chain; }
         void set_nonce(const std::vector<uint8_t>& nonce) { m_nonce = nonce; }
@@ -177,8 +169,6 @@ class GpuEvidence {
         GpuArchitecture m_gpu_architecture;
         unsigned int m_board_id;
         std::string m_uuid;
-        std::string m_vbios_version;
-        std::string m_driver_version;
         std::vector<uint8_t> m_attestation_report;
         std::string m_attestation_cert_chain;
         std::vector<uint8_t> m_nonce;
@@ -215,13 +205,27 @@ class NvmlEvidenceCollector : public IGpuEvidenceSource {
     // TODO: the implementation may need an option to require CC or fail if in dev mode. These can be private vars configured with setters.
 };
 
+/**
+ * @brief Uses GPU evidence supplied in JSON string. Used in NRAS service where clients provide evidence as part of the HTTP call
+ */
+class GpuEvidenceSourceFromJsonString : public IGpuEvidenceSource {
+    public:
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
+        static Error create(const std::string& json_string, GpuEvidenceSourceFromJsonString& out_source);
+
+    protected:
+        std::vector<std::shared_ptr<GpuEvidence>> m_evidence;
+};
+
+/**
+ * @brief Uses GPU evidence from serialized JSON file. Used for testing.
+ */
 class GpuEvidenceSourceFromJsonFile : public IGpuEvidenceSource {
     public:
         Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
         static Error create(const std::string& file_path, GpuEvidenceSourceFromJsonFile& out_source);
 
     private:
-        std::string m_file_path;
-        std::vector<std::shared_ptr<GpuEvidence>> m_evidence;
+        GpuEvidenceSourceFromJsonString m_string_source;
 };
 }

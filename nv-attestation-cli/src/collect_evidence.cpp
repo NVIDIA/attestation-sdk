@@ -28,10 +28,10 @@
 
 namespace nvattest {
 
-    CollectEvidenceOutput::CollectEvidenceOutput(const int result_code)
+    CollectEvidenceOutput::CollectEvidenceOutput(const nvat_rc_t result_code)
         : result_code(result_code), evidences("") {}
 
-    CollectEvidenceOutput::CollectEvidenceOutput(const int result_code, const std::string& evidences)
+    CollectEvidenceOutput::CollectEvidenceOutput(const nvat_rc_t result_code, const std::string& evidences)
         : result_code(result_code), evidences(evidences) {}
 
     nlohmann::json CollectEvidenceOutput::to_json() const {
@@ -58,47 +58,24 @@ namespace nvattest {
         CLI::App& app,
         EvidenceCollectionOptions& evidence_collection_options) {
         
-        auto* subcommand = app.add_subcommand("collect-evidence", "Collect attestation evidence and print to stdout");
+        auto* subcommand = app.add_subcommand("collect-evidence");
+        subcommand->description(
+            "Collect attestation evidence from a given device.\n\n"
+            "Results are printed to standard out. "
+            "Control output format through the global --format option."
+        );
         add_evidence_collection_options(subcommand, evidence_collection_options);
         return subcommand;
     }
 
     CollectEvidenceOutput collect_evidence(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const CommonOptions& common_options
     ) {
         nvat_rc_t err;
 
-        nv_unique_ptr<nvat_sdk_opts_t> opts;
-        nvat_sdk_opts_t raw_opts = nullptr;
-        err = nvat_sdk_opts_create(&raw_opts);
-        if (err != NVAT_RC_OK) {
-            return CollectEvidenceOutput(err);
-        }
-        opts.reset(&raw_opts);
-
-        nvat_log_level_t log_level_nvat = NVAT_LOG_LEVEL_OFF;
-        if (common_options.log_level == "trace") {
-            log_level_nvat = NVAT_LOG_LEVEL_TRACE;
-        } else if (common_options.log_level == "debug") {
-            log_level_nvat = NVAT_LOG_LEVEL_DEBUG;
-        } else if (common_options.log_level == "info") {
-            log_level_nvat = NVAT_LOG_LEVEL_INFO;
-        } else if (common_options.log_level == "warn") {
-            log_level_nvat = NVAT_LOG_LEVEL_WARN;
-        } else if (common_options.log_level == "error") {
-            log_level_nvat = NVAT_LOG_LEVEL_ERROR;
-        }
-
-        nvat_logger_t logger;
-        err = nvat_logger_spdlog_create(&logger, "nvattest", log_level_nvat);
-        if (err != NVAT_RC_OK) {
-            return CollectEvidenceOutput(err);
-        }
-        nvat_sdk_opts_set_logger(*(opts.get()), logger);
-        nvat_logger_free(&logger);
-
-        err = nvat_sdk_init(*(opts.get()));
+        err = init_sdk(logger, common_options);
         if (err != NVAT_RC_OK) {
             return CollectEvidenceOutput(err);
         }
@@ -120,9 +97,16 @@ namespace nvattest {
         if (evidence_collection_options.device == "gpu") {
             nv_unique_ptr<nvat_gpu_evidence_source_t> source;
             nvat_gpu_evidence_source_t raw_source = nullptr;
-            err = nvat_gpu_evidence_source_nvml_create(&raw_source);
-            if (err != NVAT_RC_OK) {
-                return CollectEvidenceOutput(err);
+            if (evidence_collection_options.gpu_evidence_source == "file") {
+                err = nvat_gpu_evidence_source_from_json_file(&raw_source, evidence_collection_options.gpu_evidence_file.c_str());
+                if (err != NVAT_RC_OK) {
+                    return CollectEvidenceOutput(err);
+                }
+            } else {
+                err = nvat_gpu_evidence_source_nvml_create(&raw_source);
+                if (err != NVAT_RC_OK) {
+                    return CollectEvidenceOutput(err);
+                }
             }
             source.reset(&raw_source);
 
@@ -147,9 +131,16 @@ namespace nvattest {
         } else if (evidence_collection_options.device == "nvswitch") {
             nv_unique_ptr<nvat_switch_evidence_source_t> source;
             nvat_switch_evidence_source_t raw_source = nullptr;
-            err = nvat_switch_evidence_source_nscq_create(&raw_source);
-            if (err != NVAT_RC_OK) {
-                return CollectEvidenceOutput(err);
+            if (evidence_collection_options.switch_evidence_source == "file") {
+                err = nvat_switch_evidence_source_from_json_file(&raw_source, evidence_collection_options.switch_evidence_file.c_str());
+                if (err != NVAT_RC_OK) {
+                    return CollectEvidenceOutput(err);
+                }
+            } else {
+                err = nvat_switch_evidence_source_nscq_create(&raw_source);
+                if (err != NVAT_RC_OK) {
+                    return CollectEvidenceOutput(err);
+                }
             }
             source.reset(&raw_source);
 
@@ -185,14 +176,25 @@ namespace nvattest {
     }
 
     int handle_collect_evidence_subcommand(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const CommonOptions& common_options
     ) {
-        CollectEvidenceOutput output = collect_evidence(evidence_collection_options, common_options);
+        CollectEvidenceOutput output = collect_evidence(logger, evidence_collection_options, common_options);
         nvat_sdk_shutdown();
 
-        auto json = output.to_json();
-        std::cout << json.dump(4) << std::endl;
+        if(common_options.format == "text") {
+            if (output.result_code == NVAT_RC_OK) {
+                SPDLOG_INFO("{} evidence collection was successful.", evidence_collection_options.pretty_device());
+            } else {
+                SPDLOG_CRITICAL("");
+                SPDLOG_CRITICAL("{} evidence collection failed!", evidence_collection_options.pretty_device());
+                print_error_help(logger, output.result_code);
+            }
+        } else if (common_options.format == "json") {
+            auto json = output.to_json();
+            std::cout << json.dump(4) << std::endl;
+        }
         return output.result_code;
     }
 }

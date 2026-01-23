@@ -62,10 +62,10 @@ enum class CertificateChainType {
 };
 
 enum class OCSPStatus {
+    UNDEFINED = -1,
     GOOD = 0,
-    REVOKED,
-    UNKOWN,
-    UNDEFINED
+    REVOKED = 1,
+    UNKOWN = 2,
 };
 
 inline std::string to_string(OCSPStatus status) {
@@ -79,7 +79,7 @@ inline std::string to_string(OCSPStatus status) {
         case OCSPStatus::UNDEFINED:
             return "undefined";
         default:
-            return "unknown";
+            return "undefined";
     }
 }
 
@@ -105,9 +105,14 @@ struct OCSPClaims {
      * expiration time of the ocsp response of the last cert in the chain.
      */
     time_t ocsp_resp_expiration_time;
+    /**
+     * will be true if the ocsp response is valid for all certs in the chain, else false
+     */
+    bool ocsp_response_valid;
+
 
     OCSPClaims(OCSPStatus status, const std::string& reason, bool nonce_matches, time_t ocsp_resp_expiration_time) : status(status), revocation_reason(std::make_shared<std::string>(reason)), nonce_matches(nonce_matches), ocsp_resp_expiration_time(ocsp_resp_expiration_time) {}
-    OCSPClaims() : status(OCSPStatus::UNDEFINED), revocation_reason(nullptr), nonce_matches(false), ocsp_resp_expiration_time(0) {}
+    OCSPClaims() : status(OCSPStatus::UNDEFINED), revocation_reason(nullptr), nonce_matches(false), ocsp_resp_expiration_time(0), ocsp_response_valid(false) {}
 };
 
 std::ostream& operator<<(std::ostream& os, const OCSPClaims& claims) ;

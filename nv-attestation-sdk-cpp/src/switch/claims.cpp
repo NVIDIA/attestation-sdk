@@ -72,11 +72,6 @@ namespace nvattestation {
         return Error::Ok;
     }
 
-    Error SerializableSwitchClaimsV3::get_overall_result(bool& out_result) const {
-        out_result = m_measurements_matching == SerializableMeasresClaim::Success;
-        return Error::Ok;
-    }
-
     Error SerializableSwitchClaimsV3::get_version(std::string& out_version) const {
         out_version = m_version;
         return Error::Ok;

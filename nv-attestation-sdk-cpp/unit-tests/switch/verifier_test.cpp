@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <fstream>
 #include <thread>
 #include <future>
@@ -130,7 +131,7 @@ TEST_F(SwitchVerifierTest, SuccessSwitchEvidenceRemoteVerifier) {
     ASSERT_NE(claims_v3, nullptr) << "Expected SerializableSwitchClaimsV3 claims";
 
     EXPECT_EQ(claims_v3->m_switch_bios_version, mock_data.bios_version);
-    EXPECT_EQ(claims_v3->m_hwmodel, "LS_10 A01 FSP BROM");
+    EXPECT_EQ(claims_v3->m_hwmodel, "LS_10");
     EXPECT_EQ(claims_v3->m_ueid, "694931143880983876767046803400974855445978836716");
     EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
 
@@ -159,7 +160,35 @@ TEST_F(SwitchVerifierTest, VerifySwitchEvidenceWithBadNonce) {
     ClaimsCollection claims;
     error = verifier.verify_evidence(evidence_list, evidence_policy, nullptr, claims);
     // Nonce mismatch should be treated as a fatal error in current implementation
-    ASSERT_EQ(error, Error::SwitchEvidenceNonceMismatch) << "Expected InternalError for nonce mismatch, got: " << to_string(error);
+    ASSERT_EQ(error, Error::SwitchEvidenceNonceMismatch); 
+    // No claims should be generated when verification fails
+    EXPECT_TRUE(claims.empty());
+}
+
+TEST_F(SwitchVerifierTest, RemoteVerifySwitchEvidenceWithBadNonce) {
+     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
+    auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    NvRemoteSwitchVerifier verifier;
+    error = NvRemoteSwitchVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    
+    // Create mock switch evidence with bad nonce
+    std::vector<uint8_t> nonce = {0x01, 0x02, 0x03, 0x04};
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
+    
+    // Use mock data for nonce mismatch scenario
+    MockSwitchEvidenceData mock_data = MockSwitchEvidenceData::create_bad_nonce_scenario();
+    error = get_mock_switch_evidence(mock_data, evidence_list);
+    ASSERT_EQ(error, Error::Ok);
+    ASSERT_FALSE(evidence_list.empty());
+    
+    EvidencePolicy evidence_policy {};
+    ClaimsCollection claims;
+    error = verifier.verify_evidence(evidence_list, evidence_policy, nullptr, claims);
+    // Nonce mismatch should be treated as a fatal error in current implementation
+    ASSERT_EQ(error, Error::SwitchEvidenceNonceMismatch);
     // No claims should be generated when verification fails
     EXPECT_TRUE(claims.empty());
 }
@@ -402,6 +431,7 @@ class SwitchLocalVerifierTestCApi : public ::testing::Test {
 };
 
 TEST_F(SwitchLocalVerifierTestCApi, SerialVerify) { 
+    RecordProperty("description", "Serial verify 4 switch evidences with service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping switch Integration tests";
     }
@@ -426,6 +456,7 @@ TEST_F(SwitchLocalVerifierTestCApi, SerialVerify) {
 } 
 
 TEST_F(SwitchLocalVerifierTestCApi, SerialVerifyWithCache) { 
+    RecordProperty("description", "Serial verify 4 switch evidences with cache and service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping switch Integration tests";
     }
@@ -446,6 +477,7 @@ TEST_F(SwitchLocalVerifierTestCApi, SerialVerifyWithCache) {
 }
 
 TEST_F(SwitchLocalVerifierTestCApi, ParallelVerify) { 
+    RecordProperty("description", "Parallel verify 4 switch evidences with service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping switch Integration tests";
     }
@@ -460,11 +492,15 @@ TEST_F(SwitchLocalVerifierTestCApi, ParallelVerify) {
     }
 
     std::vector<std::future<nvat_rc_t>> futures;
-    const int num_threads = 4;
+    // Limit threads to the number of evidences to avoid threads with 0 work
+    const int num_threads = std::min(static_cast<size_t>(4), num_evidences);
+    if (num_threads == 0) {
+        GTEST_SKIP() << "No evidences to verify";
+    }
     int num_evidences_per_thread = num_evidences / num_threads;
     time_t start_time = time(nullptr);
-    for (size_t i = 0; i < num_threads; i++) {
-        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+    for (int i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, num_threads, i]() -> nvat_rc_t {
             nvat_claims_collection_t claims = nullptr;
             nvat_str_t detached_eat = nullptr;
             int this_thread_evidences = num_evidences_per_thread;
@@ -485,6 +521,7 @@ TEST_F(SwitchLocalVerifierTestCApi, ParallelVerify) {
 }
 
 TEST_F(SwitchLocalVerifierTestCApi, ParallelVerifyWithWarmCache) { 
+    RecordProperty("description", "Parallel verify 4 switch evidences with cache and service key. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping switch Integration tests";
     }
@@ -508,11 +545,15 @@ TEST_F(SwitchLocalVerifierTestCApi, ParallelVerifyWithWarmCache) {
     nvat_claims_collection_free(&claims);
 
     std::vector<std::future<nvat_rc_t>> futures;
-    const int num_threads = 4;
+    // Limit threads to the number of evidences to avoid threads with 0 work
+    const int num_threads = std::min(static_cast<size_t>(4), num_evidences);
+    if (num_threads == 0) {
+        GTEST_SKIP() << "No evidences to verify";
+    }
     int num_evidences_per_thread = num_evidences / num_threads;
     time_t start_time = time(nullptr);
-    for (size_t i = 0; i < num_threads; i++) {
-        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, i]() -> nvat_rc_t {
+    for (int i = 0; i < num_threads; i++) {
+        futures.emplace_back(std::async(std::launch::async, [this, evidences, num_evidences, num_evidences_per_thread, num_threads, i]() -> nvat_rc_t {
             nvat_claims_collection_t claims = nullptr;
             nvat_str_t detached_eat = nullptr;
             int this_thread_evidences = num_evidences_per_thread;
@@ -569,6 +610,7 @@ class SwitchRemoteVerifierTestCApi : public ::testing::Test {
 };
 
 TEST_F(SwitchRemoteVerifierTestCApi, VerifySingleSwitchEvidence) {
+    RecordProperty("description", "Verify single switch evidence with service key. Remote verifier.");
     nvat_claims_collection_t claims = nullptr;
     nvat_str_t detached_eat = nullptr;
     ASSERT_EQ(nvat_verify_switch_evidence(m_verifier, m_mock_single_switch_evidence, m_num_mock_single_switch_evidence, m_evidence_policy, &detached_eat, &claims), NVAT_RC_OK);
@@ -579,6 +621,9 @@ TEST_F(SwitchRemoteVerifierTestCApi, VerifySingleSwitchEvidence) {
 }
 
 TEST_F(SwitchRemoteVerifierTestCApi, InvalidServiceKey) {
+    RecordProperty("description", "Verify single switch evidence with invalid service key. "
+        "Remote verifier. Invalid service key will be "
+        "applied to NRAS");
     std::string service_key = "invalid_service_key";
     nvat_switch_nras_verifier_t nras_verifier = nullptr;
     ASSERT_EQ(nvat_switch_nras_verifier_create(&nras_verifier, "https://nras.attestation-stg.nvidia.com", service_key.c_str(), nullptr), NVAT_RC_OK);

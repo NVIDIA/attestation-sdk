@@ -130,7 +130,7 @@ TEST_F(RimDocumentFixture, VerifyCertChainWithIncorrectRoot) {
     error = cert_chain.set_root_cert(std::move(incorrect_root_cert));
     EXPECT_EQ(error, Error::Ok);
     error = cert_chain.verify();
-    EXPECT_EQ(error, Error::InternalError);
+    EXPECT_EQ(error, Error::CertChainVerificationFailure);
 }
 
 // ocsp valid test
@@ -143,8 +143,6 @@ TEST_F(RimDocumentFixture, OcspValidation) {
     Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
     EXPECT_EQ(error, Error::Ok);
     EXPECT_EQ(ocsp_claims.status, OCSPStatus::GOOD);
@@ -172,8 +170,6 @@ TEST_F(RimDocumentFixture, OcspValidationTLS) {
     Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
     EXPECT_EQ(error, Error::Ok);
     EXPECT_EQ(ocsp_claims.status, OCSPStatus::GOOD);
@@ -208,8 +204,6 @@ TEST_F(RimDocumentFixture, OcspServerError) {
     Error client_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.invalid", g_env->service_key, http_options);
     ASSERT_EQ(client_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
     EXPECT_EQ(error, Error::InternalError);
 }
@@ -228,10 +222,9 @@ TEST_F(RimDocumentFixture, OcspInvalidResponse) {
     Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
-    EXPECT_EQ(error, Error::OcspInvalidResponse) << "Expected OcspInvalidResponse, got " << to_string(error);
+    EXPECT_EQ(error, Error::Ok); 
+    EXPECT_EQ(ocsp_claims.ocsp_response_valid, false);
 }
 
 // ocsp error test: ocsp server returns unauthorized (invalid request)
@@ -254,8 +247,6 @@ TEST_F(RimDocumentFixture, OcspInvalidRequest) {
 
     OCSPClaims ocsp_claims;
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_ocsp_claims(ocsp_verify_options, *mock_ocsp_client, ocsp_claims);
     EXPECT_EQ(error, Error::OcspInvalidRequest);
 }
@@ -331,8 +322,6 @@ TEST_F(RimDocumentFixture, GenerateCertChainClaims) {
     Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com:80/", g_env->service_key, HttpOptions());
     ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    ocsp_verify_options.set_nonce_enabled(true);
-    ocsp_verify_options.set_allow_cert_hold(true);
     error = cert_chain.generate_cert_chain_claims(ocsp_verify_options, ocsp_client, claims);
     EXPECT_EQ(error, Error::Ok);
 
