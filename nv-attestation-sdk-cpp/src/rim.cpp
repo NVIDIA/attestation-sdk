@@ -61,7 +61,14 @@ Error RimDocument::create_from_rim_data(const std::string &rim_data, RimDocument
     //    TCG from CORIM
     auto doc = nv_unique_ptr<xmlDoc>(xmlReadDoc(reinterpret_cast<const xmlChar *>(rim_data.c_str()), NULL, NULL, XML_PARSE_PEDANTIC | XML_PARSE_NONET));
     if (!doc) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to parse RIM data when creating RimDocumentImpl");
+        xmlErrorPtr xml_error = xmlGetLastError();
+        std::string error_msg = "Failed to parse RIM data as TCG XML file. ";
+        if (xml_error != nullptr) {
+            error_msg += "XML error: " + std::string(xml_error->message);
+        } else {
+            error_msg += "Unknown XML error (xmlGetLastError is null).";
+        }
+        LOG_ERROR(error_msg);
         return Error::InternalError;
     }
     out_rim_document.m_rim_data = rim_data;
@@ -70,10 +77,18 @@ Error RimDocument::create_from_rim_data(const std::string &rim_data, RimDocument
     return Error::Ok;
 }
 
-Error RimDocument::create_from_file (const std::string &rim_path, RimDocument& out_rim_document) {
+Error RimDocument::create_from_file(const std::string &rim_path, RimDocument& out_rim_document) {
     std::ifstream file(rim_path);
     std::string rim_data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     return create_from_rim_data(rim_data, out_rim_document);
+}
+
+void RimDocument::set_rim_id(const std::string& rim_id) { 
+    m_rim_id = rim_id;
+}
+
+std::string RimDocument::get_rim_id() const {
+    return m_rim_id.empty() ? "[unknown]" : m_rim_id;
 }
 
 RimDocument::RimDocument(nv_unique_ptr<xmlDoc> doc, const std::string& rim_data) {
@@ -236,24 +251,27 @@ Error RimDocument::verify_signature() const {
 }
 
 Error RimDocument::generate_rim_claims(const EvidencePolicy& evidence_policy, IOcspHttpClient& ocsp_client, RimClaims& out_rim_claims) const {
-    // Get certificate chain
-    X509CertChain cert_chain;
-    Error error = get_cert_chain(cert_chain);
-    if (error != Error::Ok) {
-        return error;
+    Error error{};
+    if (evidence_policy.verify_rim_cert_chain) {
+        X509CertChain cert_chain;
+        error = get_cert_chain(cert_chain);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to read cert chain from RIM with id " << get_rim_id());
+            return error;
+        }
+        
+        error = cert_chain.generate_cert_chain_claims(evidence_policy.ocsp_options, ocsp_client, out_rim_claims.m_cert_chain_claims);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to generate certificate chain claims for RIM with id " << get_rim_id());
+            return error;
+        }
     }
     
-    // Generate certificate chain claims
-    error = cert_chain.generate_cert_chain_claims(evidence_policy.ocsp_options, ocsp_client, out_rim_claims.m_cert_chain_claims);
-    if (error != Error::Ok) {
-        return error;
-    }
-    
-    // Verify signature
     if (evidence_policy.verify_rim_signature) {
         LOG_DEBUG("Verifying RIM signature");
         error = verify_signature();
         if (error != Error::Ok) {
+            LOG_ERROR("Failed to verify signature of RIM with id " << get_rim_id());
             return error;
         }
         out_rim_claims.m_signature_verified = true;
@@ -425,7 +443,8 @@ Error RimDocument::get_manufacturer_id(std::string& out_manufacturer_id) const {
     return Error::Ok;
 }
 
-// RimClient functions
+// IRimStore implementations
+
 NvRemoteRimStoreImpl::NvRemoteRimStoreImpl(const std::string &server_host) {
     m_base_url = server_host;
 }
@@ -455,19 +474,19 @@ static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, voi
 Error NvRemoteRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_rim_document) {
     
    std::string url = m_base_url + "/v1/rim/" + rim_id;
-   LOG_TRACE("Getting RIM from URL: " << url);
+   LOG_DEBUG("Getting RIM from URL: " << url);
 
     NvRequest request(url, NvHttpMethod::HTTP_METHOD_GET);
     long http_code = 0;
     std::string response;
     Error error = m_http_client.do_request_as_string(request, http_code, response);
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to get RIM from RIM server");
+        LOG_ERROR("Failed to download RIM from " << url);
         return error;
     }
 
     if (http_code != NvHttpStatus::HTTP_STATUS_OK) {
-        LOG_ERROR("Non-200 response from RIM server. http_code: " << http_code << " http_response: " << response);
+        LOG_ERROR("Non-200 response from " << url);
         if (http_code == NvHttpStatus::HTTP_STATUS_NOT_FOUND) {
             return Error::RimNotFound;
         }
@@ -492,7 +511,14 @@ Error NvRemoteRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_
         return Error::InternalError;
     }
 
-    return extract_rim_document(rim_response.rim, out_rim_document);
+    error = extract_rim_document(rim_response.rim, out_rim_document);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to deserialize RIM response");
+        return error;
+    }
+
+    out_rim_document.set_rim_id(rim_id);
+    return Error::Ok;
 }
 
 Error NvRemoteRimStoreImpl::extract_rim_document(const std::string &rim_response_data, RimDocument& out_rim_document) {
@@ -510,6 +536,52 @@ Error NvRemoteRimStoreImpl::extract_rim_document(const std::string &rim_response
     }
     out_rim_document = std::move(rim_document);
     return Error::Ok;
+}
+
+
+Error FilesystemRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_rim_document) {
+    Error err{};
+    if (!path_exists(path)) {
+        LOG_ERROR("Filesystem RIM path does not exist: " << path);
+        return Error::RimNotFound;
+    }
+    if(!path_is_directory(path)) {
+        LOG_ERROR("Filesystem RIM path is not a directory: " << path);
+        return Error::RimNotFound;
+    }
+    auto tcg_path = path_join(path, rim_id + TCG_EXT);
+    LOG_DEBUG("Searching for TCG RIM file: " << tcg_path);
+
+    // search for TCG first, then CoRIM
+
+    if (path_exists(tcg_path)) {
+        std::string rim_data;
+        err = readFileIntoString(tcg_path, rim_data);
+        if (err != Error::Ok) {
+            LOG_ERROR("Failed to read content of TCG RIM file: " << tcg_path);
+            return err;
+        }
+
+        err = RimDocument::create_from_rim_data(rim_data, out_rim_document);
+        if (err != Error::Ok) {
+            LOG_ERROR("Failed to read TCG RIM from file");
+            return Error::InternalError;
+        }
+        out_rim_document.set_rim_id(rim_id);
+        return Error::Ok;
+    } 
+    LOG_DEBUG("TCG RIM not found");
+
+    auto corim_path = path_join(path, rim_id + CORIM_EXT);
+    LOG_DEBUG("Searching for CoRIM file: " << corim_path);
+    if (path_exists(corim_path)) {
+        LOG_ERROR("CoRIMs are not supported yet");
+        return Error::InternalError;
+    }
+
+    LOG_ERROR("Failed to find RIM file in folder: " << path
+              << "\nChecked: " << tcg_path << ", " << corim_path);
+    return Error::RimNotFound;
 }
 
 InMemoryCachingRimStoreImpl::InMemoryCachingRimStoreImpl(std::shared_ptr<IRimStore> inner_client, uint64_t max_size_bytes, time_t ttl_seconds) {

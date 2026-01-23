@@ -281,11 +281,11 @@ nvat_rc_t nvat_apply_relying_party_policy(nvat_relying_party_policy_t policy, co
     bool cpp_match = false;
     Error err = (*cpp_policy)->evaluate_claims(*cpp_claims, cpp_match);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to evaluate claims");
+        LOG_ERROR("Failed to evaluate claims");
         return nvat_rc_from_cpp(err);
     }
     if (!cpp_match) {
-        LOG_ERROR("claims do not match relying party policy");
+        LOG_ERROR("Claims do not match relying party policy");
         return NVAT_RC_RP_POLICY_MISMATCH;
     }
     return NVAT_RC_OK;
@@ -307,7 +307,7 @@ nvat_rc_t nvat_ocsp_client_create_default(nvat_ocsp_client_t* out_client, const 
     const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
     Error err = NvHttpOcspClient::init_from_env(client, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create OCSP client");
+        LOG_ERROR("Failed to create OCSP client");
         return nvat_rc_from_cpp(err);
     }
     
@@ -332,7 +332,7 @@ nvat_rc_t nvat_ocsp_client_create_cached(nvat_ocsp_client_t* out_client, const n
     std::shared_ptr<IOcspHttpClient> out_client_ptr;
     Error err = NvHttpOcspCacheClient::create(inner_client_ptr, max_size_bytes, ttl_seconds, out_client_ptr);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create cached OCSP client");
+        LOG_ERROR("Failed to create cached OCSP client");
         return nvat_rc_from_cpp(err);
     }
     std::shared_ptr<IOcspHttpClient>* client_ptr = new std::shared_ptr<IOcspHttpClient>(out_client_ptr);
@@ -376,12 +376,10 @@ nvat_rc_t nvat_rim_store_create_filesystem(nvat_rim_store_t* out_store, const ch
         LOG_ERROR("base_path is null");
         return NVAT_RC_BAD_ARGUMENT;
     }
-    
-    // TODO: uncomment when we have a filesystem implementation
-    // std::string path = base_path;
-    // auto store = make_unique<FilesystemRimStoreImpl>(path);
-    // *out_store = nvat_rim_store_from_cpp(store.release());
-    return NVAT_RC_INTERNAL_ERROR;
+
+    auto store = std::make_unique<shared_ptr<IRimStore>>(std::make_shared<FilesystemRimStoreImpl>(base_path));
+    *out_store = nvat_rim_store_from_cpp(store.release());
+    return NVAT_RC_OK;
     NVAT_C_API_END
 }
 
@@ -580,7 +578,7 @@ nvat_rc_t nvat_attestation_ctx_set_gpu_evidence_source_json_file(nvat_attestatio
     auto* cpp_ctx = nvat_attestation_ctx_to_cpp(ctx);
     Error err = cpp_ctx->set_gpu_evidence_source_json_file(cpp_file_path);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to set GPU evidence source from JSON file");
+        LOG_ERROR("Failed to set GPU evidence source from JSON file");
         return nvat_rc_from_cpp(err);
     }
     return NVAT_RC_OK;
@@ -602,7 +600,7 @@ nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attesta
     auto* cpp_ctx = nvat_attestation_ctx_to_cpp(ctx);
     Error err = cpp_ctx->set_switch_evidence_source_json_file(cpp_file_path);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to set switch evidence source from JSON file");
+        LOG_ERROR("Failed to set switch evidence source from JSON file");
         return nvat_rc_from_cpp(err);
     }
     return NVAT_RC_OK;
@@ -667,7 +665,7 @@ nvat_rc_t nvat_attest_device(
         err = cpp_ctx->attest_device({}, cpp_detached_eat, claims_collection);
     }
     if (err != Error::Ok && err != Error::OverallResultFalse && err != Error::RelyingPartyPolicyMismatch) {
-        LOG_ERROR("error while performing system attestation");
+        LOG_ERROR("Error while performing device attestation");
         return nvat_rc_from_cpp(err);
     }
     if (out_claims != nullptr) {
@@ -695,7 +693,7 @@ nvat_rc_t nvat_nonce_create(nvat_nonce_t* out_nonce, size_t length) {
     }
     Error err = generate_nonce(*nonce);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to generate nonce of " << length << " bytes");
+        LOG_ERROR("Failed to generate nonce of " << length << " bytes");
         return nvat_rc_from_cpp(err);
     }
     *out_nonce = nvat_nonce_from_cpp(nonce.release());
@@ -779,6 +777,28 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
     NVAT_C_API_END
 }
 
+nvat_rc_t nvat_gpu_evidence_source_from_json_string(nvat_gpu_evidence_source_t* out_source, const char* json_string) {
+    NVAT_C_API_BEGIN
+    if (out_source == nullptr) {
+        LOG_ERROR("out_source is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (json_string == nullptr) {
+        LOG_ERROR("json_string is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    GpuEvidenceSourceFromJsonString gpu_evidence_source;
+    Error err = GpuEvidenceSourceFromJsonString::create(json_string, gpu_evidence_source);
+    if (err != Error::Ok) {
+        LOG_ERROR("Failed to create GPU evidence source from JSON string");
+        return nvat_rc_from_cpp(err);
+    }
+    std::unique_ptr<std::shared_ptr<IGpuEvidenceSource>> gpu_evidence_source_ptr = make_unique<std::shared_ptr<IGpuEvidenceSource>>(make_shared<GpuEvidenceSourceFromJsonString>(std::move(gpu_evidence_source)));
+    *out_source = nvat_gpu_evidence_source_from_cpp(gpu_evidence_source_ptr.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* out_source, const char* file_path) {
     NVAT_C_API_BEGIN
     if (out_source == nullptr) {
@@ -792,7 +812,7 @@ nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* ou
     GpuEvidenceSourceFromJsonFile gpu_evidence_source;
     Error err = GpuEvidenceSourceFromJsonFile::create(file_path, gpu_evidence_source);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create GPU evidence source from JSON file");
+        LOG_ERROR("Failed to create GPU evidence source from JSON file");
         return nvat_rc_from_cpp(err);
     }
     std::unique_ptr<std::shared_ptr<IGpuEvidenceSource>> gpu_evidence_source_ptr = make_unique<std::shared_ptr<IGpuEvidenceSource>>(make_shared<GpuEvidenceSourceFromJsonFile>(std::move(gpu_evidence_source)));
@@ -829,7 +849,7 @@ nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, con
     } else {
         Error err = generate_nonce(local_nonce);
         if (err != Error::Ok) {
-            LOG_ERROR("failed to generate nonce of " << GPU_SPDM_REQ_NONCE_SIZE << " bytes");
+            LOG_ERROR("Failed to generate nonce of " << GPU_SPDM_REQ_NONCE_SIZE << " bytes");
             return nvat_rc_from_cpp(err);
         }
         cpp_nonce_ptr = &local_nonce;
@@ -838,7 +858,7 @@ nvat_rc_t nvat_gpu_evidence_collect(const nvat_gpu_evidence_source_t source, con
     vector<std::shared_ptr<GpuEvidence>> evidence_list{};
     Error err = cpp_source->get_evidence(*cpp_nonce_ptr, evidence_list);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to collect GPU evidence");
+        LOG_ERROR("Failed to collect GPU evidence");
         return nvat_rc_from_cpp(err);
     }
 
@@ -884,7 +904,7 @@ nvat_rc_t nvat_gpu_evidence_serialize_json(
     auto json_string = make_unique<std::string>();
     Error err = GpuEvidence::collection_to_json(cpp_evidences, *json_string);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to serialize GPU evidence as JSON");
+        LOG_ERROR("Failed to serialize GPU evidence as JSON");
         return nvat_rc_from_cpp(err);
     }
     *out_serialized_evidence = nvat_str_from_cpp(json_string.release());
@@ -906,6 +926,28 @@ nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t*
     NVAT_C_API_END
 }
 
+nvat_rc_t nvat_switch_evidence_source_from_json_string(nvat_switch_evidence_source_t* out_source, const char* json_string) {
+    NVAT_C_API_BEGIN
+    if (out_source == nullptr) {
+        LOG_ERROR("out_source is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (json_string == nullptr) {
+        LOG_ERROR("json_string is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    SwitchEvidenceSourceFromJsonString switch_evidence_source;
+    Error err = SwitchEvidenceSourceFromJsonString::create(json_string, switch_evidence_source);
+    if (err != Error::Ok) {
+        LOG_ERROR("Failed to create switch evidence source from JSON string");
+        return nvat_rc_from_cpp(err);
+    }
+    std::unique_ptr<std::shared_ptr<ISwitchEvidenceSource>> switch_evidence_source_ptr = make_unique<std::shared_ptr<ISwitchEvidenceSource>>(make_shared<SwitchEvidenceSourceFromJsonString>(std::move(switch_evidence_source)));
+    *out_source = nvat_switch_evidence_source_from_cpp(switch_evidence_source_ptr.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_switch_evidence_source_from_json_file(nvat_switch_evidence_source_t* out_source, const char* file_path) {
     NVAT_C_API_BEGIN
     if (out_source == nullptr) {
@@ -919,7 +961,7 @@ nvat_rc_t nvat_switch_evidence_source_from_json_file(nvat_switch_evidence_source
     SwitchEvidenceSourceFromJsonFile switch_evidence_source;
     Error err = SwitchEvidenceSourceFromJsonFile::create(file_path, switch_evidence_source);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create switch evidence source from JSON file");
+        LOG_ERROR("Failed to create switch evidence source from JSON file");
         return nvat_rc_from_cpp(err);
     }
     std::unique_ptr<std::shared_ptr<ISwitchEvidenceSource>> switch_evidence_source_ptr = make_unique<std::shared_ptr<ISwitchEvidenceSource>>(make_shared<SwitchEvidenceSourceFromJsonFile>(std::move(switch_evidence_source)));
@@ -953,7 +995,7 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
     } else {
         Error err = generate_nonce(local_nonce);
         if (err != Error::Ok) {
-            LOG_ERROR("failed to generate nonce of " << SWITCH_SPDM_REQ_NONCE_SIZE << " bytes");
+            LOG_ERROR("Failed to generate nonce of " << SWITCH_SPDM_REQ_NONCE_SIZE << " bytes");
             return nvat_rc_from_cpp(err);
         }
         cpp_nonce_ptr = &local_nonce;
@@ -962,7 +1004,7 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
     std::vector<std::shared_ptr<SwitchEvidence>> cpp_collection;
     Error error = cpp_source->get_evidence(*cpp_nonce_ptr, cpp_collection);
     if (error != Error::Ok) {
-        LOG_ERROR("failed to collect nvswitch evidence");
+        LOG_ERROR("Failed to collect nvswitch evidence");
         return nvat_rc_from_cpp(error);
     }
     
@@ -1003,7 +1045,7 @@ nvat_rc_t nvat_switch_evidence_serialize_json(
     auto json_string = make_unique<std::string>();
     Error err = SwitchEvidence::collection_to_json(cpp_collection, *json_string);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to serialize switch evidence as JSON");
+        LOG_ERROR("Failed to serialize switch evidence as JSON");
         return nvat_rc_from_cpp(err);
     }
     *out_serialized_evidence = nvat_str_from_cpp(json_string.release());
@@ -1027,7 +1069,7 @@ nvat_rc_t nvat_claims_serialize_json(const nvat_claims_t claims, nvat_str_t* out
     auto json_string = make_unique<std::string>();
     Error err = cpp_claims->serialize_json(*json_string);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to serialize claims as JSON");
+        LOG_ERROR("Failed to serialize claims as JSON");
         return nvat_rc_from_cpp(err);
     }
     *out_serialized_claims = nvat_str_from_cpp(json_string.release());
@@ -1049,7 +1091,7 @@ nvat_rc_t nvat_claims_collection_serialize_json(const nvat_claims_collection_t c
     auto json_string = make_unique<std::string>();
     Error err = cpp_claims->serialize_json(*json_string);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to serialize claims as JSON");
+        LOG_ERROR("Failed to serialize claims as JSON");
         return nvat_rc_from_cpp(err);
     }
     *out_serialized_claims = nvat_str_from_cpp(json_string.release());
@@ -1116,7 +1158,7 @@ nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, con
     auto detached_eat = make_unique<std::string>();
     Error err = cpp_claims->get_detached_eat(*detached_eat, cpp_options);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to get detached EAT");
+        LOG_ERROR("Failed to get detached EAT");
         return nvat_rc_from_cpp(err);
     }
     *out_detached_eat = nvat_str_from_cpp(detached_eat.release());
@@ -1136,23 +1178,23 @@ nvat_rc_t nvat_evidence_policy_create_default(nvat_evidence_policy_t* out_policy
     NVAT_C_API_END
 }
 
-void nvat_evidence_policy_set_ocsp_allow_cert_hold(nvat_evidence_policy_t policy, bool allow_cert_hold) {
+void nvat_evidence_policy_set_verify_rim_signature(nvat_evidence_policy_t policy, bool verify_rim_signature) {
     NVAT_C_API_BEGIN
     if (policy == nullptr) {
         return;
     }
     EvidencePolicy* cpp_policy = nvat_evidence_policy_to_cpp(policy);
-    cpp_policy->ocsp_options.set_allow_cert_hold(allow_cert_hold);
+    cpp_policy->verify_rim_signature = verify_rim_signature;
     NVAT_C_API_END_VOID
 }
 
-void nvat_evidence_policy_set_ocsp_check_nonce(nvat_evidence_policy_t policy, bool check_nonce) {
+void nvat_evidence_policy_set_verify_rim_cert_chain(nvat_evidence_policy_t policy, bool verify_rim_cert_chain) {
     NVAT_C_API_BEGIN
     if (policy == nullptr) {
         return;
     }
     EvidencePolicy* cpp_policy = nvat_evidence_policy_to_cpp(policy);
-    cpp_policy->ocsp_options.set_nonce_enabled(check_nonce);
+    cpp_policy->verify_rim_cert_chain = verify_rim_cert_chain;
     NVAT_C_API_END_VOID
 }
 
@@ -1205,7 +1247,7 @@ nvat_rc_t nvat_gpu_nras_verifier_create(nvat_gpu_nras_verifier_t* out_verifier, 
     NvRemoteGpuVerifier verifier;
     Error err = NvRemoteGpuVerifier::init_from_env(verifier, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create NRAS client");
+        LOG_ERROR("Failed to create NRAS client");
         return nvat_rc_from_cpp(err);
     }
 
@@ -1230,7 +1272,7 @@ nvat_rc_t nvat_switch_nras_verifier_create(nvat_switch_nras_verifier_t* out_veri
     const std::string cpp_service_key = service_key != nullptr ? std::string(service_key) : "";
     Error err = NvRemoteSwitchVerifier ::init_from_env(verifier, base_url, cpp_service_key, cpp_http_options);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create NRAS client");
+        LOG_ERROR("Failed to create NRAS client");
         return nvat_rc_from_cpp(err);
     }
 
@@ -1273,7 +1315,7 @@ nvat_rc_t nvat_gpu_local_verifier_create(
         detached_eat_cpp_options
     );
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create local GPU verifier");
+        LOG_ERROR("Failed to create local GPU verifier");
         return nvat_rc_from_cpp(err);
     }
     auto verifier_ptr = make_unique<LocalGpuVerifier>(verifier);
@@ -1315,7 +1357,7 @@ nvat_rc_t nvat_switch_local_verifier_create(
         detached_eat_cpp_options
     );
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create local switch verifier");
+        LOG_ERROR("Failed to create local switch verifier");
         return nvat_rc_from_cpp(err);
     }
     auto verifier_ptr = make_unique<LocalSwitchVerifier>(verifier);
@@ -1385,17 +1427,18 @@ nvat_rc_t nvat_verify_gpu_evidence(
         cpp_detached_eat = &cpp_detached_eat_str;
     }
     Error err = cpp_verifier->verify_evidence(cpp_evidences, *cpp_policy, cpp_detached_eat, cpp_claims);
-    if (err != Error::Ok) {
-        LOG_ERROR("failed to verify GPU evidence");
+    if (err == Error::Ok || err == Error::OverallResultFalse) {
+        auto claims_ptr = make_unique<ClaimsCollection>(std::move(cpp_claims));
+        *out_claims = nvat_claims_collection_from_cpp(claims_ptr.release());
+        if (out_detached_eat != nullptr) {
+            *out_detached_eat = nvat_str_from_cpp(new std::string(cpp_detached_eat_str));
+        }
         return nvat_rc_from_cpp(err);
     }
 
-    auto claims_ptr = make_unique<ClaimsCollection>(std::move(cpp_claims));
-    *out_claims = nvat_claims_collection_from_cpp(claims_ptr.release());
-    if (out_detached_eat != nullptr) {
-        *out_detached_eat = nvat_str_from_cpp(new std::string(cpp_detached_eat_str));
-    }
-    return NVAT_RC_OK;
+    LOG_ERROR("failed to verify GPU evidence");
+    return nvat_rc_from_cpp(err);
+
     NVAT_C_API_END
 }
 
@@ -1444,16 +1487,18 @@ nvat_rc_t nvat_verify_switch_evidence(
         cpp_detached_eat = &cpp_detached_eat_str;
     }
     Error err = cpp_verifier->verify_evidence(cpp_evidences, *cpp_policy, cpp_detached_eat, cpp_claims);
-    if (err != Error::Ok) {
-        LOG_ERROR("failed to verify switch evidence");
+    if (err == Error::Ok || err == Error::OverallResultFalse) {
+        auto claims_ptr = make_unique<ClaimsCollection>(std::move(cpp_claims));
+        *out_claims = nvat_claims_collection_from_cpp(claims_ptr.release());
+        if (out_detached_eat != nullptr) {
+            *out_detached_eat = nvat_str_from_cpp(new std::string(cpp_detached_eat_str));
+        }
         return nvat_rc_from_cpp(err);
     }
+    
+    LOG_ERROR("failed to verify switch evidence");
+    return nvat_rc_from_cpp(err);
 
-    auto claims_ptr = make_unique<ClaimsCollection>(std::move(cpp_claims));
-    *out_claims = nvat_claims_collection_from_cpp(claims_ptr.release());
-    if (out_detached_eat != nullptr) {
-        *out_detached_eat = nvat_str_from_cpp(new std::string(cpp_detached_eat_str));
-    }
     return NVAT_RC_OK;
     NVAT_C_API_END
 }

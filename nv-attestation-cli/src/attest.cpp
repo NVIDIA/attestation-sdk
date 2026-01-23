@@ -28,10 +28,10 @@
 
 namespace nvattest {
 
-    AttestOutput::AttestOutput(const int result_code)
+    AttestOutput::AttestOutput(const nvat_rc_t result_code)
         : result_code(result_code), claims(""), detached_eat("") {}
 
-    AttestOutput::AttestOutput(const int result_code, const std::string& claims, const std::string& detached_eat)
+    AttestOutput::AttestOutput(const nvat_rc_t result_code, const std::string& claims, const std::string& detached_eat)
         : result_code(result_code), claims(claims), detached_eat(detached_eat) {}
     
     nlohmann::json AttestOutput::to_json() const {
@@ -57,7 +57,6 @@ namespace nvattest {
                 SPDLOG_ERROR("Failed to parse detached EAT as JSON. Detached EAT: {}", detached_eat);
                 detached_eat_json = nlohmann::json::object();
             }
-            
         }
     
         nlohmann::json attest_output = nlohmann::json::object();
@@ -74,7 +73,12 @@ namespace nvattest {
         EvidenceVerificationOptions& evidence_verification_options,
         EvidencePolicyOptions& evidence_policy_options) {
 
-        auto* subcommand = app.add_subcommand("attest", "Run attestation and print results as JSON");
+        auto* subcommand = app.add_subcommand("attest");
+        subcommand->description( 
+            "Run end-to-end attestation against a given device. \n\n"
+            "Results are printed to standard out. "
+            "Control output format through the global --format option."
+        );
 
         add_evidence_collection_options(subcommand, evidence_collection_options);
         add_evidence_verification_options(subcommand, evidence_verification_options);
@@ -125,6 +129,7 @@ namespace nvattest {
 
 
     AttestOutput attest(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const EvidenceVerificationOptions& evidence_verification_options,
         const EvidencePolicyOptions& evidence_policy_options,
@@ -132,38 +137,7 @@ namespace nvattest {
 
         nvat_rc_t err;
 
-
-        nv_unique_ptr<nvat_sdk_opts_t> opts;
-        nvat_sdk_opts_t raw_opts = nullptr;
-        err = nvat_sdk_opts_create(&raw_opts);
-        if (err != NVAT_RC_OK) {
-            return AttestOutput(err);
-        }
-        opts.reset(&raw_opts);
-
-        nvat_logger_t logger = nullptr;
-        nvat_log_level_t log_level_nvat = NVAT_LOG_LEVEL_OFF;
-        if (common_options.log_level == "trace") {
-            log_level_nvat = NVAT_LOG_LEVEL_TRACE;
-        } else if (common_options.log_level == "debug") {
-            log_level_nvat = NVAT_LOG_LEVEL_DEBUG;
-        } else if (common_options.log_level == "info") {
-            log_level_nvat = NVAT_LOG_LEVEL_INFO;
-        } else if (common_options.log_level == "warn") {
-            log_level_nvat = NVAT_LOG_LEVEL_WARN;
-        } else if (common_options.log_level == "error") {
-            log_level_nvat = NVAT_LOG_LEVEL_ERROR;
-        }
-        err = nvat_logger_spdlog_create(&logger, "nvattest", log_level_nvat);
-        if (err != NVAT_RC_OK) {
-            return AttestOutput(err);
-        }
-        nvat_sdk_opts_set_logger(*(opts.get()), logger);
-        nvat_logger_free(&logger);
-
-        // todo (p1): in case more subcommands are added which required SDK init, 
-        // refactor this whole thing to a common function
-        err = nvat_sdk_init(*(opts.get()));
+        err = init_sdk(logger, common_options);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
         }
@@ -181,6 +155,9 @@ namespace nvattest {
             return AttestOutput(err);
         }
         evidence_policy.reset(raw_policy);
+        nvat_evidence_policy_set_verify_rim_signature(evidence_policy.get(), evidence_policy_options.verify_rim_signature);
+        nvat_evidence_policy_set_verify_rim_cert_chain(evidence_policy.get(), evidence_policy_options.verify_rim_cert_chain);
+
         nvat_evidence_policy_t policy_handle = evidence_policy.release();
         err = nvat_attestation_ctx_set_evidence_policy(*(ctx.get()), &policy_handle);
         if (err != NVAT_RC_OK) {
@@ -193,25 +170,28 @@ namespace nvattest {
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
+
+            if (evidence_collection_options.gpu_evidence_source == "file") {
+                err = nvat_attestation_ctx_set_gpu_evidence_source_json_file(*(ctx.get()), evidence_collection_options.gpu_evidence_file.c_str());
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
+            }
+            // default to NVML
+            
         } else if (evidence_collection_options.device == "nvswitch") {
             err = nvat_attestation_ctx_set_device_type(*(ctx.get()), NVAT_DEVICE_NVSWITCH);
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
-        }
 
-        if (!evidence_verification_options.gpu_evidence.empty()) {
-            err = nvat_attestation_ctx_set_gpu_evidence_source_json_file(*(ctx.get()), evidence_verification_options.gpu_evidence.c_str());
-            if (err != NVAT_RC_OK) {
-                return AttestOutput(err);
+            if (evidence_collection_options.switch_evidence_source == "file") {
+                err = nvat_attestation_ctx_set_switch_evidence_source_json_file(*(ctx.get()), evidence_collection_options.switch_evidence_file.c_str());
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
             }
-        }
-
-        if (!evidence_verification_options.switch_evidence.empty()) {
-            err = nvat_attestation_ctx_set_switch_evidence_source_json_file(*(ctx.get()), evidence_verification_options.switch_evidence.c_str());
-            if (err != NVAT_RC_OK) {
-                return AttestOutput(err);
-            }
+            // default to NSCQ
         }
 
         if (!evidence_verification_options.service_key.empty()) {
@@ -221,15 +201,26 @@ namespace nvattest {
             }
         }
 
-        // Configure service endpoints if provided
-        if (!evidence_verification_options.rim_url.empty()) {
-            std::string rim_base = evidence_verification_options.rim_url;
+        // Configure RIM store 
+        if (evidence_verification_options.verifier == "local") {
             nv_unique_ptr<nvat_rim_store_t> rim_store;
             nvat_rim_store_t rim_store_raw = nullptr;
-            const char* service_key_cstr = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
-            err = nvat_rim_store_create_remote(&rim_store_raw, rim_base.c_str(), service_key_cstr, nullptr);
-            if (err != NVAT_RC_OK) {
-                return AttestOutput(err);
+            if (evidence_verification_options.rim_store == "remote") {
+                auto rim_url = evidence_verification_options.rim_url.c_str();
+                auto service_key = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
+                err = nvat_rim_store_create_remote(&rim_store_raw, rim_url, service_key, nullptr);
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
+            } else if (evidence_verification_options.rim_store == "dir") {
+                auto rim_dir = evidence_verification_options.rim_path.c_str();
+                err = nvat_rim_store_create_filesystem(&rim_store_raw, rim_dir);
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
+            } else {
+                // unreachable
+                return AttestOutput(NVAT_RC_BAD_ARGUMENT);
             }
             rim_store.reset(&rim_store_raw);
             err = nvat_attestation_ctx_set_default_rim_store(*(ctx.get()), *(rim_store.get()));
@@ -325,18 +316,180 @@ namespace nvattest {
 
     }
 
+    void print_device_claims(const std::string& claims_json) {
+        SPDLOG_CRITICAL("Devices: ");
+        if (claims_json.empty()) {
+            SPDLOG_CRITICAL("[no device claims]");
+            return;
+        }
+
+        nlohmann::json claims;
+        try {
+            claims = nlohmann::json::parse(claims_json);
+        } catch (...) {
+            SPDLOG_CRITICAL("[failed to parse device JSON claims]");
+            return;
+        }
+
+        auto get_string = [](const nlohmann::json& j, const std::string& key) -> std::string {
+            if (j.contains(key)) {
+                if (j[key].is_string()) {
+                    std::string value = j[key].get<std::string>();
+                    return value == "" ? "[blank]" : value;
+                }
+                if (j[key].is_null()) {
+                    return "[not set]";
+                }
+            }
+            return "[unknown]";
+        };
+
+        auto string_key_not_blank = [](const nlohmann::json& j, const std::string& key) -> bool {
+            return j.contains(key) && j[key].is_string() && !j[key].get<std::string>().empty();
+        };
+
+        auto print_cert_chain = [&get_string, &string_key_not_blank](
+            const nlohmann::json& device_claims,
+            const std::string& key,
+            const std::string& label
+        ) {
+            if (!device_claims.contains(key)) {
+                return;
+            }
+            const auto& cert_chain = device_claims[key];
+            if (!cert_chain.is_object()) {
+                SPDLOG_CRITICAL("    {}: [invalid]", label);
+                return;
+            }
+            std::string status = get_string(cert_chain, "x-nvidia-cert-status");
+            std::string ocsp_status = get_string(cert_chain, "x-nvidia-cert-ocsp-status");
+            std::string expiration = get_string(cert_chain, "x-nvidia-cert-expiration-date");
+
+            SPDLOG_CRITICAL("    {}:", label);
+            SPDLOG_CRITICAL("        Status: {}, OCSP: {}", status, ocsp_status);
+            SPDLOG_CRITICAL("        Expires: {}", expiration);
+            if (string_key_not_blank(cert_chain,  "x-nvidia-cert-revocation-reason")) {
+                std::string revocation = get_string(cert_chain, "x-nvidia-cert-revocation-reason");
+                SPDLOG_CRITICAL("        Revocation Reason: {}", revocation);
+            }
+        };
+
+        if (!claims.is_array()) {
+            SPDLOG_CRITICAL("[expected array of device claims]");
+            return;
+        }
+
+        for (size_t idx = 0; idx < claims.size(); ++idx) {
+            const nlohmann::json& device_claims = claims[idx];
+
+            if (!device_claims.is_object()) {
+                SPDLOG_CRITICAL("- Device {}: [invalid claims format]", idx);
+                continue;
+            }
+
+            SPDLOG_CRITICAL("- Device {}:", idx);
+
+            std::string device_type = get_string(device_claims, "x-nvidia-device-type");
+            std::string hwmodel = get_string(device_claims, "hwmodel");
+            std::string ueid = get_string(device_claims, "ueid");
+
+            SPDLOG_CRITICAL("    Device Type: {}", device_type);
+            SPDLOG_CRITICAL("    Hardware Model: {}", hwmodel);
+            SPDLOG_CRITICAL("    UEID: {}", ueid);
+
+            bool is_gpu = (device_type == "gpu");
+            bool is_switch = (device_type == "nvswitch");
+
+            if (is_gpu) {
+                std::string vbios_version = get_string(device_claims, "x-nvidia-gpu-vbios-version");
+                SPDLOG_CRITICAL("    VBIOS Version: {}", vbios_version);
+
+                std::string driver_version = get_string(device_claims, "x-nvidia-gpu-driver-version");
+                SPDLOG_CRITICAL("    Driver Version: {}", driver_version);
+            } else if (is_switch) {
+                std::string bios_version = get_string(device_claims, "x-nvidia-switch-bios-version");
+                SPDLOG_CRITICAL("    BIOS Version: {}", bios_version);
+            }
+
+            std::string measres = get_string(device_claims, "measres");
+            SPDLOG_CRITICAL("    Measurement Result: {}", measres);
+
+            if (is_gpu && string_key_not_blank(device_claims, "x-nvidia-gpu-mode")) {
+                std::string gpu_mode = get_string(device_claims, "x-nvidia-gpu-mode");
+                SPDLOG_CRITICAL("    GPU Mode: {}", gpu_mode);
+            }
+
+            if (is_gpu) {
+                print_cert_chain(device_claims, "x-nvidia-gpu-attestation-report-cert-chain", "Attestation Report Cert Chain");
+                print_cert_chain(device_claims, "x-nvidia-gpu-driver-rim-cert-chain", "Driver RIM Cert Chain");
+                print_cert_chain(device_claims, "x-nvidia-gpu-vbios-rim-cert-chain", "VBIOS RIM Cert Chain");
+            } else if (is_switch) {
+                print_cert_chain(device_claims, "x-nvidia-switch-attestation-report-cert-chain", "Attestation Report Cert Chain");
+                print_cert_chain(device_claims, "x-nvidia-switch-bios-rim-cert-chain", "BIOS RIM Cert Chain");
+            }
+
+            if (device_claims.contains("x-nvidia-mismatch-measurement-records")) {
+                const auto& mismatches = device_claims["x-nvidia-mismatch-measurement-records"];
+                if (mismatches.is_array()) {
+                    if (!mismatches.empty()) {
+                        SPDLOG_CRITICAL("    Measurement Mismatches ({}):", mismatches.size());
+                        for (const auto& mismatch : mismatches) {
+                            if (!mismatch.is_object()) {
+                                SPDLOG_CRITICAL("      - [invalid mismatch record]");
+                                continue;
+                            }
+
+                            uint32_t index = mismatch.contains("index") && mismatch["index"].is_number()
+                                ? mismatch["index"].get<uint32_t>() : 0;
+                            std::string source = mismatch.contains("measurementSource") && mismatch["measurementSource"].is_string()
+                                ? mismatch["measurementSource"].get<std::string>() : "unknown";
+                            std::string golden = mismatch.contains("goldenValue") && mismatch["goldenValue"].is_string()
+                                ? mismatch["goldenValue"].get<std::string>() : "N/A";
+                            std::string runtime = mismatch.contains("runtimeValue") && mismatch["runtimeValue"].is_string()
+                                ? mismatch["runtimeValue"].get<std::string>() : "N/A";
+
+                            SPDLOG_CRITICAL("      - Index {}: source={}", index, source);
+                            SPDLOG_CRITICAL("          Golden:  {}", golden);
+                            SPDLOG_CRITICAL("          Runtime: {}", runtime);
+                        }
+                    }
+                } else if (mismatches.is_null()) {
+                    // no mismatches - null
+                } else {
+                    SPDLOG_CRITICAL("    Measurement Mismatches: [invalid record]");
+                }
+            } else {
+                // no mismatches - no claim
+            }
+        }
+        SPDLOG_CRITICAL("");
+    }
+
+
 
     int handle_attest_subcommand(
+        CliLogger& logger,
         const EvidenceCollectionOptions& evidence_collection_options,
         const EvidenceVerificationOptions& evidence_verification_options,
         const EvidencePolicyOptions& evidence_policy_options,
         const CommonOptions& common_options) {
 
-        AttestOutput attest_output = attest(evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
+        AttestOutput output = attest(logger, evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
         nvat_sdk_shutdown();
 
-        auto json = attest_output.to_json();
-        std::cout << json.dump(4) << std::endl;
-        return attest_output.result_code;
+        if(common_options.format == "text") {
+            print_device_claims(output.claims);
+            if (output.result_code == NVAT_RC_OK) {
+                SPDLOG_INFO("{} attestation was successful", evidence_collection_options.pretty_device());
+            } else {
+                SPDLOG_CRITICAL("");
+                SPDLOG_CRITICAL("{} attestation failed!", evidence_collection_options.pretty_device());
+                print_error_help(logger, output.result_code);
+            }
+        } else if (common_options.format == "json") {
+            auto json = output.to_json();
+            std::cout << json.dump(4) << std::endl;
+        }
+        return output.result_code;
     }
 }

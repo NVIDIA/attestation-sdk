@@ -33,17 +33,46 @@ inline std::string get_env_or_default(const char* name, const char* default_valu
     return std::string(env_val);
 }
 
+inline int get_git_repo_root(std::string& out_git_repo_root) {
+    std::string git_cmd = "git rev-parse --show-toplevel 2>/dev/null";
+    FILE* pipe = popen(git_cmd.c_str(), "r");
+    if (pipe) {
+        char buffer[1024];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            std::string repo_root = std::string(buffer);
+            if (!repo_root.empty() && repo_root.back() == '\n') {
+                repo_root.pop_back();
+            }
+            out_git_repo_root = repo_root;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 class Environment : public ::testing::Environment {
     public:
-        std::string test_mode; // "unit" or "integration"
-        bool test_device_gpu;
-        bool test_device_switch;
+        std::string test_mode=""; // "unit" or "integration"
+        bool test_device_gpu=false;
+        bool test_device_switch=false;
         std::string service_key = "";
+        std::string rim_url = "";
+        std::string ocsp_url = "";
+        std::string nras_url = "";
+        std::string nvattest_bin = "";
+        std::string test_label = "";
+        std::string git_repo_root = "";
 
         ~Environment() override = default;
         
         void SetUp() override {
+            nvattest_bin = get_env_or_default("NVATTEST_BIN", "../nvattest");
             test_mode = get_env_or_default("TEST_MODE", "unit");
+            test_label = get_env_or_default("NVAT_CLI_TEST_LABEL", "");
+            if (test_label.empty()) {
+                std::cerr << "NVAT_CLI_TEST_LABEL environment variable is not set or empty" << std::endl;
+                exit(1);
+            }
             std::string test_devices_env = get_env_or_default("TEST_DEVICES", "");
             std::stringstream ss(test_devices_env);
             std::string device;
@@ -69,6 +98,15 @@ class Environment : public ::testing::Environment {
 
             service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
             ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
+
+            rim_url = get_env_or_default("NVAT_RIM_URL", "https://rim-internal.attestation.nvidia.com/internal");
+            ocsp_url = get_env_or_default("NVAT_OCSP_URL", "https://ocsp.ndis-stg.nvidia.com");
+            nras_url = get_env_or_default("NVAT_NRAS_URL", "https://nras.attestation-stg.nvidia.com");
+
+            if (get_git_repo_root(git_repo_root) != 0) {
+                std::cerr << "Failed to get git repository root" << std::endl;
+                exit(1);
+            }
         }
 
         void TearDown() override {

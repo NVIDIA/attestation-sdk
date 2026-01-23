@@ -109,7 +109,7 @@ Error GpuParsedOpaqueFieldData::create(const std::vector<std::array<uint8_t, Gpu
 
 Error GpuParsedOpaqueFieldData::get_byte_vector(const std::vector<uint8_t>*& out_data) const {
     if (m_active_type != GpuParsedFieldType::BYTE_VECTOR) {
-        LOG_ERROR("Invalid field type for get_byte_vector. Expected BYTE_VECTOR, got " << to_string(m_active_type));
+        LOG_DEBUG("Invalid field type for get_byte_vector. Expected BYTE_VECTOR, got " << to_string(m_active_type));
         return Error::SpdmFieldNotFound;
     }
     out_data = &m_byte_data;
@@ -118,7 +118,7 @@ Error GpuParsedOpaqueFieldData::get_byte_vector(const std::vector<uint8_t>*& out
 
 Error GpuParsedOpaqueFieldData::get_uint32_vector(const std::vector<uint32_t>*& out_data) const {
     if (m_active_type != GpuParsedFieldType::UINT32_VECTOR) {
-        LOG_ERROR("Invalid field type for get_uint32_vector. Expected UINT32_VECTOR, got " << to_string(m_active_type));
+        LOG_DEBUG("Invalid field type for get_uint32_vector. Expected UINT32_VECTOR, got " << to_string(m_active_type));
         return Error::SpdmFieldNotFound;
     }
     out_data = &m_uint32_data;
@@ -127,7 +127,7 @@ Error GpuParsedOpaqueFieldData::get_uint32_vector(const std::vector<uint32_t>*& 
 
 Error GpuParsedOpaqueFieldData::get_pdi_vector(const std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>*& out_data) const {
     if (m_active_type != GpuParsedFieldType::PDI_VECTOR) {
-        LOG_ERROR("Invalid field type for get_pdi_vector. Expected PDI_VECTOR, got " << to_string(m_active_type));
+        LOG_DEBUG("Invalid field type for get_pdi_vector. Expected PDI_VECTOR, got " << to_string(m_active_type));
         return Error::SpdmFieldNotFound;
     }
     out_data = &m_pdi_data;
@@ -239,7 +239,7 @@ Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaq
 Error GpuOpaqueDataParser::get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const {
     auto it = m_fields.find(type);
     if (it == m_fields.end()) {
-        LOG_ERROR("GpuOpaqueDataParser::get_field: Field not found: " << to_string(type));
+        LOG_DEBUG("GpuOpaqueDataParser::get_field: Field not found: " << to_string(type));
         return Error::SpdmFieldNotFound;
     }
     out_field = &it->second;

@@ -21,6 +21,7 @@
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/switch/evidence.h"
 #include "nv_attestation/verify.h"
+#include "nvat.h.in"
 
 namespace nvattestation {
 
@@ -127,6 +128,8 @@ Error LocalSwitchVerifier::set_switch_evidence_claims(const SwitchEvidenceClaims
     out_serializable_claims.m_ar_cert_chain_claims.m_cert_status = to_string(switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.status);
     out_serializable_claims.m_ar_cert_chain_claims.m_cert_ocsp_status = to_string(switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.status);
     out_serializable_claims.m_ar_cert_chain_claims.m_cert_revocation_reason = switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
+    out_serializable_claims.m_ar_cert_chain_claims.m_ocsp_nonce_matches = switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
+    out_serializable_claims.m_ar_cert_chain_claims.m_ocsp_response_valid = switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
 
     out_serializable_claims.m_ar_cert_chain_fwid_match = switch_evidence_claims.m_attestation_report_claims.m_fwid_match;
     out_serializable_claims.m_ar_parsed = switch_evidence_claims.m_attestation_report_claims.m_parsed;
@@ -149,7 +152,9 @@ Error LocalSwitchVerifier::set_vbios_rim_claims(const RimDocument& vbios_rim, co
     out_serializable_claims.m_bios_rim_cert_chain.m_cert_status = to_string(vbios_rim_claims.m_cert_chain_claims.status);
     out_serializable_claims.m_bios_rim_cert_chain.m_cert_ocsp_status = to_string(vbios_rim_claims.m_cert_chain_claims.ocsp_claims.status);
     out_serializable_claims.m_bios_rim_cert_chain.m_cert_revocation_reason = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
-    
+    out_serializable_claims.m_bios_rim_cert_chain.m_ocsp_nonce_matches = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
+    out_serializable_claims.m_bios_rim_cert_chain.m_ocsp_response_valid = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
+
     out_serializable_claims.m_bios_rim_signature_verified = vbios_rim_claims.m_signature_verified;
 
     return Error::Ok;
@@ -212,7 +217,7 @@ Error LocalSwitchVerifier::generate_set_measurement_claims(const Measurements& g
         out_serializable_claims.m_debug_status = nullptr;
         // sanity check 
         if (mismatched_measurements.empty()) {
-            LOG_ERROR("golden measurements (either driver or vbios) do not match runtime measurements, but mismatched records are empty");
+            LOG_ERROR("Golden measurements (either driver or vbios) do not match runtime measurements, but mismatched records are empty");
             return Error::InternalError;
         }
         out_serializable_claims.m_mismatched_measurements = std::make_shared<std::vector<SerializableMismatchedMeasurements>>(mismatched_measurements);
@@ -283,9 +288,6 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
         return error;
     }
     std::unordered_map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
-    if (evidence_policy.ocsp_options.get_allow_cert_hold()) {
-        headers["X-NVIDIA-OCSP-ALLOW-CERT-HOLD"] = "true";
-    }
     NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, headers, request_payload);
 
     long status = 0;
@@ -311,7 +313,8 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
 
     std::vector<uint8_t> eat_nonce;
     std::unordered_map<std::string, std::string> claims;
-    error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims);
+    bool overall_result = true;
+    error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims, overall_result);
     if (error != Error::Ok) {
         return error;
     }
@@ -323,9 +326,18 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
 
     out_claims = std::vector<std::shared_ptr<Claims>>();
     for(const auto&claim_item : claims) {
+        nlohmann::json nras_claims;
+        Error error = deserialize_from_json(claim_item.second, nras_claims);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to deserialize NRAS claims");
+            return error;
+        }
+        error = handle_nras_error_claim(nras_claims, NVAT_DEVICE_NVSWITCH, evidence_policy);
+        if (error != Error::Ok) {
+            return error;
+        }
         SerializableSwitchClaimsV3 claims_obj;
-        LOG_DEBUG("Deserializing claims: " << claim_item.second);
-        error = deserialize_from_json<SerializableSwitchClaimsV3>(claim_item.second, claims_obj);
+        error = deserialize_from_json_object(nras_claims, claims_obj);
         if (error != Error::Ok) {
             return error;
         }
@@ -334,17 +346,14 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
 
     if (out_detached_eat != nullptr) {
         *out_detached_eat = attest_response_str;
-        for (size_t i=0;i<out_claims.size();i++) {
-            bool overall_result = true;
-            Error err = out_claims[i]->get_overall_result(overall_result);
-            if (err != Error::Ok) {
-                return err;
-            }
-            if (!overall_result) {
-                return Error::OverallResultFalse;
-            }
-        }
     }
+
+    if (!overall_result) {
+        LOG_WARN("Overall result is false");
+        LOG_TRACE("Detached EAT: \n" << attest_response_str);
+        return Error::OverallResultFalse;
+    }
+
     return Error::Ok;
     
 }

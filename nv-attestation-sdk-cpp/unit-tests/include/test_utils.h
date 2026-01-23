@@ -44,7 +44,8 @@ using ::testing::Invoke;
 // Mock evidence data class containing test constants
 const std::unordered_map<std::string, std::string> evidence_to_nonce_map = {
     {"hopper_590_12", "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576"},
-    {"hopper_latest", "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576"}
+    {"hopper_latest", "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576"},
+    {"hopper_570_86_cert_hold", "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"}
 };
 class MockGpuEvidenceData {
 public:
@@ -116,8 +117,6 @@ inline Error get_mock_gpu_evidence(const MockGpuEvidenceData& mock_data, std::ve
         mock_data.architecture,
         mock_data.board_id,
         mock_data.uuid,
-        mock_data.vbios_version,
-        mock_data.driver_version,
         attestation_report_data,
         attestation_cert_chain_str,
         nonce_bytes

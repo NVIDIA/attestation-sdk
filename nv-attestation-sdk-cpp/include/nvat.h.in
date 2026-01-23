@@ -419,7 +419,7 @@ typedef struct nvat_ocsp_client_st* nvat_ocsp_client_t;
  * @param base_url If NULL, the default base URL of the NVIDIA OCSP Response is used.
  * @param http_options If NULL, default HTTP options will be used.
  * 
- * URL can also be set using the NVAT_OCSP_RESPONSE_BASE_URL environment variable.
+ * URL can also be set using the NVAT_OCSP_BASE_URL environment variable.
  */
 nvat_rc_t nvat_ocsp_client_create_default(
     nvat_ocsp_client_t* out_client,
@@ -475,7 +475,6 @@ typedef struct nvat_rim_store_st* nvat_rim_store_t;
  * URL can also be set using the NVAT_RIM_SERVICE_BASE_URL environment variable.
  * 
  */
- // TODO(p2): auth
 nvat_rc_t nvat_rim_store_create_remote(
     nvat_rim_store_t* out_store,
     const char* base_url,
@@ -483,9 +482,16 @@ nvat_rc_t nvat_rim_store_create_remote(
     const nvat_http_options_t http_options
 );
 
-// TODO(p0): add docs on the folder layout
 /**
  * @brief Create a RIM store backed by the local filesystem.
+ * 
+ * `base_path` must be a path to a directory containing RIM files.
+ * The RIMs encoding is determined by the extension of the file (.xml, .corim).
+ * When a RIM lookup by occurs, the store will check for the following files:
+ * - `{rim_id}.xml`
+ * - `{rim_id}.corim`
+ *
+ * If neither exists, the store will give up.
  *
  * **Ownership**: On success, the caller assumes ownership of the allocated
  *                @ref nvat_rim_store_t.
@@ -593,8 +599,7 @@ typedef struct nvat_gpu_evidence_source_st* nvat_gpu_evidence_source_t;
 nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_source);
 
 /**
- * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
- *        source file. The source file must be a JSON file with the following schema: 
+ * @brief Create a @ref nvat_gpu_evidence_source from a JSON string with the following schema: 
  * ```json
  * {
  *   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -602,11 +607,6 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
  *   "items": {
  *     "type": "object",
  *     "properties": {
- *       "version": {
- *         "type": "string",
- *         "description": "The version of the evidence format.",
- *         "enum": ["1.0"]
- *       },
  *       "arch": {
  *         "type": "string",
  *         "description": "The GPU architecture of the evidence.",
@@ -615,16 +615,6 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
  *       "nonce": {
  *         "type": "string",
  *         "description": "The nonce used to collect the evidence.",
- *         "format": "hex"
- *       },
- *       "vbios_version": {
- *         "type": "string",
- *         "description": "The version of the BIOS.",
- *         "format": "hex"
- *       },
- *       "driver_version": {    
- *         "type": "string",
- *         "description": "The version of the driver.",
  *         "format": "hex"
  *       },
  *       "evidence": {
@@ -642,9 +632,18 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
  * }
  * ```
  * @param out_source A pointer to the evidence source that will return the evidence from the file.
+ * @param json_string JSON formatted GPU evidence
+ */
+nvat_rc_t nvat_gpu_evidence_source_from_json_string(nvat_gpu_evidence_source_t* out_source, const char* json_string);
+
+/**
+ * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
+ *        source file. The source file must be a JSON file with the above schema.
+ * 
+ * @param out_source A pointer to the evidence source that will return the evidence from the file.
  * @param file_path The path to the file to deserialize the evidence from.
  */
-// TODO: should this be a buffer instead?
+
 nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* out_source, const char* file_path);
 
 void      nvat_gpu_evidence_source_free(nvat_gpu_evidence_source_t* gpu_evidence_source);
@@ -733,11 +732,6 @@ nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t*
  *   "items": {
  *     "type": "object",
  *     "properties": {
- *       "version": {
- *         "type": "string",
- *         "description": "The version of the evidence format.",
- *         "enum": ["1.0"]
- *       },
  *       "arch": {
  *         "type": "string",
  *         "description": "The switch architecture of the evidence.",
@@ -762,10 +756,19 @@ nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t*
  *   }
  * }
  * ```
+ * @param out_source A pointer to the evidence source that will return the evidence from the JSON string.
+ * @param json_string JSON formatted GPU evidence
+ */
+nvat_rc_t nvat_switch_evidence_source_from_json_string(nvat_switch_evidence_source_t* out_source, const char* json_string);
+
+/**
+ * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
+ *        source file. The source file must be a JSON file with the above schema.
+ * 
  * @param out_source A pointer to the evidence source that will return the evidence from the file.
  * @param file_path The path to the file to deserialize the evidence from.
  */
-// TODO: should this be a buffer instead?
+
 nvat_rc_t nvat_switch_evidence_source_from_json_file(nvat_switch_evidence_source_t* out_source, const char* file_path);
 
 void      nvat_switch_evidence_source_free(nvat_switch_evidence_source_t* switch_evidence_source);
@@ -870,7 +873,6 @@ nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, con
  */
 typedef struct nvat_evidence_policy_st* nvat_evidence_policy_t;
 
-#define NVAT_GPU_CLAIMS_VERSION_V2 (2)
 #define NVAT_GPU_CLAIMS_VERSION_V3 (3)
 typedef uint8_t nvat_gpu_claims_version_t;
 
@@ -890,25 +892,24 @@ nvat_rc_t nvat_evidence_policy_create_default(nvat_evidence_policy_t* policy);
 void nvat_evidence_policy_free(nvat_evidence_policy_t* evidence_policy);
 
 /**
- * @brief Whether to allow certificate hold revocations.
+ * @brief Whether to verify the signatures on RIM files.
  * 
- * RIM certificates revoked with the reason CERTIFICATE_HOLD indicate that the
- * corresponding driver and/or firmware is a early-access software.
+ * Allows users to bypass RIM signature verification for testing.
+ * Only supported for local verification.
+ * If not set, defaults to `true`.
+ * **Do not use in production deployments.**
  */
-void nvat_evidence_policy_set_ocsp_allow_cert_hold(nvat_evidence_policy_t policy, bool allow_cert_hold);
+void nvat_evidence_policy_set_verify_rim_signature(nvat_evidence_policy_t policy, bool verify_rim_signature);
 
 /**
- * @brief Whether to check OCSP nonces.
- *
- * An OCSP nonce is used to guarantee the freshness of the revocation status
- * returned by an OCSP server.
- * Disabling the nonce is available for high-performance use cases that rely
- * on cached OCSP responses.
+ * @brief Whether to verify RIM file certificate chains.
  * 
- * Enabling OCSP over HTTPS is highly recommended if the nonce is disabled as
- * this can partially mitigate the risk of OCSP replay attacks.
+ * Allows users to bypass RIM certificate chian verification for testing.
+ * Only supported for local verification.
+ * If not set, defaults to `true`.
+ * **Do not use in production deployments.**
  */
-void nvat_evidence_policy_set_ocsp_check_nonce(nvat_evidence_policy_t policy, bool check_nonce);
+void nvat_evidence_policy_set_verify_rim_cert_chain(nvat_evidence_policy_t policy, bool verify_rim_cert_chain);
 
 /**
  * @brief Set the expected claims version for GPU attestation results.
@@ -1317,7 +1318,7 @@ void nvat_attestation_ctx_free(nvat_attestation_ctx_t* attestation_ctx);
  *     to the @ref nvat_attestation_ctx_t.
  * 
  * \verbatim embed:rst:leading-asterisk
- * See for more info about configuring the attestation process: :ref:`Configuring attestation <configuring-relying-part-policy>`.
+ * See for more info about configuring the attestation process: :ref:`Configuring attestation <configuring-attestation>`.
  * See here for claims schema: :ref:`Claims schema <claims-schema>`
  * \endverbatim
  */

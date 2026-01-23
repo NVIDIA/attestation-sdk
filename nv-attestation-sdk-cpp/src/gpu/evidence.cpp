@@ -84,11 +84,8 @@ void to_json(json& out_json, const GpuEvidence& evidence) {
         throw std::runtime_error("Failed to encode attestation cert chain to base64");
     }
     out_json = json{
-        {"version", "1.0"},
         {"arch", to_string(evidence.get_gpu_architecture())},
         {"nonce", evidence.get_hex_nonce()},
-        {"vbios_version", evidence.get_vbios_version()},
-        {"driver_version", evidence.get_driver_version()},
         {"evidence", encoded_evidence},
         {"certificate", encoded_certificate},
     };
@@ -102,10 +99,6 @@ void to_json(json& out_json, const std::shared_ptr<GpuEvidence>& evidence) {
 }
 
 void from_json(const json& json, GpuEvidence& out_evidence) {
-    std::string version = json.at("version").get<std::string>();
-    if (version != "1.0") {
-        throw std::runtime_error("Unsupported version: " + version);
-    }
     std::string arch_str = json.at("arch").get<std::string>();
     GpuArchitecture architecture = GpuArchitecture::Unknown;
     from_string(arch_str, architecture);
@@ -117,12 +110,6 @@ void from_json(const json& json, GpuEvidence& out_evidence) {
     std::string nonce_str = json.at("nonce").get<std::string>();
     std::vector<uint8_t> nonce = hex_string_to_bytes(nonce_str);
     out_evidence.set_nonce(nonce);
-
-    std::string vbios_version = json.at("vbios_version").get<std::string>();
-    out_evidence.set_vbios_version(vbios_version);
-
-    std::string driver_version = json.at("driver_version").get<std::string>();
-    out_evidence.set_driver_version(driver_version);
 
     std::string evidence_base64 = json.at("evidence").get<std::string>();
     std::vector<uint8_t> attestation_report;
@@ -207,18 +194,6 @@ Error GpuEvidence::generate_gpu_evidence_claims(const GpuEvidence::AttestationRe
     error = attestation_report.get_vbios_version(out_gpu_evidence_claims.m_vbios_version);
     if (error != Error::Ok) {
         return error;
-    }
-
-    std::string driver_version_from_nvml = get_driver_version();
-    if (driver_version_from_nvml != out_gpu_evidence_claims.m_driver_version) {
-        LOG_ERROR("Driver RIM version mismatch: driver rim version from NVML: " << driver_version_from_nvml << " != gpu evidence driver version: " << out_gpu_evidence_claims.m_driver_version);
-        return Error::GpuEvidenceDriverRimVersionMismatch;
-    }
-
-    std::string vbios_version_from_nvml = get_vbios_version();
-    if (vbios_version_from_nvml != out_gpu_evidence_claims.m_vbios_version) {
-        LOG_ERROR("VBIOS RIM version mismatch: vbios rim version from NVML: " << vbios_version_from_nvml << " != gpu evidence vbios version: " << out_gpu_evidence_claims.m_vbios_version);
-        return Error::GpuEvidenceVbiosRimVersionMismatch;
     }
 
     GpuArchitectureData arch_data;
@@ -464,6 +439,7 @@ Error GpuEvidence::AttestationReport::get_driver_rim_id(GpuArchitecture architec
             return error;
         }
         std::string chip_type_string(chip_info_data->begin(), chip_info_data->end());
+        remove_null_terminators(chip_type_string);
         LOG_TRACE("Chip type string: " << chip_type_string);
         out_driver_rim_id = "NV_GPU_CC_DRIVER_" + chip_type_string + "_" + driver_version;
     } else {
@@ -625,6 +601,31 @@ std::string GpuEvidence::get_hex_nonce() const {
     return to_hex_string(m_nonce);
 }
 
+Error GpuEvidenceSourceFromJsonString::create(const std::string& json_string, GpuEvidenceSourceFromJsonString& out_source) {
+    // deserialize the evidence from the string
+    LOG_TRACE("Deserializing gpu evidence from JSON string");
+    Error error = GpuEvidence::collection_from_json(json_string, out_source.m_evidence);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to deserialize gpu evidence from JSON string");
+        return error;
+    }
+    LOG_TRACE("Deserialized num gpu evidence: " << out_source.m_evidence.size());
+    return Error::Ok;
+}
+
+Error GpuEvidenceSourceFromJsonString::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const {
+    for (const auto& evidence_item : m_evidence) {
+        if (evidence_item->get_nonce() != nonce_input) {
+            LOG_ERROR("Nonce from GPU evidence does not match the nonce used for attestation.");
+            LOG_ERROR("Nonce from GPU evidence: " << to_hex_string(evidence_item->get_nonce()) << " Nonce used for attestation: " << to_hex_string(nonce_input));
+            LOG_ERROR("Does the nonce from serialized evidence JSON file match the nonce used for attestation?");
+            return Error::GpuEvidenceNonceMismatch;
+        }
+    }
+    out_evidence = m_evidence;
+    return Error::Ok;
+}
+
 Error GpuEvidenceSourceFromJsonFile::create(const std::string& file_path, GpuEvidenceSourceFromJsonFile& out_source) {
     // read all the contents of the file into a string
     if (file_path.empty()) {
@@ -639,29 +640,18 @@ Error GpuEvidenceSourceFromJsonFile::create(const std::string& file_path, GpuEvi
         return error;
     }
 
-    // deserialize the evidence from the string
+    // Create the internal json string source
     LOG_TRACE("Deserializing gpu evidence from file: " << file_path);
-    error = GpuEvidence::collection_from_json(file_contents, out_source.m_evidence);
+    error = GpuEvidenceSourceFromJsonString::create(file_contents, out_source.m_string_source);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to deserialize gpu evidence from file: " << file_path);
         return error;
     }
-    LOG_TRACE("Deserialized num gpu evidence: " << out_source.m_evidence.size());
     return Error::Ok;
-
 }
 
 Error GpuEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const {
-    for (const auto& evidence_item : m_evidence) {
-        if (evidence_item->get_nonce() != nonce_input) {
-            LOG_ERROR("Nonce from GPU evidence does not match the nonce used for attestation.");
-            LOG_ERROR("Nonce from GPU evidence: " << to_hex_string(evidence_item->get_nonce()) << " Nonce used for attestation: " << to_hex_string(nonce_input));
-            LOG_ERROR("Does the nonce from serialized evidence JSON file match the nonce used for attestation?");
-            return Error::GpuEvidenceNonceMismatch;
-        }
-    }
-    out_evidence = m_evidence;
-    return Error::Ok;
+    return m_string_source.get_evidence(nonce_input, out_evidence);
 }
 
 
@@ -700,8 +690,6 @@ std::ostream& operator<<(std::ostream& os, const GpuEvidence& evidence) {
     os << "--- GPU Evidence ---" << std::endl;
     os << "GPU Architecture: " << to_string(evidence.get_gpu_architecture()) << std::endl;
     os << "Nonce: " << evidence.get_hex_nonce() << std::endl;
-    os << "VBios Version: " << evidence.get_vbios_version() << std::endl;
-    os << "Driver Version: " << evidence.get_driver_version() << std::endl;
     os << "Attestation Report: " << to_hex_string(evidence.get_attestation_report()) << std::endl;
     os << "Attestation Cert Chain: " << evidence.get_attestation_cert_chain() << std::endl;
     return os;

@@ -125,9 +125,26 @@ static std::string nscq_rc_to_string(nscq_rc_t rc) {
         return "NSCQ_RC_SUCCESS";
     }
     if (rc > 0) {
-        return "NSCQ_RC_WARNING(" + std::to_string(rc) + ")";
+        std::string desc = (rc == 1) ? "RDT init failure" : "Unknown";
+        return "NSCQ_RC_WARNING: " + desc + " (Code " + std::to_string(rc) + ")";
     }
-    return "NSCQ_RC_ERROR(" + std::to_string(rc) + ")";
+    std::string desc;
+    // NOLINTBEGIN(readability-magic-numbers)
+    switch (rc) {
+        case -1:   desc = "Not implemented"; break;
+        case -2:   desc = "Invalid UUID"; break;
+        case -3:   desc = "Resource not mountable"; break;
+        case -4:   desc = "Overflow"; break;
+        case -5:   desc = "Unexpected value"; break;
+        case -6:   desc = "Unsupported driver"; break;
+        case -7:   desc = "Driver error"; break;
+        case -8:   desc = "Timeout"; break;
+        case -127: desc = "External error"; break;
+        case -128: desc = "Unspecified"; break;
+        default:   desc = "Unknown"; break;
+    }
+    // NOLINTEND(readability-magic-numbers)
+    return "NSCQ_RC_ERROR: " + desc + " (Code " + std::to_string(rc) + ")";
 }
 
 template<typename T>

@@ -20,10 +20,20 @@
 #include <string>
 #include <cstdio>
 #include <array>
+#include <map>
 #include <sys/wait.h>
 #include "gtest/gtest.h"
+#include "environment.h"
+#include <nlohmann/json.hpp>
 
-class CliTest : public ::testing::Test {};
+class CliTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        if (g_cli_env->test_label != "requires-working-driver") {
+            GTEST_SKIP() << "Skipping: test_label is not 'requires_working_driver'";
+        }
+    }
+};
 
 inline std::string exec_and_capture_output(const std::string& command, int& exit_code) {
     std::array<char, 4096> buffer{};
@@ -66,4 +76,17 @@ inline bool extract_json_object(const std::string& input, std::string& json_out)
         }
     }
     return false;
+}
+
+inline std::map<std::string, nlohmann::json> index_claims_by_ueid(const nlohmann::json& claims_array) {
+    std::map<std::string, nlohmann::json> result;
+    if (!claims_array.is_array()) {
+        return result;
+    }
+    for (const auto& claim : claims_array) {
+        if (claim.contains("ueid") && claim["ueid"].is_string()) {
+            result[claim["ueid"].get<std::string>()] = claim;
+        }
+    }
+    return result;
 }

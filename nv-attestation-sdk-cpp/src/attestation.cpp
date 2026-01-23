@@ -92,7 +92,7 @@ Error AttestationContext::ensure_init() {
     }
 
     if (m_switch_enabled) {
-        LOG_DEBUG("switch attestation is enabled");
+        LOG_DEBUG("Switch attestation is enabled");
         if (m_switch_evidence_source == nullptr) {
             LOG_DEBUG("Switch evidence source not set. Will collect evidence using NSCQ.");
             m_switch_evidence_source = make_shared<NscqEvidenceCollector>();
@@ -209,7 +209,7 @@ Error AttestationContext::set_gpu_evidence_source_json_file(const std::string& f
     GpuEvidenceSourceFromJsonFile gpu_evidence_source;
     Error err = GpuEvidenceSourceFromJsonFile::create(file_path, gpu_evidence_source);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create GPU evidence source from JSON file");
+        LOG_ERROR("Failed to create GPU evidence source from JSON file");
         return err;
     }
     m_gpu_evidence_source = make_shared<GpuEvidenceSourceFromJsonFile>(std::move(gpu_evidence_source));
@@ -220,7 +220,7 @@ Error AttestationContext::set_switch_evidence_source_json_file(const std::string
     SwitchEvidenceSourceFromJsonFile switch_evidence_source;
     Error err = SwitchEvidenceSourceFromJsonFile::create(file_path, switch_evidence_source);
     if (err != Error::Ok) {
-        LOG_ERROR("failed to create switch evidence source from JSON file");
+        LOG_ERROR("Failed to create switch evidence source from JSON file");
         return err;
     }
     m_switch_evidence_source = make_shared<SwitchEvidenceSourceFromJsonFile>(std::move(switch_evidence_source));

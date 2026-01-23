@@ -179,6 +179,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_ocsp_status = to_string(driver_rim_claims.m_cert_chain_claims.ocsp_claims.status);
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_revocation_reason = driver_rim_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
         out_serializable_claims.m_driver_rim_signature_verified = driver_rim_claims.m_signature_verified;
+        out_serializable_claims.m_driver_rim_cert_chain.m_ocsp_nonce_matches = driver_rim_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
+        out_serializable_claims.m_driver_rim_cert_chain.m_ocsp_response_valid = driver_rim_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
 
         std::string oemid; 
         error = driver_rim_document.get_manufacturer_id(oemid);
@@ -205,6 +207,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_vbios_rim_cert_chain.m_cert_ocsp_status = to_string(vbios_rim_claims.m_cert_chain_claims.ocsp_claims.status);
         out_serializable_claims.m_vbios_rim_cert_chain.m_cert_revocation_reason = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
         out_serializable_claims.m_vbios_rim_signature_verified = vbios_rim_claims.m_signature_verified;
+        out_serializable_claims.m_vbios_rim_cert_chain.m_ocsp_nonce_matches = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
+        out_serializable_claims.m_vbios_rim_cert_chain.m_ocsp_response_valid = vbios_rim_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
 
         return Error::Ok;
     }
@@ -218,6 +222,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_ar_cert_chain.m_cert_status = to_string(gpu_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.status);
         out_serializable_claims.m_ar_cert_chain.m_cert_ocsp_status = to_string(gpu_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.status);
         out_serializable_claims.m_ar_cert_chain.m_cert_revocation_reason = gpu_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.revocation_reason;
+        out_serializable_claims.m_ar_cert_chain.m_ocsp_nonce_matches = gpu_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
+        out_serializable_claims.m_ar_cert_chain.m_ocsp_response_valid = gpu_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
 
         out_serializable_claims.m_ar_cert_chain_fwid_match = gpu_evidence_claims.m_attestation_report_claims.m_fwid_match;
         out_serializable_claims.m_ar_parsed = gpu_evidence_claims.m_attestation_report_claims.m_parsed;
@@ -369,7 +375,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             out_serializable_claims.m_debug_status = nullptr;
             // sanity check 
             if (mismatched_measurements.empty()) {
-                LOG_ERROR("golden measurements (either driver or vbios) do not match runtime measurements, but mismatched records are empty");
+                LOG_ERROR("Golden measurements (either driver or vbios) do not match runtime measurements, but mismatched records are empty");
                 return Error::InternalError;
             }
             out_serializable_claims.m_mismatched_measurements = std::make_shared<std::vector<SerializableMismatchedMeasurements>>(mismatched_measurements);
@@ -444,12 +450,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         NRASAttestRequestV4 attest_request;
         
-        // todo: is this ok? getting nonce from the first evidence item?
-        // all the evidence items should have the same nonce, right?
         attest_request.nonce = to_hex_string(evidence[0]->get_nonce());
         attest_request.arch = to_string(evidence[0]->get_gpu_architecture());
-        // todo: get claims version from evidence policy. add evidence policy to remote verifier. 
-        // will it need to send evidence policy to nras?
         attest_request.claims_version = to_string(GpuClaimsVersion::V3); 
         std::vector<std::pair<std::string, std::string>> evidence_list;
         for (const auto& evidence_item : evidence) {
@@ -474,9 +476,6 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             return error;
         }
         std::unordered_map<std::string, std::string> headers = {{"Content-Type", "application/json"}};
-        if (evidence_policy.ocsp_options.get_allow_cert_hold()) {
-            headers["X-NVIDIA-OCSP-ALLOW-CERT-HOLD"] = "true";
-        }
         NvRequest request(m_nras_url, NvHttpMethod::HTTP_METHOD_POST, headers, request_payload);
 
         long status = 0;
@@ -502,7 +501,8 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         std::vector<uint8_t> eat_nonce;
         std::unordered_map<std::string, std::string> claims;
-        error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims);
+        bool overall_result = true;
+        error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims, overall_result);
         if (error != Error::Ok) {
             return error;
         }
@@ -514,9 +514,21 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         out_claims = std::vector<std::shared_ptr<Claims>>();
         for (const auto &item : claims) {
-            SerializableGpuClaimsV3 claims_obj;
-            error = deserialize_from_json<SerializableGpuClaimsV3>(item.second, claims_obj);
+           
+            nlohmann::json nras_claims;
+            Error error = deserialize_from_json(item.second, nras_claims);
             if (error != Error::Ok) {
+                LOG_ERROR("Failed to deserialize NRAS claims: ");
+                return error;
+            }
+            error = handle_nras_error_claim(nras_claims, NVAT_DEVICE_GPU, evidence_policy);
+            if (error != Error::Ok) {
+                return error;
+            }
+            SerializableGpuClaimsV3 claims_obj;
+            error = deserialize_from_json_object(nras_claims, claims_obj);
+            if (error != Error::Ok) {
+                LOG_ERROR("Failed to deserialize NRAS claims");
                 return error;
             }
             out_claims.append(std::make_shared<SerializableGpuClaimsV3>(claims_obj));
@@ -524,16 +536,12 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         if (out_detached_eat != nullptr) {
             *out_detached_eat = attest_response_str;
-            for (size_t i=0;i<out_claims.size();i++) {
-                bool overall_result = true;
-                Error err = out_claims[i]->get_overall_result(overall_result);
-                if (err != Error::Ok) {
-                    return err;
-                }
-                if (!overall_result) {
-                    return Error::OverallResultFalse;
-                }
-            }
+        }
+
+        if (!overall_result) {
+            LOG_WARN("Overall result is false");
+            LOG_TRACE("Detached EAT: \n" << attest_response_str);
+            return Error::OverallResultFalse;
         }
 
         return Error::Ok;

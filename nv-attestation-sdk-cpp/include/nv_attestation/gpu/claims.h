@@ -78,7 +78,6 @@ class SerializableGpuClaimsV3 : public Claims {
         std::string m_mode;
         std::string m_version;
 
-        
 
         /**
          * @brief Constructs a GpuClaims object with default values.
@@ -99,7 +98,6 @@ class SerializableGpuClaimsV3 : public Claims {
         Error serialize_json(std::string& out_string) const override;
 
         Error get_nonce(std::string& out_nonce) const override;
-        Error get_overall_result(bool& out_result) const override;
         Error get_version(std::string& out_version) const override;
         Error get_device_type(std::string& out_device_type) const override;
 

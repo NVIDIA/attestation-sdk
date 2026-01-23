@@ -79,7 +79,6 @@ void to_json(json& out_json, const SwitchEvidence& evidence) {
         throw std::runtime_error("Failed to encode attestation cert chain to base64");
     }
     out_json = json{
-        {"version", "1.0"},
         {"arch", to_string(evidence.get_switch_architecture())},
         {"nonce", evidence.get_hex_nonce()},
         {"evidence", encoded_evidence},
@@ -95,10 +94,6 @@ void to_json(json& out_json, const std::shared_ptr<SwitchEvidence>& evidence) {
 }
 
 void from_json(const json& json, SwitchEvidence& out_evidence) {
-    std::string version = json.at("version").get<std::string>();
-    if (version != "1.0") {
-        throw std::runtime_error("Unsupported version: " + version);
-    }
     std::string arch_str = json.at("arch").get<std::string>();
     SwitchArchitecture architecture = SwitchArchitecture::Unknown;
     from_string(arch_str, architecture);
@@ -366,6 +361,7 @@ Error SwitchEvidence::AttestationReport::get_vbios_version(std::string& out_bios
         return error;
     }
     out_bios_version = std::string(bios_version_data->begin(), bios_version_data->end());
+    remove_null_terminators(out_bios_version);
     return Error::Ok;
 }
 
@@ -423,17 +419,19 @@ Error SwitchEvidence::AttestationReport::get_measurements(std::unordered_map<int
     return Error::Ok;
 }
 
-Error SwitchEvidenceSourceFromJsonFile::create(const std::string& file_path, SwitchEvidenceSourceFromJsonFile& out_source) {
-    std::string file_contents;
-    Error error = readFileIntoString(file_path, file_contents);
+Error SwitchEvidenceSourceFromJsonString::create(const std::string& json_string, SwitchEvidenceSourceFromJsonString& out_source) {
+    // deserialize the evidence from the string
+    LOG_TRACE("Deserializing switch evidence from JSON string");
+    Error error = SwitchEvidence::collection_from_json(json_string, out_source.m_evidence);
     if (error != Error::Ok) {
+        LOG_ERROR("Failed to deserialize switch evidence from JSON string");
         return error;
     }
-    LOG_DEBUG("Deserializing switch evidence from file: " << file_path);
-    return SwitchEvidence::collection_from_json(file_contents, out_source.m_evidence);
+    LOG_TRACE("Deserialized num switch evidence: " << out_source.m_evidence.size());
+    return Error::Ok;
 }
 
-Error SwitchEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) const {
+Error SwitchEvidenceSourceFromJsonString::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) const {
     for (const auto& evidence_item : m_evidence) {
         if (evidence_item->get_nonce() != nonce_input) {
             LOG_ERROR("Nonce from switch evidence does not match the nonce used for attestation.");
@@ -444,6 +442,33 @@ Error SwitchEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>&
     }
     out_evidence = m_evidence;
     return Error::Ok;
+}
+
+Error SwitchEvidenceSourceFromJsonFile::create(const std::string& file_path, SwitchEvidenceSourceFromJsonFile& out_source) {
+    // read all the contents of the file into a string
+    if (file_path.empty()) {
+        LOG_ERROR("File to read evidence is empty.");
+        return Error::BadArgument;
+    }
+
+    std::string file_contents;
+    Error error = readFileIntoString(file_path, file_contents);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    // Create the internal json string source
+    LOG_DEBUG("Deserializing switch evidence from file: " << file_path);
+    error = SwitchEvidenceSourceFromJsonString::create(file_contents, out_source.m_string_source);
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to deserialize switch evidence from file: " << file_path);
+        return error;
+    }
+    return Error::Ok;
+}
+
+Error SwitchEvidenceSourceFromJsonFile::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) const {
+    return m_string_source.get_evidence(nonce_input, out_evidence);
 }
 
 }

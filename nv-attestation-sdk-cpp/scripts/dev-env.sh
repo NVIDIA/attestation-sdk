@@ -3,11 +3,12 @@
 set -euo pipefail
 
 # --- Configuration ---
+readonly DOCKER_PLATFORM="linux/amd64"
 readonly IMAGE_NAME="nvattest-dev-image"
 readonly CONTAINER_NAME="nv-attest-dev-container"
 
 readonly PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-readonly MOUNT_TARGET_DIR="/attestation-sdk"
+readonly MOUNT_TARGET_DIR="/workspace"
 readonly DOCKERFILE_PATH="$PROJECT_ROOT/dev/Dockerfile"
 cd "$PROJECT_ROOT"
 
@@ -62,7 +63,7 @@ case "$COMMAND" in
         echo "[1/2] Building Docker image '$IMAGE_NAME'..."
         echo "      Using Dockerfile: $DOCKERFILE_PATH"
         echo "      Build context: $PROJECT_ROOT"
-        if docker build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" --platform linux/amd64 "$PROJECT_ROOT"; then
+        if docker build -t "$IMAGE_NAME" -f "$DOCKERFILE_PATH" --platform "$DOCKER_PLATFORM" "$PROJECT_ROOT"; then
             echo "      Image '$IMAGE_NAME' built successfully."
         else
             echo "Error: Docker image build failed." >&2
@@ -108,7 +109,7 @@ case "$COMMAND" in
             echo "Creating and starting new container '$CONTAINER_NAME' in detached mode..."
             # Use 'sleep infinity' to keep the container running in detached mode.
             # Users can attach with 'docker exec' or using the 'shell' command.
-            if docker run -d --network host --privileged --platform linux/amd64 --name "$CONTAINER_NAME" \
+            if docker run -d --network host --privileged --platform "$DOCKER_PLATFORM" --name "$CONTAINER_NAME" \
                    -v "$PROJECT_ROOT:$MOUNT_TARGET_DIR" \
                    "$IMAGE_NAME" sleep infinity; then
                 echo "Container started successfully."

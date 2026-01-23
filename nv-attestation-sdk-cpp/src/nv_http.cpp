@@ -118,10 +118,11 @@ namespace nvattestation {
         // todo (p0): make this thread local
         std::mt19937_64 rng{std::random_device{}()}; // for randomized backoff
         do {
+            bool is_last_attempt = cur_try == m_options.max_retry_count; // for logging only
             if (cur_try > 0) { // this is a retry
                 out_response.clear();
                 long full_jitter_backoff_ms = std::uniform_int_distribution<long>(0, backoff_ms)(rng);
-                LOG_DEBUG("Retrying with jittered backoff of " << full_jitter_backoff_ms << "ms (base: " << backoff_ms << "ms)");
+                LOG_TRACE("Retrying with jittered backoff of " << full_jitter_backoff_ms << "ms (base: " << backoff_ms << "ms)");
                 std::this_thread::sleep_for(std::chrono::milliseconds(full_jitter_backoff_ms));
                 backoff_ms *= 2;
                 backoff_ms = std::min(backoff_ms, m_options.max_backoff_ms);
@@ -129,6 +130,9 @@ namespace nvattestation {
             cur_try++;
             CURLcode curl_code = curl_easy_perform(curl_handle.get());
             if (curl_code != CURLE_OK) {
+                if (is_last_attempt) {
+                    LOG_ERROR("Final libcurl error: " << curl_easy_strerror(curl_code) << " (" << curl_code << ")");
+                }
                 if (curl_code == CURLE_COULDNT_CONNECT 
                     || curl_code == CURLE_COULDNT_RESOLVE_HOST
                     || curl_code == CURLE_OPERATION_TIMEDOUT) {
@@ -144,14 +148,18 @@ namespace nvattestation {
                 return Error::Ok; // true success, exit early
             }
             if (!is_http_retryable(out_status)) {
-                LOG_DEBUG("Non-retryable HTTP response code: " << out_status);
+                LOG_ERROR("Non-retryable HTTP response code: " << out_status);
                 return Error::Ok; // bad code, but cannot retry
             }
             // Technically OK because HTTP request succeeded.
             // Send another request to get a better response.
             last_error = Error::Ok; 
-            LOG_DEBUG("Retryable HTTP response code from server: " << out_status);
-            LOG_TRACE("Failed HTTP response body: " << out_response);
+            if (is_last_attempt) {
+                LOG_ERROR("Final HTTP status after retries: " << out_status);
+            } else {
+                LOG_DEBUG("Retryable HTTP response code from server: " << out_status);
+                LOG_DEBUG("Failed HTTP response body: " << out_response);
+            }
         } while (cur_try <= m_options.max_retry_count);
         LOG_ERROR("Gave up HTTP request after " << cur_try << " attempts");
         return last_error;

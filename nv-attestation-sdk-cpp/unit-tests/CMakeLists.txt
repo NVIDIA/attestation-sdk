@@ -1,9 +1,31 @@
 cmake_minimum_required(VERSION 3.11)
 project(nv-attestation-unit-tests)
 
+include(CTest)
+include(FetchContent)
+
+# Reuse SDK's in-repo Find-modules (not installed).
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+
 find_package(GTest REQUIRED)
+find_package(CURL REQUIRED)
+find_package(LibXml2 REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(xmlsec REQUIRED)
 
 option(SANITIZER "Select a sanitizer" OFF)
+
+# Unit-tests need internal rego headers from regorus in both build modes.
+# - Build-tree mode: SDK already fetched regorus; reuse it via inherited variables.
+# - Standalone mode: populate regorus source so headers are available.
+if(NOT DEFINED regorus_SOURCE_DIR)
+    FetchContent_Declare(
+        regorus
+        GIT_REPOSITORY https://github.com/microsoft/regorus.git
+        GIT_TAG regorus-v0.4.0
+    )
+    FetchContent_Populate(regorus)
+endif()
 
 add_executable(nv-attestation-unit-tests
     main.cpp
@@ -16,7 +38,6 @@ add_executable(nv-attestation-unit-tests
     nv_x509_test.cpp
     error_test.cpp
     gpu/evidence_test.cpp
-    gpu/claims_test.cpp
     gpu/verifier_test.cpp
     test_utils.cpp
     utils_test.cpp
@@ -43,17 +64,38 @@ if (SANITIZER)
     target_link_options(nv-attestation-unit-tests PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
 endif()
 
-include(FetchContent)
-
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
 FetchContent_MakeAvailable(json)
+
+# Fetch spdlog and fmt for header access only (nvat has them statically linked)
+FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 10.2.1
+)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+
+# Just populate to get source directories for headers (don't add to build)
+FetchContent_GetProperties(fmt)
+if(NOT fmt_POPULATED)
+    FetchContent_Populate(fmt)
+endif()
+
+FetchContent_GetProperties(spdlog)
+if(NOT spdlog_POPULATED)
+    FetchContent_Populate(spdlog)
+endif()
 
 find_package(jwt-cpp QUIET)
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # the unit tests can be built as part of the sdk (in which case it will 
     # link against the build tree) or it can be built standalone in which 
-    # case it will link against the installed version using cmake. 
+    # case it will link against the installed version by manually locating lib+header.
     # if running as standalone, we need to fetch jwt-cpp
     
     # ideally, in both the cases, we should be able to fetch content jwt-cpp
@@ -93,21 +135,39 @@ target_link_libraries(nv-attestation-unit-tests PRIVATE
     GTest::gtest
     GTest::gmock
     nlohmann_json::nlohmann_json
+    # Explicitly link deps needed to compile internal SDK headers (nvat deps are PRIVATE).
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    CURL::libcurl
+    LibXml2::LibXml2
+    xmlsec::xmlsec
+    xmlsec::xmlsec-openssl
     # link regarless of whether we are building as part of the sdk or standalone
     # if built as part of the sdk, the cmake in sdk will have 
     # made this available.
     own-jwt-cpp
 )
 
+# spdlog/fmt headers needed for compilation (nvat has them statically linked, no need to link again)
+target_include_directories(nv-attestation-unit-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${spdlog_SOURCE_DIR}/include
+    ${fmt_SOURCE_DIR}/include
+)
+
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # CMake file is being run on its own (standalone) - testing installed version of sdk
-    find_package(nvat REQUIRED)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/nvat_locate_installed.cmake")
+    nvat_locate_installed()
+
     target_link_libraries(nv-attestation-unit-tests PRIVATE nvat::nvat)
-    target_include_directories(nv-attestation-unit-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)  
 else()
     # CMake file is being invoked as part of subdirectory from another CMake file
     target_link_libraries(nv-attestation-unit-tests PRIVATE nvat)
-    target_include_directories(nv-attestation-unit-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../include)  
+    # Make build-tree test execution reliable via ctest without LD_LIBRARY_PATH.
+    set_target_properties(nv-attestation-unit-tests PROPERTIES
+        BUILD_RPATH "$<TARGET_FILE_DIR:nvat>"
+    )
 endif()
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata
@@ -115,4 +175,6 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata
 
 include(GoogleTest)
 
-gtest_discover_tests(nv-attestation-unit-tests PROPERTIES LABELS "unit")
+gtest_discover_tests(nv-attestation-unit-tests PROPERTIES LABELS "unit"
+    XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test-results
+)

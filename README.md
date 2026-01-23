@@ -1,7 +1,12 @@
 # NVIDIA Attestation SDK (NVAT)
 
 [![license](https://img.shields.io/badge/license-Apache%202.0-brightgreen.svg)](./LICENSE)
-![version](https://img.shields.io/badge/version-alpha-orange)
+[![docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/overview.html)
+[![downloads](https://img.shields.io/badge/downloads-latest-brightgreen.svg)](https://developer.nvidia.com/nvat-downloads)
+[![Issues](https://img.shields.io/github/issues/NVIDIA/attestation-sdk.svg)](https://github.com/NVIDIA/attestation-sdk/issues)
+[![Pull Requests](https://img.shields.io/github/issues-pr/NVIDIA/attestation-sdk.svg)](https://github.com/NVIDIA/attestation-sdk/pulls)
+[![Stars](https://img.shields.io/github/stars/NVIDIA/attestation-sdk?style=social)](https://github.com/NVIDIA/attestation-sdk/stargazers)
+[![Forks](https://img.shields.io/github/forks/NVIDIA/attestation-sdk?style=social)](https://github.com/NVIDIA/attestation-sdk/network/members)
 
 NVAT (**NV**IDIA **At**ttestation SDK)
 is an open-source C++ SDK that provides resources for implementing and
@@ -14,9 +19,8 @@ with more bindings to come.
 
 ## Project Status
 
-This project is the successor of the Python-based guest tools in [nvTrust](https://github.com/NVIDIA/nvtrust), providing utilities suitable for a broader range of environments and use-cases.
-
-**Note:** This project is in **Alpha**. While we strive to minimize breaking changes, the ABI and CLI may change before stabilization.
+This project is the successor of the Python-based guest tools in [nvTrust](https://github.com/NVIDIA/nvtrust).
+NVAT provides utilities suitable for a broader range of environments and use-cases.
 
 ## Components
 
@@ -39,25 +43,9 @@ See [Prerequisites](#prerequisites) above.
 
 1. Install the NVIDIA Management Library (NVML). See [Driver Installation](https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/index.html#ubuntu-installation-common).
 
-2. Install the Rust compiler. See [rustup](https://www.rust-lang.org/tools/install)
+2. Install `nvattest`. See [NVIDIA Attestation SDK Downloads](https://developer.nvidia.com/nvat-downloads).
 
-3. Install additional build dependencies:
-    ```shell
-    apt update && \
-    apt install cmake git pkg-config clang \
-        libcurl4-openssl-dev libssl-dev libxml2-dev \
-        libxmlsec1-dev libxmlsec1-openssl libspdlog-dev
-    ```
-
-4. Install the CLI:
-    ```shell
-    git clone https://github.com/NVIDIA/attestation-sdk.git
-    cd attestation-sdk/nv-attestation-cli
-    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build
-    cmake --install build
-    sudo ldconfig
-    ```
+For a source install, refer to the [CLI Introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/overview.html).
 
 ### Attestation
 

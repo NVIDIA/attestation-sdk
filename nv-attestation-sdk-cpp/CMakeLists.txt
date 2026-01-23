@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 0.1.0)
+project(nv-attestation VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING 
   "The C++ standard whose features are requested to build this target."
@@ -10,8 +10,21 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ON CACHE STRING
 
 option(BUILD_SHARED_LIBS "Default to shared libraries instead of static libraries" ON)
 option(BUILD_EXAMPLES "Whether to build executables in examples folder" OFF)
-option(BUILD_TESTING "Whether to build unit-tests and integration-tests" OFF)
+option(BUILD_TESTING "Whether to build unit-tests" OFF)
 option(SANITIZER "Select a sanitizer [thread|address|undefined|leak|OFF]" OFF)
+option(ENABLE_SCCACHE "Enable sccache" OFF)
+
+if (ENABLE_SCCACHE)
+    find_program(SCCACHE sccache REQUIRED)
+
+    set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE})
+
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.25")
+        set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+        cmake_policy(SET CMP0141 NEW)
+    endif()
+endif()
 
 include(CTest)
 include(GNUInstallDirs)
@@ -47,6 +60,10 @@ corrosion_import_crate(
   CRATE_TYPES "staticlib"
 )
 
+if (ENABLE_SCCACHE)
+  corrosion_set_env_vars(regorus_ffi "RUSTC_WRAPPER=${SCCACHE}")
+endif()
+
 set(JWT_DISABLE_PICOJSON ON CACHE BOOL "Disable picojson support in jwt-cpp")
 set(JWT_BUILD_EXAMPLES OFF CACHE BOOL "Disable building jwt-cpp examples")
 
@@ -74,11 +91,44 @@ target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(json)
 
+# Build fmt and spdlog as static libraries with PIC (needed for linking into shared libs)
+# Save current settings
+set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(CMAKE_POSITION_INDEPENDENT_CODE_SAVED ${CMAKE_POSITION_INDEPENDENT_CODE})
+
+# Force static build with PIC for both fmt and spdlog
+set(BUILD_SHARED_LIBS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Build fmt as static library (spdlog depends on it)
+set(FMT_INSTALL OFF CACHE BOOL "Don't install fmt headers" FORCE)
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG 10.2.1
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(fmt)
+
+# Build spdlog as static library using our fetched fmt
+set(SPDLOG_INSTALL OFF CACHE BOOL "Don't install spdlog headers" FORCE)
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "Build spdlog as static library" FORCE)
+FetchContent_Declare(
+  spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG v1.14.1
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(spdlog)
+
+# Restore original settings
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 
 find_package(CURL REQUIRED)
 find_package(LibXml2 REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(spdlog REQUIRED)
 find_package(xmlsec REQUIRED)
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
@@ -134,7 +184,7 @@ add_library(nvat
   src/nv_cache.cpp
 )
 
-set(NV_ATTESTATION_SOVERSION 0)
+set(NV_ATTESTATION_SOVERSION ${PROJECT_VERSION_MAJOR})
 set_target_properties(nvat PROPERTIES
   VERSION "${PROJECT_VERSION}"
   SOVERSION "${NV_ATTESTATION_SOVERSION}"
@@ -148,6 +198,9 @@ target_include_directories(nvat
     src
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>  
     ${regorus_SOURCE_DIR}/bindings/ffi
+    # spdlog and fmt include dirs (linked statically via TARGET_FILE below)
+    ${spdlog_SOURCE_DIR}/include
+    ${fmt_SOURCE_DIR}/include
 )
 
 if (SANITIZER)
@@ -165,7 +218,6 @@ if (BUILD_TESTING)
   message("-- Building with tests")
   enable_testing()
   add_subdirectory(unit-tests)
-  add_subdirectory(integration-tests)
 endif()
 
 #todo: how to handle cases where client links against the same 
@@ -177,23 +229,28 @@ endif()
 # why public: https://stackoverflow.com/questions/26037954/cmake-target-link-libraries-interface-dependencies
 #https://stackoverflow.com/questions/69783203/examples-of-when-public-private-interface-should-be-used-in-cmake
 target_link_libraries(nvat
-  PUBLIC
-    spdlog::spdlog
+  PRIVATE
+    # Keep all deps PRIVATE so consumers of libnvat.so do not need to link them.
+    # (Runtime deps must still be present on the system.)
     xmlsec::xmlsec
     xmlsec::xmlsec-openssl
     OpenSSL::SSL
     OpenSSL::Crypto
     CURL::libcurl
     LibXml2::LibXml2
-  PRIVATE
+    # Use TARGET_FILE to link the static library directly without creating
+    # a target dependency that CMake would try to export
+    $<TARGET_FILE:spdlog>
+    $<TARGET_FILE:fmt>
     own-jwt-cpp
     nlohmann_json::nlohmann_json
     regorus_ffi
 )
 
-# Ensure regorus_ffi is built before nvat to generate header files
-add_dependencies(nvat regorus_ffi)
+# Ensure dependencies are built before nvat
+add_dependencies(nvat regorus_ffi spdlog fmt)
 
+# todo (p0): remove cmake configuration helpers 
 install(TARGETS nvat
   EXPORT nvatTargets
   ARCHIVE

@@ -179,13 +179,28 @@ class NscqEvidenceCollector : public ISwitchEvidenceSource {
         Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const override;
 };
 
+/**
+ * @brief Uses switch evidence supplied in JSON string. Used in NRAS service where clients provide evidence as part of the HTTP call
+ */
+class SwitchEvidenceSourceFromJsonString : public ISwitchEvidenceSource {
+    public:
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence) const override;
+        static Error create(const std::string& json_string, SwitchEvidenceSourceFromJsonString& out_source);
+
+    protected:
+        std::vector<std::shared_ptr<SwitchEvidence>> m_evidence;
+};
+
+/**
+ * @brief Uses GPU evidence from serialized JSON file. Used for testing.
+ */
 class SwitchEvidenceSourceFromJsonFile : public ISwitchEvidenceSource {
     public:
         Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<SwitchEvidence>>& out_evidence_list) const override;
         static Error create(const std::string& file_path, SwitchEvidenceSourceFromJsonFile& out_source);
 
     private:
-        std::vector<std::shared_ptr<SwitchEvidence>> m_evidence;
+        SwitchEvidenceSourceFromJsonString m_string_source;        
 };
 
 }

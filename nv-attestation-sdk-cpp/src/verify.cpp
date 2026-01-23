@@ -35,7 +35,7 @@ Error verifier_type_from_c(nvat_verifier_type_t c_type, VerifierType& out_type) 
             out_type = VerifierType::Remote;
             return Error::Ok;
         default:
-            LOG_ERROR("unknown verifier type: " << c_type);
+            LOG_ERROR("Unknown verifier type: " << c_type);
             return Error::BadArgument;
     }
 }
@@ -46,22 +46,6 @@ std::string to_string(VerifierType verifier_type) {
         case VerifierType::Remote: return "REMOTE";
         default: return "UNKNOWN";
     }
-}
-
-void OcspVerifyOptions::set_nonce_enabled(bool enabled) {
-    m_nonce_enabled = enabled;
-}
-
-bool OcspVerifyOptions::get_nonce_enabled() const{
-    return m_nonce_enabled;
-}
-
-void OcspVerifyOptions::set_allow_cert_hold(bool allow_cert_hold) {
-    m_allow_cert_hold = allow_cert_hold;
-}
-
-bool OcspVerifyOptions::get_allow_cert_hold() const {
-    return m_allow_cert_hold;
 }
 
 void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request) {
@@ -75,7 +59,7 @@ void to_json(nlohmann::json& json, const NRASAttestRequestV4& attest_request) {
     json["evidence_list"] = evidence_list_json;
 }
 
-Error validate_and_decode_EAT(const SerializableDetachedEAT& detached_eat, std::shared_ptr<JwkStore>& jwk_store, std::string &eat_issuer, NvHttpClient& http_client, std::vector<uint8_t>& out_eat_nonce, std::unordered_map<std::string, std::string>& out_claims) {
+Error validate_and_decode_EAT(const SerializableDetachedEAT& detached_eat, std::shared_ptr<JwkStore>& jwk_store, std::string &eat_issuer, NvHttpClient& http_client, std::vector<uint8_t>& out_eat_nonce, std::unordered_map<std::string, std::string>& out_claims, bool& out_overall_result) {
     LOG_DEBUG("Validating and decoding EAT");
     std::string overall_jwt_payload;
     Error error = NvJwt::validate_and_decode(detached_eat.m_overall_jwt_token, jwk_store, eat_issuer, overall_jwt_payload);
@@ -95,6 +79,8 @@ Error validate_and_decode_EAT(const SerializableDetachedEAT& detached_eat, std::
     std::string eat_nonce = overall_jwt_payload_json.m_eat_nonce;
     LOG_DEBUG("EAT nonce: " << eat_nonce);
     out_eat_nonce = hex_string_to_bytes(eat_nonce);
+
+    out_overall_result = overall_jwt_payload_json.m_overall_result;
 
     out_claims = std::unordered_map<std::string, std::string>();
 
@@ -135,4 +121,64 @@ Error validate_and_decode_EAT(const SerializableDetachedEAT& detached_eat, std::
 
     return Error::Ok;
 }
+
+Error handle_nras_error_claim(const nlohmann::json& nras_claims, nvat_devices_t device_type, const EvidencePolicy& evidence_policy) {
+    // https://docs.nvidia.com/attestation/advanced-documentation/latest/attestation-troubleshooting-guide/attestation_troubleshooting_guide_python_sdk.html#nvidia-remote-attestation-service-error-codes
+
+    if (!nras_claims.contains("x-nvidia-error-details") || nras_claims.at("x-nvidia-error-details").is_null()) {
+        return Error::Ok;
+    }
+
+    NrasErrorClaim nras_error_claim = nras_claims.at("x-nvidia-error-details").get<NrasErrorClaim>();
+    std::string nras_error_claim_log = 
+        "\nNRAS code: " + std::to_string(nras_error_claim.code) +
+        "\nHTTP code: " + nras_error_claim.http_status +
+        "\nMessage: " + nras_error_claim.message +
+        "\nDescription: " + nras_error_claim.description;
+
+    LOG_ERROR("NRAS error details: " << nras_error_claim_log);
+    
+    const int INVALID_NONCE = 4003;
+    const int NONCE_NOT_MATCHING = 4010;
+    const int INVALID_CERT_CHAIN = 4007;
+    const int INVALID_ATTESTATION_CERTIFICATE_CHAIN = 4014;
+    const int INVALID_RIM_CERTIFICATE_CHAIN = 4015;
+    const int INVALID_EVIDENCE_SIGNATURE = 4013;
+    const int INVALID_RIM_SIGNATURE = 5013;
+
+    switch (nras_error_claim.code) {
+        // only ocsp response nonce mismatch is not fail fast
+        // evidence nonce mismatch is still fail fast
+        case INVALID_NONCE:
+        case NONCE_NOT_MATCHING:
+            if (device_type == NVAT_DEVICE_GPU) {
+                return Error::GpuEvidenceNonceMismatch;
+            } else if (device_type == NVAT_DEVICE_NVSWITCH) {
+                return Error::SwitchEvidenceNonceMismatch;
+            } else {
+                return Error::InternalError;
+            }
+        case INVALID_CERT_CHAIN:
+        case INVALID_ATTESTATION_CERTIFICATE_CHAIN:
+        case INVALID_RIM_CERTIFICATE_CHAIN:
+            return Error::CertChainVerificationFailure;
+        case INVALID_EVIDENCE_SIGNATURE:
+            if (device_type == NVAT_DEVICE_GPU) {
+                return Error::GpuEvidenceInvalidSignature;
+            } else if (device_type == NVAT_DEVICE_NVSWITCH) {
+                return Error::SwitchEvidenceInvalidSignature;
+            } else {
+                return Error::InternalError;
+            }
+        case INVALID_RIM_SIGNATURE:
+            if (evidence_policy.verify_rim_signature) {
+                return Error::RimInvalidSignature;
+            }
+            return Error::Ok;
+    }
+
+    // all the other error codes should not happen since the 
+    // evidence signature / rim signatureis verified first
+    return Error::InternalError;
+    }
 }

@@ -30,6 +30,8 @@
 #include <openssl/rand.h>
 #include <errno.h>
 #include "error.h"
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "log.h"
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
@@ -52,6 +54,38 @@ inline Error readFileIntoString(const std::string& path, std::string& out_conten
     }
     out_content = std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
     return Error::Ok;
+}
+
+// TODO(p1): replace all path_* funcs with c++ stdlib in c++17
+
+inline bool path_is_directory(const std::string& path) {
+    struct stat path_stat;
+    if (stat(path.c_str(), &path_stat) != 0) {
+        return false;
+    }
+    return S_ISDIR(path_stat.st_mode);
+}
+
+inline bool path_exists(const std::string& path) {
+    struct stat path_stat;
+    return stat(path.c_str(), &path_stat) == 0;
+}
+
+inline std::string path_join(const std::string& path1, const std::string& path2) {
+    if (path1.empty()) {
+        return path2;
+    }
+    if (path2.empty()) {
+        return path1;
+    }
+    char separator = '/';
+    bool needs_separator = (path1.back() != separator && path2.front() != separator);
+    std::string result = path1;
+    if (needs_separator) {
+        result += separator;
+    }
+    result += path2;
+    return result;
 }
 
 inline std::string get_openssl_error() {
@@ -327,6 +361,20 @@ inline Error deserialize_from_json(const std::string& json_string, T& out_value)
         return Error::Ok;
     } catch (const nlohmann::json::exception& e) {
         LOG_ERROR("Failed to deserialize from JSON: " << std::endl << json_string << std::endl << "The exception was: " << e.what());
+        return Error::InternalError;
+    } catch (...) {
+        LOG_ERROR("Unknown error occurred during JSON deserialization");
+        return Error::InternalError;
+    }
+}
+
+template<typename T>
+inline Error deserialize_from_json_object(const nlohmann::json& json, T& out_value) {
+    try {
+        out_value = json.get<T>();
+        return Error::Ok;
+    } catch (const nlohmann::json::exception& e) {
+        LOG_ERROR("Failed to deserialize from JSON: " << std::endl << json.dump() << std::endl << "The exception was: " << e.what());
         return Error::InternalError;
     } catch (...) {
         LOG_ERROR("Unknown error occurred during JSON deserialization");

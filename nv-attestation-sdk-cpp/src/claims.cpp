@@ -34,7 +34,9 @@
 #include "nv_attestation/nv_types.h"
 #include "nv_attestation/gpu/claims.h"
 #include "nv_attestation/switch/claims.h"
-
+#include "nv_attestation/claims_evaluator.h"
+#include "nv_attestation/verify.h"
+#include "nvat.h.in"
 namespace nvattestation {
     static constexpr std::int64_t JWT_TTL_SECONDS = 3600LL; // 1 hour
     static constexpr std::size_t JTI_SIZE_BYTES = 32;
@@ -125,7 +127,6 @@ namespace nvattestation {
         overall_claims.m_common_claims.m_jti = overall_jti_str;
 
         std::string overall_nonce;
-        bool overall_result = true;
         std::unordered_map<std::string, int, std::hash<std::string>, std::equal_to<>> device_index_for_submod_label;
 
         for (const auto& claim : m_claims) {
@@ -154,15 +155,6 @@ namespace nvattestation {
             } else if (overall_nonce != nonce) {
                 LOG_ERROR("For submod " << submod_key<< " and submod claims" << claim->to_json_object() << "Nonce mismatch: overall_nonce: " << overall_nonce << " != nonce: " << nonce);
                 return Error::BadArgument;
-            }
-
-            bool claim_result = false;
-            err = claim->get_overall_result(claim_result);
-            if (err != Error::Ok) {
-                return err;
-            }
-            if (!claim_result) {
-                overall_result = false;
             }
 
             SerializableEATSubmodClaims submod_claims;
@@ -200,6 +192,26 @@ namespace nvattestation {
             detached_eat.m_device_jwt_tokens[submod_key] = submod_jwt_token;
         }
 
+        std::shared_ptr<IClaimsEvaluator> overall_result_evaluator = ClaimsEvaluatorFactory::create_overall_result_evaluator();
+        if (overall_result_evaluator == nullptr) {
+            LOG_ERROR("Failed to create overall result evaluator");
+            return Error::InternalError;
+        }
+        bool overall_result = true;
+        err = overall_result_evaluator->evaluate_claims(*this, overall_result);
+        if (err != Error::Ok) {
+            return err;
+        }
+        if (!overall_result) {
+            LOG_DEBUG("Overall result is false");
+            std::string serialized_claims;
+            err = serialize_json(serialized_claims);
+            if (err != Error::Ok) {
+                LOG_ERROR("Failed to serialize claims");
+                return err;
+            }
+            LOG_TRACE("Claims: \n" << serialized_claims);
+        }
         overall_claims.m_overall_result = overall_result;
         overall_claims.m_eat_nonce = overall_nonce;
 
@@ -323,6 +335,7 @@ namespace nvattestation {
             overall_claims.m_submod_digests[item.key()] = item.value().at(1).at(1).get<std::string>();
         }
     }
+
 
 
 } // namespace nvattestation

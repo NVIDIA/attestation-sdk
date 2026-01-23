@@ -18,30 +18,46 @@
 #pragma once
 
 #include <string>
+#include "nvat.h"
 
 namespace nvattest {
 
     struct EvidenceCollectionOptions {
         std::string nonce;
-        std::string device;
+        std::string device; // gpu, nvswitch
+        std::string gpu_evidence_source; // nvml, file
+        std::string switch_evidence_source; // nscq, file
+        std::string gpu_evidence_file;
+        std::string switch_evidence_file;
+        
+        std::string pretty_device() const {
+            if (device == "gpu") return "GPU";
+            if (device == "nvswitch") return "NVSwitch";
+            return device;
+        }
     };
 
     struct EvidencePolicyOptions {
+        bool verify_rim_signature = true;
+        bool verify_rim_cert_chain = true;
     };
 
     struct EvidenceVerificationOptions {
         std::string verifier;
         std::string relying_party_policy;
-        std::string rim_url;
+        std::string rim_store; // remote, dir
+        std::string rim_url; // if remote
+        std::string rim_path; // if dir
         std::string ocsp_url;
         std::string nras_url;
-        std::string gpu_evidence;
-        std::string switch_evidence;
         std::string service_key;
     };
 
     struct CommonOptions {
-        std::string log_level;
+        std::string log_level_str;
+        std::string format;
+        
+        nvat_log_level_t get_log_level() const;
     };
 
 }

@@ -73,7 +73,7 @@ public:
     Error get_dmtf_measurement_block(uint8_t index, DmtfMeasurementBlock& out_measurement_block) const {
         auto it = m_dmtf_measurement_blocks.find(index);
         if (it == m_dmtf_measurement_blocks.end()) {
-            LOG_ERROR("measurement block with index " + std::to_string(index) + " is not present.");
+            LOG_ERROR("Measurement block with index " + std::to_string(index) + " is not present.");
             return Error::SpdmFieldNotFound;
         }
         out_measurement_block = *(it->second);

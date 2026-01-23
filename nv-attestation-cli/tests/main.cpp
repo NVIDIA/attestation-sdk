@@ -23,5 +23,6 @@ Environment* g_cli_env = nullptr;
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     g_cli_env = static_cast<Environment*>(::testing::AddGlobalTestEnvironment(new Environment));
+    setenv("NVAT_FORMAT", "json", 1);
     return RUN_ALL_TESTS();
 }

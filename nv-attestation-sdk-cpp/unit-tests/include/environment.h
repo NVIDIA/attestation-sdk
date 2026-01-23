@@ -62,15 +62,24 @@ class Environment : public ::testing::Environment {
       }
     }
 
-    ASSERT_EQ(init(options), Error::Ok);
+    if (init(options) != Error::Ok) {
+      std::cerr << "Failed to initialize SDK" << std::endl;
+      exit(1);
+    }
 
     std::string git_repo_root;
-    ASSERT_EQ(get_git_repo_root(git_repo_root), Error::Ok);
+    if (get_git_repo_root(git_repo_root) != Error::Ok) {
+      std::cerr << "Failed to get git repository root" << std::endl;
+      exit(1);
+    }
     common_test_data_dir = git_repo_root + "/common-test-data";
 
     
     service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
-    ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
+    if (service_key.empty()) {
+      std::cerr << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable" << std::endl;
+      exit(1);
+    }
   }
 
   // Override this to define how to tear down the environment.

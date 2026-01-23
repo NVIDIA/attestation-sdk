@@ -91,6 +91,7 @@ TEST_F(AttestationTest, MockFailedEvidenceCollectionGpuAttestation) {
 }
 
 TEST(AttestationTestCApi, GpuHighLevelApiLocalVerify) { // integration + unit 
+    RecordProperty("description", "Verify GPU evidence using high-level API. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -141,6 +142,7 @@ TEST(AttestationTestCApi, GpuHighLevelApiLocalVerify) { // integration + unit
 }
 
 TEST(AttestationTestCApi, GpuHighLevelApiRemoteVerify) { // integration + unit 
+    RecordProperty("description", "Verify GPU evidence using high-level API. Remote verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
@@ -185,6 +187,7 @@ TEST(AttestationTestCApi, GpuHighLevelApiRemoteVerify) { // integration + unit
 }
 
 TEST(AttestationTestCApi, SwitchHighLevelApiLocalVerify) { // integration + unit 
+    RecordProperty("description", "Verify switch evidence using high-level API. Local verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping Switch Integration tests";
     }
@@ -227,6 +230,7 @@ TEST(AttestationTestCApi, SwitchHighLevelApiLocalVerify) { // integration + unit
 } 
 
 TEST(AttestationTestCApi, SwitchHighLevelApiRemoteVerify) { // integration + unit 
+    RecordProperty("description", "Verify switch evidence using high-level API. Remote verifier.");
     if (g_env->test_mode == "integration" && !g_env->test_device_switch) {
         GTEST_SKIP() << "Skipping Switch Integration tests";
     }
