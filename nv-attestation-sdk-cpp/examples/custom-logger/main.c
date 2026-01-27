@@ -34,8 +34,8 @@ int main(void) {
 
 // Custom callback to determine whether a log message should be processed
 bool should_log_cb(nvat_log_level_t level, const char* filename, const char* function, int line_number, void* user_data) {
-    // Allow all messages at TRACE level and above
-    return level >= NVAT_LOG_LEVEL_TRACE;
+    // Allow all messages at ERROR level and above
+    return level >= NVAT_LOG_LEVEL_ERROR;
 }
 
 // Custom callback to handle log messages

@@ -3,5 +3,6 @@ add_executable(attest
 )
 
 target_link_libraries(attest
+    PRIVATE
     nvat
 )

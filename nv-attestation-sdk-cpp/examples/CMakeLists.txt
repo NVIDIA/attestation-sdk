@@ -14,7 +14,12 @@ endif()
 
 
 add_subdirectory(attest-minimal)
+add_subdirectory(common)
 add_subdirectory(attest)
+add_subdirectory(attest_local)
+add_subdirectory(attest_remote)
+add_subdirectory(attest_policy_custom)
+add_subdirectory(attest_policy_none)
 add_subdirectory(collect-gpu-evidence)
 add_subdirectory(json-gpu-evidence)
 add_subdirectory(custom-logger)

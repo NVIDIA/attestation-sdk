@@ -69,7 +69,7 @@ nvat_rc_t attest(void) {
         return err;
     }
 
-    err = nvat_logger_spdlog_create(&ctx.logger, "nvat_collect_evidence", NVAT_LOG_LEVEL_DEBUG);
+    err = nvat_logger_spdlog_create(&ctx.logger, "nvat_collect_evidence", NVAT_LOG_LEVEL_ERROR);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;
