@@ -77,7 +77,7 @@ nvat_rc_t attest(char* json_file_path) {
         return err;
     }
 
-    err = nvat_logger_spdlog_create(&ctx.logger, "nvat_json_evidence", NVAT_LOG_LEVEL_DEBUG);
+    err = nvat_logger_spdlog_create(&ctx.logger, "nvat_json_evidence", NVAT_LOG_LEVEL_ERROR);
     if (err != NVAT_RC_OK) {
         teardown(ctx);
         return err;

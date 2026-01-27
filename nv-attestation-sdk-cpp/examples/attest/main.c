@@ -81,6 +81,7 @@ int main(void) {
 /*
 This is a helper function which is called from main. It creates the attestation context, sets some options on it to show how the context can be modified to configure the attestation process and then finally calls `nvat_attest_device` to perform the attestation. 
 */
+
 nvat_rc_t attest(nvat_attestation_ctx_t* ctx) {
   nvat_rc_t err;
   char * buf = NULL;
@@ -91,6 +92,15 @@ nvat_rc_t attest(nvat_attestation_ctx_t* ctx) {
   if (err != NVAT_RC_OK) {
       return err;
   }
+
+  nvat_logger_t logger;
+  err = nvat_logger_spdlog_create(&logger, "nvat_json_evidence", NVAT_LOG_LEVEL_ERROR);
+  if (err != NVAT_RC_OK) {
+      nvat_sdk_opts_free(&opts);
+      return err;
+  }
+  nvat_sdk_opts_set_logger(opts, logger);
+  nvat_logger_free(&logger);
 
   // Step 2: Initialize the SDK with the options defined above.
   // This must be called before any other SDK operations to initialize global 

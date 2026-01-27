@@ -593,13 +593,13 @@ typedef struct nvat_gpu_evidence_source_st* nvat_gpu_evidence_source_t;
  * @{
  */
 /**
- * @brief Create a @ref nvat_gpu_evidence_source that will collect evidence from all GPUs accessible on
+ * @brief Create a @ref nvat_gpu_evidence_source_t that will collect evidence from all GPUs accessible on
  *        the system via NVML.
  */
 nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_source);
 
 /**
- * @brief Create a @ref nvat_gpu_evidence_source from a JSON string with the following schema: 
+ * @brief Create a @ref nvat_gpu_evidence_source_t from a JSON string with the following schema: 
  * ```json
  * {
  *   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -637,7 +637,7 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
 nvat_rc_t nvat_gpu_evidence_source_from_json_string(nvat_gpu_evidence_source_t* out_source, const char* json_string);
 
 /**
- * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
+ * @brief Create a @ref nvat_gpu_evidence_source_t that will read existing evidence from the given
  *        source file. The source file must be a JSON file with the above schema.
  * 
  * @param out_source A pointer to the evidence source that will return the evidence from the file.
@@ -649,6 +649,14 @@ nvat_rc_t nvat_gpu_evidence_source_from_json_file(nvat_gpu_evidence_source_t* ou
 void      nvat_gpu_evidence_source_free(nvat_gpu_evidence_source_t* gpu_evidence_source);
 
 /** @} gpu_evidence_source */
+
+/**
+ * @defgroup gpu_evidence_collection GPU Evidence Collection
+ * @ingroup gpu_evidence
+ * 
+ * Functions for collecting GPU evidence.
+ * @{
+ */
 
 /**
  * @brief Collect GPU evidence from the given source.
@@ -705,25 +713,25 @@ nvat_rc_t nvat_gpu_evidence_serialize_json(
  */
 typedef struct nvat_switch_evidence_st* nvat_switch_evidence_t;
 /**
- * @brief Interface for collecting or reading switch evidence.
+ * @brief Interface for collecting or reading NVSwitch evidence.
  */
 typedef struct nvat_switch_evidence_source_st* nvat_switch_evidence_source_t;
 
 /**
- * @defgroup switch_evidence_source Switch Evidence Source
+ * @defgroup switch_evidence_source NVSwitch Evidence Source
  * @ingroup switch_evidence
  * 
- * Functions for creating switch evidence sources.
+ * Functions for creating NVSwitch evidence sources.
  * @{
  */
 /**
- * @brief Create a @ref nvat_switch_evidence_source that will collect evidence from all NVSwitches 
+ * @brief Create a @ref nvat_switch_evidence_source_t that will collect evidence from all NVSwitches 
  * accessible from the system via NSCQ.
  */
 nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t* out_source);
 
 /**
- * @brief Create a @ref nvat_switch_evidence_source that will read existing evidence from the given
+ * @brief Create a @ref nvat_switch_evidence_source_t that will read existing evidence from the given
  *        source file. The source file must be a JSON file with the following schema: 
  * ```json
  * {
@@ -762,7 +770,7 @@ nvat_rc_t nvat_switch_evidence_source_nscq_create(nvat_switch_evidence_source_t*
 nvat_rc_t nvat_switch_evidence_source_from_json_string(nvat_switch_evidence_source_t* out_source, const char* json_string);
 
 /**
- * @brief Create a @ref nvat_gpu_evidence_source that will read existing evidence from the given
+ * @brief Create a @ref nvat_switch_evidence_source_t that will read existing evidence from the given
  *        source file. The source file must be a JSON file with the above schema.
  * 
  * @param out_source A pointer to the evidence source that will return the evidence from the file.
@@ -776,7 +784,15 @@ void      nvat_switch_evidence_source_free(nvat_switch_evidence_source_t* switch
 /** @} switch_evidence_source */
 
 /**
- * @brief Collect switch evidence from the given source.
+ * @defgroup switch_evidence_collection NVSwitch Evidence Collection
+ * @ingroup switch_evidence
+ * 
+ * Functions for collecting NVSwitch evidence.
+ * @{
+ */
+
+/**
+ * @brief Collect NVSwitch evidence from the given source.
  *
  * The `nonce` must not be `NULL`. 
  */
@@ -785,14 +801,14 @@ nvat_rc_t nvat_switch_evidence_collect(const nvat_switch_evidence_source_t sourc
 /** @} switch_evidence_collection */
 
 /**
- * @defgroup switch_evidence_serialize Switch Evidence Serialize
+ * @defgroup switch_evidence_serialize NVSwitch Evidence Serialize
  * @ingroup switch_evidence
  * 
- * Functions for serializing switch evidence.
+ * Functions for serializing NVSwitch evidence.
  * @{
  */
 /**
- * @brief Serialize the given switch evidence to JSON.
+ * @brief Serialize the given NVSwitch evidence to JSON.
  *
  * On success, `buffer` will contain a null-terminated string.
  * On failure, caller must not make assumptions about the contents of
@@ -1014,13 +1030,13 @@ void nvat_gpu_verifier_free(nvat_gpu_verifier_t* gpu_verifier);
 /**
  * @defgroup switch_verifier NVSwitch Evidence Verification
  * 
- * @brief Components used to perform switch evidence verification and
+ * @brief Components used to perform NVSwitch evidence verification and
  *        produce attestation results (claims) for a relying party.
  * @{
  */
 
 /**
- * @brief Evaluates switch evidence to produce attestation results (claims)
+ * @brief Evaluates NVSwitch evidence to produce attestation results (claims)
  *        indicating the validity of submitted evidence.
  */
 typedef struct nvat_switch_verifier_st* nvat_switch_verifier_t;
@@ -1065,7 +1081,7 @@ nvat_rc_t nvat_switch_local_verifier_create(
 );
 
 /**
- @brief Verify switch evidence against a given evidence policy.
+ @brief Verify NVSwitch evidence against a given evidence policy.
 
  * @param verifier - The switch verifier to use.
  * @param switch_evidence_array The switch evidences to verify.
@@ -1167,7 +1183,9 @@ typedef struct nvat_attestation_ctx_st* nvat_attestation_ctx_t;
  */
  typedef uint32_t nvat_devices_t;
 
+ /// @brief Device type for NVIDIA GPU
  #define NVAT_DEVICE_GPU      0
+ /// @brief Device type for NVIDIA NVSwitch
  #define NVAT_DEVICE_NVSWITCH 1
 
 /**
@@ -1178,7 +1196,9 @@ typedef struct nvat_attestation_ctx_st* nvat_attestation_ctx_t;
  */
 typedef uint8_t nvat_verifier_type_t;
 
+/// @brief Verify evidence locally in the current process
 #define NVAT_VERIFY_LOCAL  0
+/// @brief Verify evidence using a remote service
 #define NVAT_VERIFY_REMOTE 1
 
 /**
@@ -1258,7 +1278,7 @@ nvat_rc_t nvat_attestation_ctx_set_default_rim_store(nvat_attestation_ctx_t ctx,
 nvat_rc_t nvat_attestation_ctx_set_gpu_evidence_source_json_file(nvat_attestation_ctx_t ctx, const char* file_path);
 
 /**
- * @brief Set the switch evidence source to use a JSON file. See @ref nvat_switch_evidence_source_from_json_file() for 
+ * @brief Set the NVSwitch evidence source to use a JSON file. See @ref nvat_switch_evidence_source_from_json_file() for 
  * the expected format of the JSON file.
  */
 nvat_rc_t nvat_attestation_ctx_set_switch_evidence_source_json_file(nvat_attestation_ctx_t ctx, const char* file_path);
