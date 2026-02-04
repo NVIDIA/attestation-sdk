@@ -29,6 +29,7 @@
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <errno.h>
+#include <dlfcn.h>
 #include "error.h"
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -110,7 +111,7 @@ inline Error decode_base64(const std::string &base64_data, std::vector<uint8_t>&
         LOG_ERROR("Failed to decode base64 data");
         return Error::InternalError;
     }
-    
+
     // Handle base64 padding by adjusting outlen
     // EVP_DecodeBlock doesn't handle padding correctly, we need to remove padding bytes manually
     int padding = 0;
@@ -119,7 +120,7 @@ inline Error decode_base64(const std::string &base64_data, std::vector<uint8_t>&
         if (base64_data[base64_data.length() - 2] == '=') padding++;
     }
     outlen -= padding;
-    
+
     out_decoded_data = std::vector<uint8_t>(out.data(), out.data() + outlen);
     return Error::Ok;
 }
@@ -137,16 +138,16 @@ inline Error decode_base64(const std::string &base64_data, std::string& out_deco
 inline Error encode_base64(const std::vector<uint8_t>& data, std::string& out_encoded_data) {
     //ref: https://docs.openssl.org/3.0/man3/EVP_EncodeInit/
     int len = data.size();
-    
+
     // Over-allocate - base64 is ~33% larger, so 2x input is definitely enough
     std::vector<unsigned char> out(len * 2);
-    
+
     int outlen = EVP_EncodeBlock(out.data(), data.data(), len);
     if (outlen < 0) {
         LOG_ERROR("Failed to encode base64 data. OpenSSL error: " << get_openssl_error());
         return Error::InternalError;
     }
-    
+
     out_encoded_data = std::string(reinterpret_cast<char*>(out.data()), outlen);
     return Error::Ok;
 }
@@ -235,7 +236,7 @@ inline Error format_time(time_t timestamp, std::string& out_formatted_time) {
         LOG_ERROR("Invalid timestamp: " << timestamp);
         return Error::InternalError;
     }
-    
+
     struct tm tm_info {};
     struct tm* tm_result = gmtime_r(&timestamp, &tm_info);
     if (tm_result == nullptr) {
@@ -246,14 +247,14 @@ inline Error format_time(time_t timestamp, std::string& out_formatted_time) {
         }
         return Error::InternalError;
     }
-    
+
     char buffer[80];
     size_t result = strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
     if (result == 0) {
         LOG_ERROR("strftime() failed to format timestamp: " << timestamp);
         return Error::InternalError;
     }
-    
+
     out_formatted_time = std::string(buffer);
     return Error::Ok;
 }
@@ -406,14 +407,14 @@ inline Error parse_uri(
         LOG_ERROR("Failed to create curl URL handle");
         return Error::InternalError;
     }
-    
+
     CURLUcode result = curl_url_set(handle, CURLUPART_URL, url.c_str(), 0);
     if (result != CURLUE_OK) {
         LOG_ERROR("Failed to parse URL: " << curl_url_strerror(result));
         curl_url_cleanup(handle);
         return Error::BadArgument;
     }
-    
+
     char *scheme = nullptr;
     result = curl_url_get(handle, CURLUPART_SCHEME, &scheme, 0);
     if (result == CURLUE_OK) {
@@ -424,7 +425,7 @@ inline Error parse_uri(
         curl_url_cleanup(handle);
         return Error::BadArgument;
     }
-    
+
     char *host = nullptr;
     result = curl_url_get(handle, CURLUPART_HOST, &host, 0);
     if (result == CURLUE_OK) {
@@ -435,7 +436,7 @@ inline Error parse_uri(
         curl_url_cleanup(handle);
         return Error::BadArgument;
     }
-    
+
     char *port = nullptr;
     result = curl_url_get(handle, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT);
     if (result == CURLUE_OK) {
@@ -501,6 +502,30 @@ static bool can_read_buffer(const std::vector<uint8_t>& buffer, size_t start_off
         LOG_ERROR(error_msg.str());
         return false;
     }
+    return true;
+}
+
+/**
+ * @brief Loads a symbol from a dynamically loaded library handle.
+ * @tparam T The function pointer type to load.
+ * @param handle The dynamic library handle returned from dlopen.
+ * @param name The name of the symbol to load.
+ * @param func_ptr Reference to the function pointer to populate.
+ * @return True on success, false on failure.
+ */
+template<typename T>
+bool load_symbol(void* handle, const char* name, T& func_ptr) {
+    dlerror();
+
+    void* symbol = dlsym(handle, name);
+    const char* error = dlerror();
+
+    if (error != nullptr || symbol == nullptr) {
+        LOG_ERROR("Failed to load symbol '" << name << "': " << (error ? error : "symbol not found"));
+        return false;
+    }
+
+    func_ptr = reinterpret_cast<T>(symbol);
     return true;
 }
 

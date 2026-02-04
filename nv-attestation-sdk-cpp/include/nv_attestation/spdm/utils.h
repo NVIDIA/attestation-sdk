@@ -24,13 +24,15 @@
 #include <algorithm>
 #include "nv_attestation/log.h" // For LOG_PUSH_ERROR
 #include "nv_attestation/error.h" // For Error enum
-#include "nv_attestation/utils.h" 
+#include "nv_attestation/utils.h"
 
 namespace nvattestation {
 
 constexpr uint8_t SPDM_VERSION_1_1 = 0x11;
 constexpr uint8_t SPDM_REQ_CODE_GET_MEASUREMENTS = 0xe0;
 constexpr uint8_t SPDM_RES_CODE_MEASUREMENTS = 0x60;
+constexpr size_t SPDM_NONCE_SIZE = 32;
+constexpr size_t SPDM_CERT_DIGEST_SIZE = 52; // 48 (Cert digest) + 2 (length of chain) + (2) reserved bytes
 
 
 

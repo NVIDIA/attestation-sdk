@@ -585,8 +585,6 @@ Error X509CertChain::create_from_cert_chain_str(
         LOG_PUSH_ERROR(Error::InternalError, "Input PEM chain string is empty");
         return Error::InternalError;
     }
-    
-
 
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, root_cert_str, out_cert_chain);
     if (error != Error::Ok) {

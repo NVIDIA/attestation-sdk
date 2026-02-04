@@ -777,6 +777,37 @@ nvat_rc_t nvat_gpu_evidence_source_nvml_create(nvat_gpu_evidence_source_t* out_s
     NVAT_C_API_END
 }
 
+nvat_rc_t nvat_gpu_evidence_source_corelib_create(nvat_gpu_evidence_source_t* out_source, const char* gpu_architecture) {
+    NVAT_C_API_BEGIN
+    if (out_source == nullptr) {
+        LOG_ERROR("out_source is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (gpu_architecture == nullptr) {
+        LOG_ERROR("gpu_architecture is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    // Parse architecture string
+    GpuArchitecture arch = GpuArchitecture::Unknown;
+    from_string(std::string(gpu_architecture), arch);
+    if (arch == GpuArchitecture::Unknown) {
+        LOG_ERROR("Invalid GPU architecture: " << gpu_architecture);
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    // Currently only Blackwell supported
+    if (arch != GpuArchitecture::Blackwell) {
+        LOG_ERROR("Corelib only supports Blackwell architecture, got: " << gpu_architecture);
+        return NVAT_RC_GPU_ARCHITECTURE_NOT_SUPPORTED;
+    }
+
+    std::unique_ptr<std::shared_ptr<IGpuEvidenceSource>> gpu_evidence_source_ptr = make_unique<std::shared_ptr<IGpuEvidenceSource>>(make_shared<CorelibEvidenceCollector>(arch));
+    *out_source = nvat_gpu_evidence_source_from_cpp(gpu_evidence_source_ptr.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_gpu_evidence_source_from_json_string(nvat_gpu_evidence_source_t* out_source, const char* json_string) {
     NVAT_C_API_BEGIN
     if (out_source == nullptr) {

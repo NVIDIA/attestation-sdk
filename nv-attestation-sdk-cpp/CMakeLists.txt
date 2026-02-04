@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.0.0)
+project(nv-attestation VERSION 1.1.0)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING 
   "The C++ standard whose features are requested to build this target."
@@ -160,6 +160,7 @@ add_library(nvat
   src/gpu/evidence.cpp
   src/gpu/claims.cpp
   src/gpu/nvml_client.cpp
+  src/gpu/corelib_client.cpp
   src/gpu/verify.cpp
   src/spdm/spdm_measurement_records.cpp
   src/spdm/spdm_opaque_data_parser.cpp

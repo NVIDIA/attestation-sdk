@@ -33,19 +33,23 @@ NVAT provides two components for different use cases:
 
 ### Prerequisites
 
-- A supported NVIDIA GPU connected to a CVM. See [NVIDIA Trusted Computing Solutions](https://docs.nvidia.com/nvtrust/) for deployment guides covering Intel TDX and AMD SNP.
-- The above CVM must be running Ubuntu 22.04 or 24.04.
+**For Confidential Computing (CC) attestation:**
+- A supported NVIDIA GPU connected to a CVM running Ubuntu 22.04 or 24.04. See [NVIDIA Trusted Computing Solutions](https://docs.nvidia.com/nvtrust/) for deployment guides covering Intel TDX and AMD SNP.
+
+**For general GPU attestation (non-CC):**
+- A supported NVIDIA GPU
+- Supported architectures: x86-64, aarch64
+- Supported operating systems: Ubuntu 22.04, Ubuntu 24.04, and others (see [downloads](https://developer.nvidia.com/nvat-downloads) for full list)
 
 ### Installation
 
-The steps below must be performed in a CVM connected to an NVIDIA GPU.
-See [Prerequisites](#prerequisites) above.
-
 1. Install the NVIDIA Management Library (NVML). See [Driver Installation](https://docs.nvidia.com/datacenter/tesla/driver-installation-guide/index.html#ubuntu-installation-common).
 
-2. Install `nvattest`. See [NVIDIA Attestation SDK Downloads](https://developer.nvidia.com/nvat-downloads).
+2. Install `nvattest`. Navigate to [NVIDIA Attestation SDK Downloads](https://developer.nvidia.com/nvat-downloads) and select your architecture and operating system.
 
 For a source install, refer to the [CLI Introduction](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/overview.html).
+
+**Note:** For Confidential Computing attestation, these steps must be performed in a CVM connected to an NVIDIA GPU. See [Prerequisites](#prerequisites) above.
 
 ### Attestation
 

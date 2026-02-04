@@ -171,6 +171,11 @@ namespace nvattest {
                 return AttestOutput(err);
             }
 
+            if (evidence_collection_options.gpu_evidence_source == "corelib") {
+                SPDLOG_ERROR("The corelib evidence source is only supported with the collect-evidence subcommand.");
+                return AttestOutput(NVAT_RC_BAD_ARGUMENT);
+            }
+
             if (evidence_collection_options.gpu_evidence_source == "file") {
                 err = nvat_attestation_ctx_set_gpu_evidence_source_json_file(*(ctx.get()), evidence_collection_options.gpu_evidence_file.c_str());
                 if (err != NVAT_RC_OK) {
