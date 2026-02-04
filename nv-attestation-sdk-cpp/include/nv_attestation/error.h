@@ -68,6 +68,8 @@ namespace nvattestation {
     MACRO(GpuEvidenceVbiosRimVersionMismatch, NVAT_RC_GPU_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH) \
     MACRO(GpuEvidenceFwidMismatch, NVAT_RC_GPU_EVIDENCE_FWID_MISMATCH) \
     MACRO(GpuEvidenceInvalidSignature, NVAT_RC_GPU_EVIDENCE_INVALID_SIGNATURE) \
+    MACRO(GpuModeNotSupported, NVAT_RC_GPU_MODE_NOT_SUPPORTED) \
+    MACRO(GpuFwNotSupported, NVAT_RC_GPU_FW_NOT_SUPPORTED) \
     MACRO(CertFwidNotFound, NVAT_RC_CERT_FWID_NOT_FOUND) \
     MACRO(CertNotFound, NVAT_RC_CERT_NOT_FOUND) \
     MACRO(CertChainVerificationFailure, NVAT_RC_CERT_CHAIN_VERIFICATION_FAILURE) \
@@ -75,6 +77,8 @@ namespace nvattestation {
     MACRO(LibXml2Error, NVAT_RC_LIBXML2_ERROR) \
     MACRO(NscqInitFailed, NVAT_RC_NSCQ_INIT_FAILED) \
     MACRO(NscqError, NVAT_RC_NSCQ_ERROR) \
+    MACRO(CorelibInitFailed, NVAT_RC_CORELIB_INIT_FAILED) \
+    MACRO(CorelibError, NVAT_RC_CORELIB_ERROR) \
     MACRO(SwitchArchitectureNotSupported, NVAT_RC_SWITCH_ARCHITECTURE_NOT_SUPPORTED) \
     MACRO(SwitchEvidenceNonceMismatch, NVAT_RC_SWITCH_EVIDENCE_NONCE_MISMATCH) \
     MACRO(SwitchEvidenceVbiosRimVersionMismatch, NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH) \
@@ -144,6 +148,8 @@ inline const char* to_string(Error error) {
         case Error::GpuEvidenceVbiosRimVersionMismatch: return "GPU Evidence VBios RIM Version Mismatch";
         case Error::GpuEvidenceFwidMismatch: return "GPU Evidence FWID Mismatch";
         case Error::GpuEvidenceInvalidSignature: return "GPU Evidence Invalid Signature";
+        case Error::GpuModeNotSupported: return "GPU is neither in CC nor in PPCIe mode";
+        case Error::GpuFwNotSupported: return "GPU FW version exceeds SDK support";
 
         // Certificate errors
         case Error::CertFwidNotFound: return "Certificate FWID Not Found";
@@ -153,6 +159,11 @@ inline const char* to_string(Error error) {
         // NSCQ / Switch errors
         case Error::NscqInitFailed: return "NSCQ Initialization Failed";
         case Error::NscqError: return "NSCQ Error";
+
+        // Corelib errors
+        case Error::CorelibInitFailed: return "Corelib Initialization Failed";
+        case Error::CorelibError: return "Corelib Error";
+
         case Error::SwitchArchitectureNotSupported: return "NVSwitch Architecture Not Supported";
         case Error::SwitchEvidenceNonceMismatch: return "NVSwitch Evidence Nonce Mismatch";
         case Error::SwitchEvidenceVbiosRimVersionMismatch: return "NVSwitch Evidence VBIOS RIM Version Mismatch";
@@ -195,7 +206,7 @@ ref: https://github.com/openssl/openssl/blob/master/crypto/err/err.c#L820
 ref: https://stackoverflow.com/questions/37980798/openssl-error-handling
 ref: https://nvidia.slack.com/archives/C05S8LP717T/p1742248869340249
 
-in the future, along with the log macros, we can add additional metadata 
+in the future, along with the log macros, we can add additional metadata
 to the error record like file, line, function name, etc.
 
 since error record is not meant to be used by the client code

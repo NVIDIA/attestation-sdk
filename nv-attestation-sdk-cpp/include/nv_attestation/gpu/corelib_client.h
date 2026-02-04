@@ -26,14 +26,10 @@
 
 namespace nvattestation {
 
-extern bool g_nvml_initialized;
+extern bool g_corelib_initialized;
 
-Error init_nvml();
-void shutdown_nvml();
-Error get_driver_version(std::string& out_driver_version);
-Error is_cc_enabled(bool& out_is_enabled);
-Error is_ppcie_mode_enabled(bool& out_is_enabled);
-Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence);
+Error init_corelib();
+void shutdown_corelib();
+Error collect_evidence_corelib(const std::vector<uint8_t>& nonce_input, GpuArchitecture architecture, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence);
 
 } // namespace nvattestation
-

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <array>
@@ -121,16 +122,22 @@ private:
 };
 
 class GpuOpaqueDataParser {
-    public: 
+    public:
         static Error create(const std::vector<ParsedOpaqueFieldData>& opaque_fields, GpuOpaqueDataParser& out_parser);
 
         Error get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const;
         const std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData>& get_all_fields() const;
+        uint64_t get_opaque_data_version() const;
     private:
+        static constexpr const size_t MAX_OPAQUE_DATA_VERSION_SIZE = 8;
+        static constexpr const uint64_t MAX_OPAQUE_DATA_VERSION = 1; // max known version we can parse
+
         static Error parse_msr_count_internal(const std::vector<uint8_t>& data_bytes, std::vector<uint32_t>& out_msr_counts);
         static Error parse_switch_pdis_internal(const std::vector<uint8_t>& data_bytes, std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>& out_switch_pdis);
+        static Error parse_opaque_data_version(const std::vector<uint8_t>& data_bytes, uint64_t& out_version);
 
         std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData> m_fields;
+        uint64_t m_opaque_data_version = 0;
 };
 
 inline GpuParsedFieldType get_gpu_opaque_field_type(GpuOpaqueDataType source_type) {

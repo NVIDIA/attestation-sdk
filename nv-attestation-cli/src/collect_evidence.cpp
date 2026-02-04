@@ -95,10 +95,23 @@ namespace nvattest {
         std::string evidences_str = "[]";
  
         if (evidence_collection_options.device == "gpu") {
+            // Validate corelib-specific requirements
+            if (evidence_collection_options.gpu_evidence_source == "corelib") {
+                if (evidence_collection_options.gpu_architecture.empty()) {
+                    SPDLOG_ERROR("--gpu-architecture is required when using --gpu-evidence-source=corelib");
+                    return CollectEvidenceOutput(NVAT_RC_BAD_ARGUMENT);
+                }
+            }
+
             nv_unique_ptr<nvat_gpu_evidence_source_t> source;
             nvat_gpu_evidence_source_t raw_source = nullptr;
             if (evidence_collection_options.gpu_evidence_source == "file") {
                 err = nvat_gpu_evidence_source_from_json_file(&raw_source, evidence_collection_options.gpu_evidence_file.c_str());
+                if (err != NVAT_RC_OK) {
+                    return CollectEvidenceOutput(err);
+                }
+            } else if (evidence_collection_options.gpu_evidence_source == "corelib") {
+                err = nvat_gpu_evidence_source_corelib_create(&raw_source, evidence_collection_options.gpu_architecture.c_str());
                 if (err != NVAT_RC_OK) {
                     return CollectEvidenceOutput(err);
                 }

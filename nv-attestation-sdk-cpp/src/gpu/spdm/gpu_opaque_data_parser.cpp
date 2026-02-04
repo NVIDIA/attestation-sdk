@@ -15,7 +15,9 @@
  * limitations under the License.
  */
 
+#include <cstdint>
 #include <sstream>
+#include <vector>
 
 #include "nv_attestation/gpu/spdm/gpu_opaque_data_parser.hpp"
 #include "nv_attestation/log.h"
@@ -135,11 +137,11 @@ Error GpuParsedOpaqueFieldData::get_pdi_vector(const std::vector<std::array<uint
 }
 
 Error GpuOpaqueDataParser::parse_msr_count_internal(
-    const std::vector<uint8_t>& data_bytes, 
+    const std::vector<uint8_t>& data_bytes,
     std::vector<uint32_t>& out_msr_counts) {
-    
+
     if (data_bytes.size() % GpuOpaqueFieldSizes::MSR_COUNT_ELEMENT_SIZE != 0) {
-        LOG_ERROR("Invalid size of measurement count field data. Size: " 
+        LOG_ERROR("Invalid size of measurement count field data. Size: "
             << data_bytes.size() << ", expected multiple of " << GpuOpaqueFieldSizes::MSR_COUNT_ELEMENT_SIZE);
         return Error::InternalError;
     }
@@ -161,9 +163,8 @@ Error GpuOpaqueDataParser::parse_msr_count_internal(
     return Error::Ok;
 }
 
-
 Error GpuOpaqueDataParser::parse_switch_pdis_internal(
-    const std::vector<uint8_t>& data_bytes, 
+    const std::vector<uint8_t>& data_bytes,
     std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>& out_switch_pdis) {
 
     if (data_bytes.size() % GpuOpaqueFieldSizes::PDI_DATA_SIZE != 0) {
@@ -187,8 +188,43 @@ Error GpuOpaqueDataParser::parse_switch_pdis_internal(
     return Error::Ok;
 }
 
+Error GpuOpaqueDataParser::parse_opaque_data_version(const std::vector<uint8_t>& data_bytes, uint64_t& out_version) {
+    if (data_bytes.size() > MAX_OPAQUE_DATA_VERSION_SIZE) {
+        LOG_ERROR("Opaque data version vector greater than 8 bytes");
+        return Error::InternalError;
+    }
+    if(!read_little_endian(data_bytes, 0, data_bytes.size(), out_version)) {
+        LOG_ERROR("Failed to read opaque data version");
+        return Error::InternalError;
+    }
+    return Error::Ok;
+}
+
 Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaque_fields, GpuOpaqueDataParser& out_parser) {
     out_parser.m_fields.clear();
+    uint64_t opaque_data_version = 0;
+    for (const auto& field : opaque_fields) {
+        if (field.get_type() != static_cast<uint16_t>(GpuOpaqueDataType::OPAQUE_DATA_VERSION)) {
+           continue;
+        }
+        const std::vector<uint8_t>* data = nullptr;
+        Error err = field.get_data(data);
+        if (err != Error::Ok) {
+            return err;
+        }
+        err = parse_opaque_data_version(*data, opaque_data_version);
+        if (err != Error::Ok) {
+            return err;
+        }
+    }
+
+    LOG_DEBUG("GPU opaque data version: " << opaque_data_version);
+    if (opaque_data_version > MAX_OPAQUE_DATA_VERSION) {
+        LOG_ERROR("GPU opaque data version " << opaque_data_version << " is greater than supported version " << MAX_OPAQUE_DATA_VERSION);
+        return Error::GpuFwNotSupported;
+    }
+    out_parser.m_opaque_data_version = opaque_data_version;
+
     for (const auto& field : opaque_fields) {
         if (!is_valid_gpu_opaque_data_type(field.get_type())) {
             LOG_ERROR("Invalid GPU opaque data type: " << field.get_type());
@@ -201,7 +237,7 @@ Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaq
         if (error != Error::Ok) {
             return error;
         }
-        
+
         GpuParsedOpaqueFieldData parsed_field;
         if (type == GpuOpaqueDataType::MSRSCNT) {
             std::vector<uint32_t> msr_counts;
@@ -250,13 +286,17 @@ const std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData>& GpuOpaqueDataParser
     return m_fields;
 }
 
+uint64_t GpuOpaqueDataParser::get_opaque_data_version() const {
+    return m_opaque_data_version;
+}
+
 std::ostream& operator<<(std::ostream& os, const GpuOpaqueDataParser& parser) {
     os << "--- Parsed GPU Opaque Data ---";
     for (const auto& pair : parser.get_all_fields()) {
         const auto& type = pair.first;
         const auto& field = pair.second;
         os << "\n" << to_string(type) << " (" << to_string(field.get_type()) << "): ";
-        
+
         switch (field.get_type()) {
             case GpuParsedFieldType::BYTE_VECTOR: {
                 const std::vector<uint8_t>* byte_data = nullptr;

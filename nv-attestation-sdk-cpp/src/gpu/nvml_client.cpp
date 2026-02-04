@@ -25,6 +25,7 @@
 
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
+#include "nv_attestation/utils.h"
 #include "nv_attestation/gpu/nvml_client.h"
 #include "nv_attestation/gpu/evidence.h"
 
@@ -43,11 +44,24 @@ using nvmlDevice_t = void*;
 #define NVML_CC_SYSTEM_FEATURE_DISABLED 0
 #define NVML_CC_SYSTEM_FEATURE_ENABLED  1
 
+#define NVML_CC_SYSTEM_MULTIGPU_NONE           0
+#define NVML_CC_SYSTEM_MULTIGPU_PROTECTED_PCIE 1
+
 typedef struct {
     unsigned int environment;
     unsigned int ccFeature;
     unsigned int devToolsMode;
 } nvmlConfComputeSystemState_t;
+
+typedef struct {
+    unsigned int version;
+    unsigned int environment;
+    unsigned int ccFeature;
+    unsigned int devToolsMode;
+    unsigned int multiGpuMode;
+} nvmlConfComputeSettings_t;
+
+#define nvmlConfComputeSettings_v1 (unsigned int)(sizeof(nvmlConfComputeSettings_t) | (1 << 24U))
 
 #define NVML_GPU_CERT_CHAIN_SIZE 0x1000
 #define NVML_GPU_ATTESTATION_CERT_CHAIN_SIZE 0x1400
@@ -82,6 +96,7 @@ using nvmlShutdown_t = nvmlReturn_t (*)(void);
 using nvmlErrorString_t = const char* (*)(nvmlReturn_t result);
 
 using nvmlSystemGetConfComputeState_t = nvmlReturn_t (*)(nvmlConfComputeSystemState_t* state);
+using nvmlSystemGetConfComputeSettings_t = nvmlReturn_t (*)(nvmlConfComputeSettings_t* settings);
 using nvmlSystemSetConfComputeGpusReadyState_t = nvmlReturn_t (*)(unsigned int state);
 using nvmlSystemGetConfComputeGpusReadyState_t = nvmlReturn_t (*)(unsigned int* state);
 using nvmlSystemGetDriverVersion_t = nvmlReturn_t (*)(char* version, unsigned int length);
@@ -103,6 +118,7 @@ struct NvmlFunctions {
     nvmlErrorString_t error_string = nullptr;
 
     nvmlSystemGetConfComputeState_t system_get_conf_compute_state = nullptr;
+    nvmlSystemGetConfComputeSettings_t system_get_conf_compute_settings = nullptr;
     nvmlSystemSetConfComputeGpusReadyState_t system_set_conf_compute_gpus_ready_state = nullptr;
     nvmlSystemGetConfComputeGpusReadyState_t system_get_conf_compute_gpus_ready_state = nullptr;
     nvmlSystemGetDriverVersion_t system_get_driver_version = nullptr;
@@ -136,34 +152,19 @@ static const char* get_error_string(nvmlReturn_t result) {
     return "Unknown NVML error (error_string function not loaded)";
 }
 
-template<typename T>
-static bool load_symbol(void* handle, const char* name, T& func_ptr) {
-    dlerror();
-    
-    void* symbol = dlsym(handle, name);
-    const char* error = dlerror();
-    
-    if (error != nullptr || symbol == nullptr) {
-        LOG_ERROR("Failed to load symbol '" << name << "': " << (error ? error : "symbol not found"));
-        return false;
-    }
-    
-    func_ptr = reinterpret_cast<T>(symbol);
-    return true;
-}
-
 static bool load_all_symbols(void* handle) {
     bool success = true;
-    
+
     success = load_symbol(handle, "nvmlInit_v2", g_nvml_funcs.init) && success;
     success = load_symbol(handle, "nvmlShutdown", g_nvml_funcs.shutdown) && success;
     success = load_symbol(handle, "nvmlErrorString", g_nvml_funcs.error_string) && success;
-    
+
     success = load_symbol(handle, "nvmlSystemGetConfComputeState", g_nvml_funcs.system_get_conf_compute_state) && success;
+    success = load_symbol(handle, "nvmlSystemGetConfComputeSettings", g_nvml_funcs.system_get_conf_compute_settings) && success;
     success = load_symbol(handle, "nvmlSystemSetConfComputeGpusReadyState", g_nvml_funcs.system_set_conf_compute_gpus_ready_state) && success;
     success = load_symbol(handle, "nvmlSystemGetConfComputeGpusReadyState", g_nvml_funcs.system_get_conf_compute_gpus_ready_state) && success;
     success = load_symbol(handle, "nvmlSystemGetDriverVersion", g_nvml_funcs.system_get_driver_version) && success;
-    
+
     success = load_symbol(handle, "nvmlDeviceGetCount", g_nvml_funcs.device_get_count) && success;
     success = load_symbol(handle, "nvmlDeviceGetHandleByIndex", g_nvml_funcs.device_get_handle_by_index) && success;
     success = load_symbol(handle, "nvmlDeviceGetConfComputeGpuCertificate", g_nvml_funcs.device_get_conf_compute_gpu_certificate) && success;
@@ -254,7 +255,20 @@ Error is_cc_enabled(bool& out_is_enabled)
         LOG_ERROR("CC feature error: " << std::string(get_error_string(result)));
         return Error::NvmlError;
     }
-    out_is_enabled = (state.ccFeature != 0);
+    out_is_enabled = (state.ccFeature == NVML_CC_SYSTEM_FEATURE_ENABLED);
+    return Error::Ok;
+}
+
+Error is_ppcie_mode_enabled(bool& out_is_enabled)
+{
+    nvmlConfComputeSettings_t settings{};
+    settings.version = nvmlConfComputeSettings_v1;
+    nvmlReturn_t result = g_nvml_funcs.system_get_conf_compute_settings(&settings);
+    if (result != NVML_SUCCESS) {
+        LOG_ERROR("PPCIe feature error: " << std::string(get_error_string(result)));
+        return Error::NvmlError;
+    }
+    out_is_enabled = (settings.multiGpuMode == NVML_CC_SYSTEM_MULTIGPU_PROTECTED_PCIE);
     return Error::Ok;
 }
 
@@ -414,8 +428,27 @@ Error collect_evidence_nvml(const std::vector<uint8_t>& nonce_input, std::vector
         return Error::NvmlError;
     }
 
+    bool cc_enabled = false;
+    Error err = is_cc_enabled(cc_enabled);
+    if (err != Error::Ok) {
+        LOG_ERROR("Failed to check if CC is enabled");
+        return err;
+    }
+
+    bool ppcie_enabled = false;
+    err = is_ppcie_mode_enabled(ppcie_enabled);
+    if (err != Error::Ok) {
+        LOG_ERROR("Failed to check if PPCIe is enabled");
+        return err;
+    }
+
+    if (!cc_enabled && !ppcie_enabled) {
+        LOG_ERROR("GPU must be running in CC or PPCIe mode to collect evidence through NVML");
+        return Error::GpuModeNotSupported;
+    }
+
     unsigned int device_count = 0;
-    Error err = get_device_count(device_count);
+    err = get_device_count(device_count);
     if (err != Error::Ok) {
         LOG_ERROR("Failed to get GPU device count");
         return err;

@@ -20,6 +20,8 @@
 #include "logging.h"
 #include "nvat.h"
 #include "spdlog/spdlog.h"
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
 
@@ -36,21 +38,31 @@ namespace nvattest {
     }
 
     void add_evidence_collection_options(CLI::App* app, EvidenceCollectionOptions& options) {
-        app->add_option("--nonce", options.nonce, "Nonce for the attestation in hex format. If not provided, a nonce will be generated.")
+        app->add_option("--nonce", options.nonce, "Nonce for the attestation in hex format. A nonce will be generated if not supplied.")
             ->default_val("");
         app->add_option("--device,-d", options.device, "Device to attest")
             ->check(CLI::IsMember({"gpu", "nvswitch"}))
             ->default_val("gpu");
 
         static const char* gpu_evidence_group = "GPU Evidence";
-        app->add_option("--gpu-evidence-source", options.gpu_evidence_source, 
+        app->add_option("--gpu-evidence-source", options.gpu_evidence_source,
             "Source of GPU evidence. Used if --device=gpu\n\n"
-            "NVML is the default and requires the NVIDIA GPU driver to be installed. "
+            "NVML is the default and requires the NVIDIA GPU driver to be installed and the GPU to be in CC mode. "
+            "Corelib can be used outside of CC mode and requires the Corelib library to be installed. "
             "Files can be used to appraise previously collected evidence.")
             ->group(gpu_evidence_group)
-            ->check(CLI::IsMember({"nvml", "file"}))
+            ->check(CLI::IsMember({"nvml", "corelib", "file"}))
             ->default_val("nvml");
-        app->add_option("--gpu-evidence-file", options.gpu_evidence_file, 
+        app->add_option("--gpu-architecture", options.gpu_architecture,
+            "GPU architecture. Required if --gpu-evidence-source=corelib")
+            ->group(gpu_evidence_group)
+            ->check(CLI::IsMember({"blackwell"}, CLI::ignore_case))
+            ->transform([](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+                return s;
+            })
+            ->default_str("");
+        app->add_option("--gpu-evidence-file", options.gpu_evidence_file,
             "Path to a file containing GPU evidence. Used if --gpu-evidence-source=file")
             ->group(gpu_evidence_group)
             ->default_str("");
@@ -63,7 +75,7 @@ namespace nvattest {
             ->group(switch_evidence_group)
             ->check(CLI::IsMember({"nscq", "file"}))
             ->default_val("nscq");
-        app->add_option("--nvswitch-evidence-file", options.switch_evidence_file, 
+        app->add_option("--nvswitch-evidence-file", options.switch_evidence_file,
             "Path to a file containing NVSwitch evidence. Used if --nvswitch-evidence-source=file")
             ->group(switch_evidence_group)
             ->default_str("");
@@ -77,6 +89,11 @@ namespace nvattest {
                 auto result = validator(options.gpu_evidence_file);
                 if (!result.empty()) {
                     throw CLI::ValidationError("--gpu-evidence-file", result);
+                }
+            }
+            if (options.device == "gpu" && options.gpu_evidence_source == "corelib") {
+                if (options.gpu_architecture.empty()) {
+                    throw CLI::ValidationError("--gpu-architecture", "--gpu-architecture is required when --gpu-evidence-source=corelib");
                 }
             }
             if (options.device == "nvswitch" && options.switch_evidence_source == "file") {
@@ -131,12 +148,12 @@ namespace nvattest {
 
     void add_common_options(CLI::App& app, CommonOptions& options) {
         app.fallthrough(true);
-        
+
         app.add_option("--log-level,-l", options.log_level_str, "Print logs at or above the given level")
             ->envname("NVAT_LOG_LEVEL")
             ->check(CLI::IsMember({"trace", "debug", "info", "warn", "error", "off"}))
             ->default_val("info");
-        
+
         app.add_option("--format,-f", options.format, "Print output in the given format")
             ->envname("NVAT_FORMAT")
             ->check(CLI::IsMember({"text", "json"}))
@@ -165,6 +182,9 @@ namespace nvattest {
                 break;
             case NVAT_RC_NSCQ_INIT_FAILED:
                 SPDLOG_CRITICAL("Ensure libnvidia-nscq is installed and an NVSwitch is available on this node.");
+                break;
+            case NVAT_RC_CORELIB_INIT_FAILED:
+                SPDLOG_CRITICAL("Ensure libcorelib.so.1 is installed and available in the library search path.");
                 break;
         }
 

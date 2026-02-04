@@ -27,6 +27,7 @@
 #include "nv_attestation/error.h"
 #include "nv_attestation/gpu/evidence.h"
 #include "nv_attestation/gpu/nvml_client.h"
+#include "nv_attestation/gpu/corelib_client.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/spdm/spdm_req.hpp"
@@ -74,13 +75,13 @@ Error GpuArchitectureData::create(GpuArchitecture arch, GpuArchitectureData& out
 void to_json(json& out_json, const GpuEvidence& evidence) {
     std::string encoded_evidence;
     Error err = encode_base64(evidence.get_attestation_report(), encoded_evidence);
-    if (err != Error::Ok) { 
+    if (err != Error::Ok) {
         // to be caught by library wrapper. not for users.
         throw std::runtime_error("Failed to encode attestation report to base64");
     }
     std::string encoded_certificate;
     err = encode_base64(evidence.get_attestation_cert_chain(), encoded_certificate);
-    if (err != Error::Ok) { 
+    if (err != Error::Ok) {
         throw std::runtime_error("Failed to encode attestation cert chain to base64");
     }
     out_json = json{
@@ -154,11 +155,15 @@ std::string to_string(GpuArchitecture arch) {
 }
 
 void from_string(const std::string& arch_str, GpuArchitecture& out_arch) {
-    if (arch_str == "HOPPER") {
+    // Convert to uppercase for case-insensitive comparison
+    std::string upper_arch = arch_str;
+    std::transform(upper_arch.begin(), upper_arch.end(), upper_arch.begin(), ::toupper);
+
+    if (upper_arch == "HOPPER") {
         out_arch = GpuArchitecture::Hopper;
         return;
     }
-    if (arch_str == "BLACKWELL") {
+    if (upper_arch == "BLACKWELL") {
         out_arch = GpuArchitecture::Blackwell;
         return;
     }
@@ -174,6 +179,27 @@ Error NvmlEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_inpu
     }
 
     err = collect_evidence_nvml(nonce_input, out_evidence);
+    if (err != Error::Ok) {
+        return err;
+    }
+
+    return Error::Ok;
+}
+
+Error CorelibEvidenceCollector::get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const
+{
+    // Validate nonce is provided
+    if (nonce_input.empty()) {
+        LOG_ERROR("Nonce is required for corelib evidence collection");
+        return Error::BadArgument;
+    }
+
+    Error err = init_corelib();
+    if (err != Error::Ok) {
+        return err;
+    }
+
+    err = collect_evidence_corelib(nonce_input, m_architecture, out_evidence);
     if (err != Error::Ok) {
         return err;
     }
@@ -203,7 +229,7 @@ Error GpuEvidence::generate_gpu_evidence_claims(const GpuEvidence::AttestationRe
     }
 
     out_gpu_evidence_claims.m_gpu_ar_arch_match = true;
-    
+
     const SpdmMeasurementRequestMessage11* spdm_request = nullptr;
     error = attestation_report.get_spdm_request(spdm_request);
     if (error != Error::Ok) {
@@ -225,7 +251,7 @@ Error GpuEvidence::generate_gpu_evidence_claims(const GpuEvidence::AttestationRe
 
     error = attestation_report.generate_attestation_report_claims(ocsp_verify_options, ocsp_client, arch_data, out_gpu_evidence_claims.m_attestation_report_claims);
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to generate attestation report claims.");
+        LOG_ERROR("Failed to generate attestation report claims");
         return error;
     }
     return Error::Ok;
@@ -287,7 +313,7 @@ Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attesta
 
     Error error = X509CertChain::create_from_cert_chain_str(CertificateChainType::GPU_DEVICE_IDENTITY, DEVICE_ROOT_CERT, ar_cert_chain, out_attestation_report.m_attestation_cert_chain);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to parse attestation certificate chain.");
+        LOG_ERROR("Failed to parse attestation certificate chain");
         return Error::InternalError;
     }
 
@@ -298,17 +324,17 @@ Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attesta
         return error;
     }
     if (attestation_report_data.size() <= arch_data.get_ar_signature_length()) {
-        LOG_PUSH_ERROR(Error::InternalError, "Attestation report data is too short.");
+        LOG_ERROR("Attestation report data is too short");
         return Error::InternalError;
     }
 
     std::ptrdiff_t ar_signature_length = static_cast<std::ptrdiff_t>(arch_data.get_ar_signature_length());
     std::vector<uint8_t> data_wo_signature(attestation_report_data.begin(), attestation_report_data.end() - ar_signature_length);
     std::vector<uint8_t> signature(attestation_report_data.end() - ar_signature_length, attestation_report_data.end());
-    
+
     error = out_attestation_report.m_attestation_cert_chain.verify_signature_pkcs11(data_wo_signature, signature, arch_data.get_ar_signature_hash_algorithm());
-    if (error != Error::Ok) { 
-        LOG_ERROR("Failed to verify attestation report signature.");
+    if (error != Error::Ok) {
+        LOG_ERROR("Failed to verify attestation report signature");
         return Error::GpuEvidenceInvalidSignature;
     }
 
@@ -316,28 +342,28 @@ Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attesta
     std::vector<uint8_t> spdm_request(attestation_report_data.begin(), attestation_report_data.begin() + spdm_request_length);
     error = SpdmMeasurementRequestMessage11::create(spdm_request, out_attestation_report.m_spdm_request);
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to parse SPDM request.");
+        LOG_ERROR("Failed to parse SPDM request");
         return Error::GpuEvidenceInvalid;
     }
 
     std::vector<uint8_t> spdm_response(attestation_report_data.begin() + spdm_request_length, attestation_report_data.end());
     error = SpdmMeasurementResponseMessage11::create(spdm_response, arch_data.get_ar_signature_length(), out_attestation_report.m_spdm_response);
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to parse SPDM response.");
+        LOG_ERROR("Failed to parse SPDM response");
         return Error::GpuEvidenceInvalid;
     }
 
     const std::vector<ParsedOpaqueFieldData>* parsed_opaque_data_ptr = nullptr;
     error = out_attestation_report.m_spdm_response.get_parsed_opaque_data(parsed_opaque_data_ptr);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to parse GPU opaque data.");
-        return Error::InternalError;
+        LOG_ERROR("Failed to parse GPU opaque data");
+        return error;
     }
 
     error = GpuOpaqueDataParser::create(*parsed_opaque_data_ptr, out_attestation_report.m_gpu_opaque_data_parser);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to parse GPU opaque data.");
-        return Error::InternalError;
+        LOG_ERROR("Failed to parse GPU opaque data");
+        return error;
     }
     LOG_TRACE("GPU opaque data: " << out_attestation_report.m_gpu_opaque_data_parser);
 
@@ -376,13 +402,13 @@ Error GpuEvidence::AttestationReport::get_vbios_version(std::string& out_vbios_v
     //reverse the vector
     std::reverse(vbios_version_data_vec.begin(), vbios_version_data_vec.end());
     std::string hex_value = to_hex_string(vbios_version_data_vec);
-    
+
     // why is this done? if someone ever finds out, pls update this comment
     size_t half_len = hex_value.length() / 2;
-    std::string second_half = hex_value.substr(half_len);  
-    std::string before_middle = hex_value.substr(half_len - 2, 2);  
+    std::string second_half = hex_value.substr(half_len);
+    std::string before_middle = hex_value.substr(half_len - 2, 2);
     std::string temp = second_half + before_middle;
-    
+
     // Format as xx.xx.xx.xx.xx by taking pairs and adding dots
     std::string result;
     size_t hex_pair_idx = 0;
@@ -537,30 +563,12 @@ Error GpuEvidence::AttestationReport::get_measurements(std::unordered_map<int, s
         const std::vector<uint8_t>& measurement_value = it->second->get_measurement_value();
         out_measurements[static_cast<int>(index)-1] = measurement_value;
     }
-    
+
     return Error::Ok;
 }
 
 Error GpuEvidence::AttestationReport::get_opaque_data_version(uint64_t& out_opaque_data_version) const {
-    const GpuParsedOpaqueFieldData* opaque_data_version_field = nullptr;
-    Error error = m_gpu_opaque_data_parser.get_field(GpuOpaqueDataType::OPAQUE_DATA_VERSION, opaque_data_version_field);
-    if (error != Error::Ok) {
-        return error;
-    }
-    const std::vector<uint8_t>* opaque_data_version_data = nullptr;
-    error = opaque_data_version_field->get_byte_vector(opaque_data_version_data);
-    if (error != Error::Ok) {
-        return error;
-    }
-    // do not know the actual size of the opaque data version, but assume it is less than 8 bytes
-    if (opaque_data_version_data->size() > MAX_OPAQUE_DATA_VERSION_SIZE) {
-        LOG_ERROR("Opaque data version vector greater than 8 bytes");
-    }
-    if(!read_little_endian(*opaque_data_version_data, 0, opaque_data_version_data->size(), out_opaque_data_version)) {
-        LOG_ERROR("Failed to read opaque data version");
-        return Error::InternalError;
-    }
-    LOG_TRACE("Opaque data version: " << out_opaque_data_version);
+    out_opaque_data_version = m_gpu_opaque_data_parser.get_opaque_data_version();
     return Error::Ok;
 }
 
@@ -669,20 +677,20 @@ std::ostream& operator<<(std::ostream& os, const GpuEvidenceClaims::AttestationR
 // << operator for GpuEvidenceClaims
 std::ostream& operator<<(std::ostream& os, const GpuEvidenceClaims& claims) {
     os << "\n=== GPU Evidence Claims Debug Output ===" << std::endl;
-    
+
     // Basic string fields
     os << "Driver Version: " << claims.m_driver_version << std::endl;
     os << "VBios Version: " << claims.m_vbios_version << std::endl;
-    
+
     // Boolean match fields
     os << "Architecture Match: " << (claims.m_gpu_ar_arch_match ? "true" : "false") << std::endl;
     os << "Nonce Match: " << (claims.m_gpu_ar_nonce_match ? "true" : "false") << std::endl;
-    
+
     os << std::endl;
     os << claims.m_attestation_report_claims;
-    
+
     os << "========================================\n" << std::endl;
-    
+
     return os;
 }
 

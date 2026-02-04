@@ -119,8 +119,6 @@ class GpuEvidence {
             SpdmMeasurementRequestMessage11 m_spdm_request;
             GpuOpaqueDataParser m_gpu_opaque_data_parser;
             X509CertChain m_attestation_cert_chain;
-
-            static constexpr const size_t MAX_OPAQUE_DATA_VERSION_SIZE = 8;
             static constexpr const size_t MAX_FEATURE_FLAG_SIZE = 8;
         };
         GpuEvidence(
@@ -203,6 +201,25 @@ class NvmlEvidenceCollector : public IGpuEvidenceSource {
         Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
 
     // TODO: the implementation may need an option to require CC or fail if in dev mode. These can be private vars configured with setters.
+};
+
+/**
+ * @brief Collects GPU evidence using Corelib SPDM C API.
+ *
+ * This collector uses SPDM protocol directly via corelib to collect attestation evidence.
+ * No verification or RIM matching is performed - evidence is returned as-is in base64 format.
+ * Currently only supports Blackwell.
+ *
+ */
+class CorelibEvidenceCollector : public IGpuEvidenceSource {
+    public:
+        explicit CorelibEvidenceCollector(GpuArchitecture architecture)
+            : m_architecture(architecture) {}
+
+        Error get_evidence(const std::vector<uint8_t>& nonce_input, std::vector<std::shared_ptr<GpuEvidence>>& out_evidence) const override;
+
+    private:
+        GpuArchitecture m_architecture;
 };
 
 /**

@@ -23,6 +23,7 @@
 
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
+#include "nv_attestation/utils.h"
 #include "nv_attestation/switch/nscq_client.h"
 #include "nv_attestation/switch/evidence.h"
 
@@ -147,25 +148,9 @@ static std::string nscq_rc_to_string(nscq_rc_t rc) {
     return "NSCQ_RC_ERROR: " + desc + " (Code " + std::to_string(rc) + ")";
 }
 
-template<typename T>
-static bool load_symbol(void* handle, const char* name, T& func_ptr) {
-    dlerror();
-    
-    void* symbol = dlsym(handle, name);
-    const char* error = dlerror();
-    
-    if (error != nullptr || symbol == nullptr) {
-        LOG_ERROR("Failed to load symbol '" << name << "': " << (error ? error : "symbol not found"));
-        return false;
-    }
-    
-    func_ptr = reinterpret_cast<T>(symbol);
-    return true;
-}
-
 static bool load_all_symbols(void* handle) {
     bool success = true;
-    
+
     success = load_symbol(handle, "nscq_session_create", g_nscq_funcs.session_create) && success;
     success = load_symbol(handle, "nscq_session_destroy", g_nscq_funcs.session_destroy) && success;
     success = load_symbol(handle, "nscq_session_path_observe", g_nscq_funcs.session_path_observe) && success;

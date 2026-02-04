@@ -25,11 +25,12 @@ namespace nvattest {
     struct EvidenceCollectionOptions {
         std::string nonce;
         std::string device; // gpu, nvswitch
-        std::string gpu_evidence_source; // nvml, file
+        std::string gpu_evidence_source; // nvml, corelib, file
         std::string switch_evidence_source; // nscq, file
         std::string gpu_evidence_file;
         std::string switch_evidence_file;
-        
+        std::string gpu_architecture; // Required for corelib
+
         std::string pretty_device() const {
             if (device == "gpu") return "GPU";
             if (device == "nvswitch") return "NVSwitch";
@@ -56,7 +57,7 @@ namespace nvattest {
     struct CommonOptions {
         std::string log_level_str;
         std::string format;
-        
+
         nvat_log_level_t get_log_level() const;
     };
 

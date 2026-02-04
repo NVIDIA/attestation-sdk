@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nvattest VERSION 1.0.0)
+project(nvattest VERSION 1.1.0)
 
 option(BUILD_TESTING "Build tests" OFF)
 option(USE_SYSTEM_NVAT "Compile and link to the system nvat library. If OFF, nvat will be built from source." OFF)
