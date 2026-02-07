@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.1.0)
+project(nv-attestation VERSION 1.1.1)
 
-set(CMAKE_CXX_STANDARD 14 CACHE STRING 
+set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
 )
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON CACHE STRING
@@ -29,12 +29,40 @@ endif()
 include(CTest)
 include(GNUInstallDirs)
 include(FetchContent)
+include(ExternalProject)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
     cmake_policy(SET CMP0135 NEW)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# Build xmlsec 1.2.39 statically to avoid version mismatches across distros
+set(XMLSEC_INSTALL_DIR "${CMAKE_BINARY_DIR}/xmlsec-install")
+
+ExternalProject_Add(xmlsec_external
+  URL https://github.com/lsh123/xmlsec/releases/download/xmlsec-1_2_39/xmlsec1-1.2.39.tar.gz
+  URL_HASH SHA256=15f2f55ea5968e578fcd24b3b427e553876c86c147dc7f03923e98fc2768a1fa
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure
+    --prefix=${XMLSEC_INSTALL_DIR}
+    --disable-shared
+    --enable-static
+    --disable-crypto-dl
+    --with-openssl
+    --without-gnutls
+    --without-nss
+    --without-gcrypt
+    --with-libxslt=no
+    --disable-docs
+    --disable-apps
+    "CFLAGS=-fPIC"
+  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+  INSTALL_COMMAND make install
+  BUILD_IN_SOURCE 1
+)
+
+# Set variables for Findxmlsec.cmake to use
+set(XMLSEC_ROOT "${XMLSEC_INSTALL_DIR}" CACHE PATH "xmlsec installation directory" FORCE)
 
 FetchContent_Declare(
     Corrosion
@@ -128,6 +156,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 
 find_package(CURL REQUIRED)
 find_package(LibXml2 REQUIRED)
+find_package(LibXslt REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(xmlsec REQUIRED)
 
