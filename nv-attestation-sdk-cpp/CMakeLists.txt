@@ -305,4 +305,12 @@ install(FILES
   COMPONENT Development
 )
 
+configure_file(cmake/nvat.pc.in nvat.pc @ONLY)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/nvat.pc
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+  COMPONENT Development
+)
+
 include(CPack)
