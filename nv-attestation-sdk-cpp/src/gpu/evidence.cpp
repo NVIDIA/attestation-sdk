@@ -15,9 +15,11 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <memory>
+#include <set>
 #include <iostream>
 #include <ctime>
 #include <stdexcept>
@@ -26,6 +28,7 @@
 
 #include "nv_attestation/error.h"
 #include "nv_attestation/gpu/evidence.h"
+#include "internal/debug.hpp"
 #include "nv_attestation/gpu/nvml_client.h"
 #include "nv_attestation/gpu/corelib_client.h"
 #include "nv_attestation/log.h"
@@ -48,7 +51,7 @@ const std::vector<GpuArchitecture> GpuArchitectureData::m_supported_architecture
 
 Error GpuArchitectureData::create(GpuArchitecture arch, GpuArchitectureData& out_arch_data) {
     if (std::find(m_supported_architectures.begin(), m_supported_architectures.end(), arch) == m_supported_architectures.end()) {
-        LOG_PUSH_ERROR(Error::GpuArchitectureNotSupported, "GPU architecture " + to_string(arch) + " is not supported.");
+        LOG_ERROR("GPU architecture " + to_string(arch) + " is not supported.");
         return Error::GpuArchitectureNotSupported;
     }
     out_arch_data.m_arch = arch;
@@ -66,7 +69,7 @@ Error GpuArchitectureData::create(GpuArchitecture arch, GpuArchitectureData& out
             out_arch_data.m_fwid_type = X509CertChain::FWIDType::FWID_2_23_133_5_4_1_1;
             break;
         default:
-            LOG_PUSH_ERROR(Error::GpuArchitectureNotSupported, "GPU architecture " + to_string(arch) + " is not supported.");
+            LOG_ERROR("GPU architecture " + to_string(arch) + " is not supported.");
             return Error::GpuArchitectureNotSupported;
     }
     return Error::Ok;
@@ -222,6 +225,11 @@ Error GpuEvidence::generate_gpu_evidence_claims(const GpuEvidence::AttestationRe
         return error;
     }
 
+    error = attestation_report.get_gpu_switch_pdis(out_gpu_evidence_claims.m_gpu_switch_pdis);
+    if (error != Error::Ok && error != Error::SpdmFieldNotFound) {
+        return error;
+    }
+
     GpuArchitectureData arch_data;
     error = GpuArchitectureData::create(m_gpu_architecture, arch_data);
     if (error != Error::Ok) {
@@ -288,6 +296,7 @@ Error GpuEvidence::AttestationReport::generate_attestation_report_claims(const O
 
     error = m_attestation_cert_chain.generate_cert_chain_claims(ocsp_verify_options, ocsp_client, out_attestation_report_claims.m_cert_chain_claims);
     if (error != Error::Ok) {
+        LOG_ERROR("Failed to validate attestation report certificate chain");
         return error;
     }
 
@@ -310,6 +319,8 @@ Error GpuEvidence::AttestationReport::get_spdm_request(const SpdmMeasurementRequ
 }
 
 Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attestation_report_data, const std::string& ar_cert_chain, GpuArchitecture architecture, AttestationReport& out_attestation_report) {
+    LOG_DEBUG("GPU attestation report (base64): " << encode_base64_for_log(attestation_report_data));
+    LOG_DEBUG("GPU attestation cert chain:\n" << format_cert_chain_for_log(ar_cert_chain));
 
     Error error = X509CertChain::create_from_cert_chain_str(CertificateChainType::GPU_DEVICE_IDENTITY, DEVICE_ROOT_CERT, ar_cert_chain, out_attestation_report.m_attestation_cert_chain);
     if (error != Error::Ok) {
@@ -421,6 +432,31 @@ Error GpuEvidence::AttestationReport::get_vbios_version(std::string& out_vbios_v
     std::transform(result.begin(), result.end(), result.begin(), ::toupper);
     remove_null_terminators(result);
     out_vbios_version = result;
+    return Error::Ok;
+}
+
+Error GpuEvidence::AttestationReport::get_gpu_switch_pdis(std::vector<std::string>& out_pdis) const {
+    const GpuParsedOpaqueFieldData* pdis_field = nullptr;
+    Error error = m_gpu_opaque_data_parser.get_field(GpuOpaqueDataType::SWITCH_PDI, pdis_field);
+    if (error != Error::Ok) {
+        return error;
+    }
+    const std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>* pdis_data = nullptr;
+    error = pdis_field->get_pdi_vector(pdis_data);
+    if (error != Error::Ok) {
+        return error;
+    }
+    
+    std::set<std::string> unique_pdis;
+    for (const auto& pdi : *pdis_data) {
+        // Reverse byte order to match the NVSwitch self-reported PDIs
+        auto reversed_pdi = pdi;
+        std::reverse(reversed_pdi.begin(), reversed_pdi.end());
+        std::string pdi_str = to_hex_string(reversed_pdi);
+        std::transform(pdi_str.begin(), pdi_str.end(), pdi_str.begin(), ::toupper);
+        unique_pdis.insert(pdi_str);
+    }
+    out_pdis.assign(unique_pdis.begin(), unique_pdis.end());
     return Error::Ok;
 }
 

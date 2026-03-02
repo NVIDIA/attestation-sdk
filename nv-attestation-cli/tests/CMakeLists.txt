@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.11)
 project(nv-attestation-cli-tests)
 
-find_package(GTest REQUIRED)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../nv-attestation-sdk-cpp/cmake")
+include(nvat_fetch_gtest)
 
 option(SANITIZER "Select a sanitizer" OFF)
 
@@ -78,7 +79,6 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # nvat_locate_installed() sets NVAT_INCLUDE_DIR to the directory containing nvat.h
     include(CTest)
     enable_testing()
-    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../nv-attestation-sdk-cpp/cmake")
     include(nvat_locate_installed)
     nvat_locate_installed()
 

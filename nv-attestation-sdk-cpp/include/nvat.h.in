@@ -574,6 +574,31 @@ nvat_rc_t nvat_nonce_to_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str
  */
 nvat_rc_t nvat_nonce_from_hex(nvat_nonce_t* out_nonce, const char* hex_string);
 
+/**
+ * @brief Create a nonce from raw bytes.
+ *
+ * @param out_nonce On success, set to a newly allocated nonce. Caller owns it; free with nvat_nonce_free().
+ * @param input_bytes The raw bytes to use as the nonce. This data is copied into the nonce.
+ * @param length The number of bytes in input_bytes. Must be at least 32 bytes.
+ * @return NVAT_RC_OK on success, NVAT_RC_BAD_ARGUMENT if parameters are invalid or length is too short.
+ */
+nvat_rc_t nvat_nonce_from_bytes(nvat_nonce_t* out_nonce, const char* input_bytes, size_t length);
+
+/**
+ * @brief Get a copy of the raw bytes from a nonce.
+ *
+ * This function copies the nonce's raw bytes into the provided buffer. The caller is responsible
+ * for allocating a buffer of sufficient size. Use nvat_nonce_get_length() to determine the required
+ * buffer size before calling this function.
+ *
+ * @param nonce The nonce to read from. Must not be null.
+ * @param bytes Buffer to copy the nonce bytes into. Must not be null and must be at least bytes_len in size.
+ *              The nonce data is COPIED into this buffer - the caller owns the buffer and the nonce remains unchanged.
+ * @param bytes_len The size of the bytes buffer. Must match the nonce length exactly.
+ * @return NVAT_RC_OK on success, NVAT_RC_BAD_ARGUMENT if parameters are invalid or bytes_len doesn't match nonce length.
+ */
+nvat_rc_t nvat_nonce_get_bytes(const nvat_nonce_t nonce, char* bytes, size_t bytes_len);
+
 void nvat_nonce_free(nvat_nonce_t* nonce);
 
 /**

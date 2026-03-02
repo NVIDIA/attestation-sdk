@@ -243,7 +243,6 @@ TEST_F(RimDocumentFixture, OcspInvalidRequest) {
         }));
 
     // Clear any pre-existing errors before the call
-    ErrorStack::clear();
 
     OCSPClaims ocsp_claims;
     OcspVerifyOptions ocsp_verify_options;

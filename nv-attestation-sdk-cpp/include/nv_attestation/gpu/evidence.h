@@ -58,6 +58,7 @@ class GpuEvidenceClaims {
     bool m_gpu_ar_arch_match;
     std::string m_driver_version;
     std::string m_vbios_version;
+    std::vector<std::string> m_gpu_switch_pdis;
     AttestationReportClaims m_attestation_report_claims;
     bool m_gpu_ar_nonce_match;
 };
@@ -105,6 +106,7 @@ class GpuEvidence {
                 Error get_spdm_request(const SpdmMeasurementRequestMessage11*& out_spdm_request) const;
                 Error get_driver_version(std::string& out_driver_version) const;
                 Error get_vbios_version(std::string& out_vbios_version) const;
+                Error get_gpu_switch_pdis(std::vector<std::string>& out_pdis) const;
                 Error get_fwid(const std::vector<uint8_t>*& out_fwid) const;
                 Error get_driver_rim_id(GpuArchitecture architecture, std::string& out_driver_rim_id) const;
                 Error get_vbios_rim_id(std::string& out_vbios_rim_id) const;

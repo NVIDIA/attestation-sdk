@@ -81,13 +81,6 @@ enum class LogLevel {
         } \
     } while (false)
 
-#define LOG_PUSH_ERROR(error_code, message) \
-    do { \
-        std::stringstream stream; \
-        stream << message; \
-        get_logger()->log(LogLevel::ERROR, stream.str(), __FILE__, __FUNCTION__, __LINE__); \
-        ErrorStack::push(error_code, stream.str()); \
-    } while (false)
 // NOLINTEND(bugprone-macro-parentheses)
 
 

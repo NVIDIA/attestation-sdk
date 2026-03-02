@@ -43,7 +43,6 @@ protected:
     std::string kTestDataFilePath = kTestX509CertChainDir + "signed_data.txt";
 
     void SetUp() override {
-        ErrorStack::clear();
 
         Error error = readFileIntoString(kTestRootCertPath, m_root_cert_pem_str);
         ASSERT_EQ(error, Error::Ok);
@@ -76,19 +75,16 @@ protected:
     }
 
     void TearDown() override {
-        ErrorStack::clear();
     }
 };
 
 
 TEST_F(X509CertChainSignatureTest, ValidSignature) {
-    ErrorStack::clear();
     Error error = m_cert_chain.verify_signature(m_data_to_sign, m_valid_signature, m_hash_algo);
     EXPECT_EQ(error, Error::Ok) << "Signature verification failed for a valid signature.";
 }
 
 TEST_F(X509CertChainSignatureTest, InvalidSignatureTamperedData) {
-    ErrorStack::clear();
     std::vector<uint8_t> tampered_data = m_data_to_sign;
     ASSERT_FALSE(tampered_data.empty()) << "Original data to sign is empty, cannot tamper.";
     tampered_data[0]++;
@@ -98,7 +94,6 @@ TEST_F(X509CertChainSignatureTest, InvalidSignatureTamperedData) {
 }
 
 TEST_F(X509CertChainSignatureTest, InvalidSignatureIncorrectSignature) {
-    ErrorStack::clear();
     std::vector<uint8_t> incorrect_signature = m_valid_signature;
     ASSERT_FALSE(incorrect_signature.empty()) << "Original valid signature is empty, cannot make incorrect.";
     incorrect_signature[0]++;
@@ -120,7 +115,6 @@ protected:
     std::string kTestFwidLeafCertWithoutFwidPath = kTestX509CertChainDir + "leaf_cert_without_fwid";
 
     void SetUp() override {
-        ErrorStack::clear();
 
         m_expected_fwid_bytes.clear();
         m_expected_fwid_bytes.reserve(48);
@@ -143,13 +137,11 @@ protected:
     }
 
     void TearDown() override {
-        ErrorStack::clear();
     }
 };
 
 
 TEST_F(X509CertChainFwidTest, FwidFoundInCert) {
-    ErrorStack::clear();
     X509CertChain out_cert_chain;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, out_cert_chain);
     ASSERT_EQ(error, Error::Ok) << "X509CertChain::create failed: " << to_string(error);
@@ -167,7 +159,6 @@ TEST_F(X509CertChainFwidTest, FwidFoundInCert) {
 }
 
 TEST_F(X509CertChainFwidTest, FwidNotFoundInCert) {
-    ErrorStack::clear();
     X509CertChain out_cert_chain;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, out_cert_chain);
     ASSERT_EQ(error, Error::Ok) << "X509CertChain::create failed: " << to_string(error);
@@ -183,7 +174,6 @@ TEST_F(X509CertChainFwidTest, FwidNotFoundInCert) {
 }
 
 TEST_F(X509CertChainFwidTest, IndexOutOfBoundsTooHigh) {
-    ErrorStack::clear();
     X509CertChain cert_chain_obj;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain_obj);
     ASSERT_EQ(error, Error::Ok) << "X509CertChain::create failed: " << to_string(error);
@@ -198,7 +188,6 @@ TEST_F(X509CertChainFwidTest, IndexOutOfBoundsTooHigh) {
 }
 
 TEST_F(X509CertChainFwidTest, IndexOutOfBoundsEmptyChain) {
-    ErrorStack::clear();
     X509CertChain cert_chain_obj;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain_obj);
     ASSERT_EQ(error, Error::Ok) << "X509CertChain::create failed: " << to_string(error);
@@ -223,7 +212,6 @@ protected:
     std::string kTestLeafCertWrongSignaturePath = kTestX509CertChainDir + "leaf_cert_wrong_signature";
 
     void SetUp() override {
-        ErrorStack::clear();
 
         Error error = readFileIntoString(kTestRootCertPath, m_root_cert_pem_str);
         ASSERT_EQ(error, Error::Ok);
@@ -240,13 +228,11 @@ protected:
     }
 
     void TearDown() override {
-        ErrorStack::clear();
     }
 };
 
 
 TEST_F(X509CertChainVerifyTest, ExpiredCertificatePassesVerification) {
-    ErrorStack::clear();
     
     X509CertChain cert_chain;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain);
@@ -261,7 +247,6 @@ TEST_F(X509CertChainVerifyTest, ExpiredCertificatePassesVerification) {
 }
 
 TEST_F(X509CertChainVerifyTest, MinExpirationTime) {
-    ErrorStack::clear();
     
     X509CertChain cert_chain;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain);
@@ -278,7 +263,6 @@ TEST_F(X509CertChainVerifyTest, MinExpirationTime) {
 }
 
 TEST_F(X509CertChainVerifyTest, InvalidSignatureFailsVerification) {
-    ErrorStack::clear();
     
     X509CertChain cert_chain;
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain);

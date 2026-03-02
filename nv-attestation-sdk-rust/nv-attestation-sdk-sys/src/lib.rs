@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,15 @@
  * limitations under the License.
  */
 
-#pragma once
+//! Raw FFI bindings for the NVIDIA Attestation SDK (NVAT).
+//!
+//! This crate contains the automatically generated bindings from bindgen.
+//! For safe Rust wrappers, use the `nv-attestation-sdk` crate instead.
 
-#define NVATTEST_VERSION_STRING "@NVATTEST_FULL_VERSION@"
-#define NVATTEST_SYSTEM_NAME "@CMAKE_SYSTEM_NAME@"
-#define NVATTEST_SYSTEM_PROCESSOR "@CMAKE_SYSTEM_PROCESSOR@"
+#![allow(non_upper_case_globals)]
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+#![allow(dead_code)]
+
+// Include the generated bindings from OUT_DIR (generated at build time)
+include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

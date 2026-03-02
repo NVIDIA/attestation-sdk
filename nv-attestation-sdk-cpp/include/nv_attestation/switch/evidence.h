@@ -73,6 +73,8 @@ class SwitchEvidenceClaims {
         };
         bool m_switch_arch_match;
         std::string m_switch_bios_version;
+        std::string m_switch_pdi;
+        std::vector<std::string> m_switch_gpu_pdis;
         bool m_switch_ar_nonce_match; // true if nonce matches between switch evidence and switch attestation report
         AttestationReportClaims m_attestation_report_claims;
 };
@@ -93,6 +95,8 @@ class SwitchEvidence {
                 Error get_spdm_request(const SpdmMeasurementRequestMessage11*& out_spdm_request) const;
                 Error get_fwid(const std::vector<uint8_t>*& out_fwid) const;
                 Error get_vbios_version(std::string& out_bios_version) const;
+                Error get_switch_pdi(std::string& out_pdi) const;
+                Error get_switch_gpu_pdis(std::vector<std::string>& out_pdis) const;
                 Error get_vbios_rim_id(std::string& out_vbios_rim_id, SwitchArchitecture architecture) const;
                 Error get_spdm_req_nonce(std::vector<uint8_t>& out_nonce) const;
                 Error get_measurements(std::unordered_map<int, std::vector<uint8_t>>& out_measurements) const;

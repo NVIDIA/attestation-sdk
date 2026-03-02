@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.1.0)
+project(nv-attestation VERSION 1.2.0)
 
-set(CMAKE_CXX_STANDARD 14 CACHE STRING 
+set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
 )
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON CACHE STRING
@@ -29,6 +29,7 @@ endif()
 include(CTest)
 include(GNUInstallDirs)
 include(FetchContent)
+include(ExternalProject)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
     cmake_policy(SET CMP0135 NEW)
@@ -74,17 +75,17 @@ FetchContent_Declare(
   EXCLUDE_FROM_ALL
 )
 
-# the fetch content for jwt-cpp is being handled differently because 
+# the fetch content for jwt-cpp is being handled differently because
 # it's headers were getting installed even when using EXCLUDE_FROM_ALL
 # presumably, its because jwt-cpp is not respecting all of CMAKE's rules
-# this way prevents the headers being installed when the sdk is installed 
-# the headers must not be installed because we want to just link to this 
+# this way prevents the headers being installed when the sdk is installed
+# the headers must not be installed because we want to just link to this
 # statically. there is no need to add unnecessary libraries to target machines.
 FetchContent_Populate(jwt-cpp)
 add_library(own-jwt-cpp INTERFACE)
 target_include_directories(own-jwt-cpp
     INTERFACE ${jwt-cpp_SOURCE_DIR}/include)
-# jwt-cpp is advertised as a c++11 library. but it somehow uses c++17 features, 
+# jwt-cpp is advertised as a c++11 library. but it somehow uses c++17 features,
 # but it should work with c++14 also. so disable this warning.
 target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
 
@@ -126,9 +127,112 @@ FetchContent_MakeAvailable(spdlog)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 
-find_package(CURL REQUIRED)
+set(_EP_CC "${CMAKE_C_COMPILER}")
+set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
+
+# Build OpenSSL statically — RHEL8 ships 1.1.1 but the code needs 3.x APIs
+set(OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/openssl-install")
+
+ExternalProject_Add(openssl_external
+  URL https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz
+  URL_HASH SHA256=b1bfedcd5b289ff22aee87c9d600f515767ebf45f77168cb6d64f231f518a82e
+  CONFIGURE_COMMAND <SOURCE_DIR>/Configure
+    "CC=${_EP_CC}"
+    "CFLAGS=${_EP_CFLAGS}"
+    --prefix=${OPENSSL_INSTALL_DIR}
+    --openssldir=${OPENSSL_INSTALL_DIR}
+    --libdir=lib
+    no-shared
+  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+  INSTALL_COMMAND make install_sw install_ssldirs
+  BUILD_IN_SOURCE 1
+)
+
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_INSTALL_DIR}/include")
+file(MAKE_DIRECTORY "${OPENSSL_INCLUDE_DIR}")
+
+add_library(OpenSSL::Crypto STATIC IMPORTED)
+set_target_properties(OpenSSL::Crypto PROPERTIES
+  IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libcrypto.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+  INTERFACE_LINK_LIBRARIES "dl;pthread"
+)
+
+add_library(OpenSSL::SSL STATIC IMPORTED)
+set_target_properties(OpenSSL::SSL PROPERTIES
+  IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libssl.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+  INTERFACE_LINK_LIBRARIES "OpenSSL::Crypto"
+)
+
+# Build xmlsec 1.2.39 statically (depends on OpenSSL 3)
+set(XMLSEC_INSTALL_DIR "${CMAKE_BINARY_DIR}/xmlsec-install")
+
+ExternalProject_Add(xmlsec_external
+  DEPENDS openssl_external
+  URL https://github.com/lsh123/xmlsec/releases/download/xmlsec-1_2_39/xmlsec1-1.2.39.tar.gz
+  URL_HASH SHA256=15f2f55ea5968e578fcd24b3b427e553876c86c147dc7f03923e98fc2768a1fa
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure
+    --prefix=${XMLSEC_INSTALL_DIR}
+    --disable-shared
+    --enable-static
+    --disable-crypto-dl
+    --with-openssl=${OPENSSL_INSTALL_DIR}
+    --without-gnutls
+    --without-nss
+    --without-gcrypt
+    --with-libxslt=no
+    --disable-docs
+    --disable-apps
+    "CC=${_EP_CC}"
+    "CFLAGS=${_EP_CFLAGS}"
+    "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
+  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+  INSTALL_COMMAND make install
+  BUILD_IN_SOURCE 1
+)
+
+set(XMLSEC_ROOT "${XMLSEC_INSTALL_DIR}" CACHE PATH "xmlsec installation directory" FORCE)
+
+# Build libcurl statically — RHEL8 ships 7.61 but the code needs the URL API (>= 7.62)
+set(CURL_INSTALL_DIR "${CMAKE_BINARY_DIR}/curl-install")
+
+ExternalProject_Add(curl_external
+  DEPENDS openssl_external
+  URL https://github.com/curl/curl/releases/download/curl-7_88_1/curl-7.88.1.tar.gz
+  URL_HASH SHA256=cdb38b72e36bc5d33d5b8810f8018ece1baa29a8f215b4495e495ded82bbf3c7
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure
+    --prefix=${CURL_INSTALL_DIR}
+    --with-openssl=${OPENSSL_INSTALL_DIR}
+    --without-libssh2
+    --without-nghttp2
+    --without-brotli
+    --without-zstd
+    --without-libidn2
+    --without-librtmp
+    --without-libpsl
+    --disable-ldap
+    --disable-shared
+    --enable-static
+    "CC=${_EP_CC}"
+    "CFLAGS=${_EP_CFLAGS}"
+    "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
+  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+  INSTALL_COMMAND make install
+  BUILD_IN_SOURCE 1
+)
+
+set(CURL_INCLUDE_DIR "${CURL_INSTALL_DIR}/include")
+file(MAKE_DIRECTORY "${CURL_INCLUDE_DIR}")
+
+add_library(CURL::libcurl STATIC IMPORTED)
+set_target_properties(CURL::libcurl PROPERTIES
+  IMPORTED_LOCATION "${CURL_INSTALL_DIR}/lib/libcurl.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIR}"
+  INTERFACE_LINK_LIBRARIES "OpenSSL::SSL;OpenSSL::Crypto;z;pthread"
+)
+
 find_package(LibXml2 REQUIRED)
-find_package(OpenSSL REQUIRED)
 find_package(xmlsec REQUIRED)
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
@@ -156,7 +260,6 @@ add_library(nvat
   src/attestation.cpp
   src/claims.cpp
   src/claims_evaluator.cpp
-  src/error.cpp
   src/gpu/evidence.cpp
   src/gpu/claims.cpp
   src/gpu/nvml_client.cpp
@@ -168,10 +271,10 @@ add_library(nvat
   src/spdm/spdm_req.cpp
   src/spdm/spdm_resp.cpp
   src/init.cpp
-  src/log.cpp 
+  src/log.cpp
   src/nv_x509.cpp
   src/rego_engine/regorus_rego_engine.cpp
-  src/rim.cpp 
+  src/rim.cpp
   src/switch/evidence.cpp
   src/switch/nscq_client.cpp
   src/switch/claims.cpp
@@ -191,13 +294,13 @@ set_target_properties(nvat PROPERTIES
   SOVERSION "${NV_ATTESTATION_SOVERSION}"
 )
 
-target_include_directories(nvat 
+target_include_directories(nvat
   PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
   PRIVATE
     src
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>  
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     ${regorus_SOURCE_DIR}/bindings/ffi
     # spdlog and fmt include dirs (linked statically via TARGET_FILE below)
     ${spdlog_SOURCE_DIR}/include
@@ -221,10 +324,10 @@ if (BUILD_TESTING)
   add_subdirectory(unit-tests)
 endif()
 
-#todo: how to handle cases where client links against the same 
+#todo: how to handle cases where client links against the same
 #dependency, but a different version of it? what if that dependency
-#has global state that causes conficts if the client modifies that 
-#global state? we can maybe provide a check function that verifies 
+#has global state that causes conficts if the client modifies that
+#global state? we can maybe provide a check function that verifies
 #that all the loaded libraries are of correct version. maybe cmake
 #has support for this.
 # why public: https://stackoverflow.com/questions/26037954/cmake-target-link-libraries-interface-dependencies
@@ -249,9 +352,9 @@ target_link_libraries(nvat
 )
 
 # Ensure dependencies are built before nvat
-add_dependencies(nvat regorus_ffi spdlog fmt)
+add_dependencies(nvat regorus_ffi spdlog fmt curl_external xmlsec_external openssl_external)
 
-# todo (p0): remove cmake configuration helpers 
+# todo (p0): remove cmake configuration helpers
 install(TARGETS nvat
   EXPORT nvatTargets
   ARCHIVE

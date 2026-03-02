@@ -3,7 +3,12 @@
 set -euo pipefail
 
 # --- Configuration ---
-readonly DOCKER_PLATFORM="linux/amd64"
+case "$(uname -m)" in
+    x86_64)       DOCKER_PLATFORM="linux/amd64" ;;
+    arm64|aarch64) DOCKER_PLATFORM="linux/arm64" ;;
+    *) echo "Error: Unsupported host architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+readonly DOCKER_PLATFORM
 readonly IMAGE_NAME="nvattest-dev-image"
 readonly CONTAINER_NAME="nv-attest-dev-container"
 

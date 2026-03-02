@@ -114,6 +114,10 @@ namespace nvattestation
         out_claims.m_driver_version = js.at("x-nvidia-gpu-driver-version").get<std::string>();
         out_claims.m_vbios_version = js.at("x-nvidia-gpu-vbios-version").get<std::string>();
 
+        if (js.contains("x-nvidia-gpu-switch-pdis")) {
+            out_claims.m_gpu_switch_pdis = js.at("x-nvidia-gpu-switch-pdis").get<std::vector<std::string>>();
+        }
+
         // Certificate chain claims - using new from_json function
         out_claims.m_ar_cert_chain = js.at("x-nvidia-gpu-attestation-report-cert-chain").get<SerializableCertChainClaims>();
         out_claims.m_ar_cert_chain_fwid_match = js.at("x-nvidia-gpu-attestation-report-cert-chain-fwid-match").get<bool>();
@@ -159,6 +163,10 @@ namespace nvattestation
         js["x-nvidia-gpu-arch-check"] = claims.m_gpu_arch_match;
         js["x-nvidia-gpu-driver-version"] = claims.m_driver_version;
         js["x-nvidia-gpu-vbios-version"] = claims.m_vbios_version;
+
+        if (!claims.m_gpu_switch_pdis.empty()) {
+            js["x-nvidia-gpu-switch-pdis"] = claims.m_gpu_switch_pdis;
+        }
 
         // Certificate chain claims - now using centralized serialization
         js["x-nvidia-gpu-attestation-report-cert-chain"] = claims.m_ar_cert_chain;
@@ -208,6 +216,7 @@ namespace nvattestation
                compare_shared_ptr(lhs.m_mismatched_measurements, rhs.m_mismatched_measurements) &&
                lhs.m_driver_version == rhs.m_driver_version &&
                lhs.m_vbios_version == rhs.m_vbios_version &&
+               lhs.m_gpu_switch_pdis == rhs.m_gpu_switch_pdis &&
                lhs.m_ar_cert_chain == rhs.m_ar_cert_chain &&
                lhs.m_ar_cert_chain_fwid_match == rhs.m_ar_cert_chain_fwid_match &&
                lhs.m_ar_parsed == rhs.m_ar_parsed &&

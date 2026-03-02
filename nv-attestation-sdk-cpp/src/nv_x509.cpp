@@ -76,13 +76,13 @@ std::string X509CertChain::to_string(FWIDType fwid_type) {
 nv_unique_ptr<X509> x509_from_cert_path(const std::string &path) {
     std::ifstream cert_file_stream(path);
     if (!cert_file_stream.is_open()) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to open certificate file: " << path);
+        LOG_ERROR("Error: unable to open certificate file: " << path);
         return nullptr;
     }
     std::string cert_file_string((std::istreambuf_iterator<char>(cert_file_stream)), std::istreambuf_iterator<char>());
     nv_unique_ptr<X509> cert(x509_from_cert_string(cert_file_string));
     if (!cert) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to create X509 from certificate file content: " << path);
+        LOG_ERROR("Error: unable to create X509 from certificate file content: " << path);
         // Error already logged in x509_from_cert_string
         return nullptr;
     }
@@ -92,18 +92,18 @@ nv_unique_ptr<X509> x509_from_cert_path(const std::string &path) {
 // Function to create an X509_STORE from a trust anchor certificate
 nv_unique_ptr<X509_STORE> create_trust_store(X509* trust_anchor_cert) {
     if (trust_anchor_cert == nullptr) {
-         LOG_PUSH_ERROR(Error::InternalError, "Error: provided trust anchor certificate is null.");
+         LOG_ERROR("Error: provided trust anchor certificate is null.");
          return nullptr;
     }
     nv_unique_ptr<X509_STORE> store(X509_STORE_new());
     if(store == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to create X509_STORE: " << get_openssl_error());
+        LOG_ERROR("Error: unable to create X509_STORE: " << get_openssl_error());
         return nullptr;
     }
 
     // add trust anchor to store and check for errors
     if(X509_STORE_add_cert(store.get(), trust_anchor_cert) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to add trust anchor to store: " << get_openssl_error());
+        LOG_ERROR("Error: unable to add trust anchor to store: " << get_openssl_error());
         return nullptr;
     }
     return store;
@@ -113,7 +113,7 @@ nv_unique_ptr<X509> x509_from_cert_string(const std::string &cert_string) {
 
     nv_unique_ptr<BIO> bio(BIO_new_mem_buf(cert_string.c_str(), (int)cert_string.size()));
     if(bio == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Could not load cert into BIO: " << get_openssl_error());
+        LOG_ERROR("Could not load cert into BIO: " << get_openssl_error());
         return nullptr;
     }
     
@@ -121,7 +121,7 @@ nv_unique_ptr<X509> x509_from_cert_string(const std::string &cert_string) {
     if(cert == nullptr) {
         // print openssl errors
         ERR_print_errors_fp(stderr);
-        LOG_PUSH_ERROR(Error::InternalError, "Could not read cert from BIO: " << get_openssl_error());
+        LOG_ERROR("Could not read cert from BIO: " << get_openssl_error());
         return nullptr;
     }
     
@@ -144,13 +144,13 @@ Error X509CertChain::create(
 
     nv_unique_ptr<X509> root_cert = x509_from_cert_string(root_cert_str);
     if (!root_cert) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create X509 from root_cert");
+        LOG_ERROR("Failed to create X509 from root_cert");
         return Error::InternalError;
     }
 
     trust_store = create_trust_store(root_cert.get());
     if (!trust_store) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create trust store in X509CertChain::create.");
+        LOG_ERROR("Failed to create trust store in X509CertChain::create.");
         return Error::InternalError;
     }
     
@@ -160,13 +160,13 @@ Error X509CertChain::create(
 
 Error X509CertChain::set_root_cert(nv_unique_ptr<X509> root_cert) {
     if (!root_cert) {
-        LOG_PUSH_ERROR(Error::InternalError, "Provided root certificate is null in X509CertChain::set_root_cert, trust store not updated.");
+        LOG_ERROR("Provided root certificate is null in X509CertChain::set_root_cert, trust store not updated.");
         return Error::InternalError;
     }
 
     nv_unique_ptr<X509_STORE> new_trust_store = create_trust_store(root_cert.get());
     if (!new_trust_store) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create new trust store in X509CertChain::set_root_cert.");
+        LOG_ERROR("Failed to create new trust store in X509CertChain::set_root_cert.");
         return Error::InternalError;
     }
 
@@ -178,7 +178,7 @@ Error X509CertChain::set_root_cert(nv_unique_ptr<X509> root_cert) {
 Error X509CertChain::push_back(const std::string &cert_string) {
     nv_unique_ptr<X509> cert(x509_from_cert_string(cert_string));
     if(cert == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to create X509 from cert string: " << get_openssl_error());
+        LOG_ERROR("Error: unable to create X509 from cert string: " << get_openssl_error());
         return Error::InternalError;
     }
     m_certs.push_back(std::move(cert));
@@ -191,35 +191,35 @@ Error X509CertChain::verify_signature(
     const EVP_MD* md) {
 
     if (m_certs.empty() || !m_certs[0]) {
-        LOG_PUSH_ERROR(Error::InternalError, "Leaf certificate is null or chain is empty.");
+        LOG_ERROR("Leaf certificate is null or chain is empty.");
         return Error::InternalError;
     }
 
     if (md == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Hash function is null.");
+        LOG_ERROR("Hash function is null.");
         return Error::InternalError;
     }
 
     nv_unique_ptr<EVP_PKEY> pkey(X509_get_pubkey(m_certs[0].get()));
     if (!pkey) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to get public key from certificate: " << get_openssl_error());
+        LOG_ERROR("Failed to get public key from certificate: " << get_openssl_error());
         return Error::InternalError;
     }
 
     nv_unique_ptr<EVP_MD_CTX> md_ctx(EVP_MD_CTX_new());
     if (!md_ctx) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create EVP_MD_CTX: " << get_openssl_error());
+        LOG_ERROR("Failed to create EVP_MD_CTX: " << get_openssl_error());
         return Error::InternalError;
     }
 
     if (EVP_DigestVerifyInit(md_ctx.get(), nullptr, md, nullptr, pkey.get()) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "EVP_DigestVerifyInit failed: " << get_openssl_error());
+        LOG_ERROR("EVP_DigestVerifyInit failed: " << get_openssl_error());
         return Error::InternalError;
     }
 
     // Provide the data to be hashed and verified.
     if (EVP_DigestVerifyUpdate(md_ctx.get(), data.data(), data.size()) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "EVP_DigestVerifyUpdate failed: " << get_openssl_error());
+        LOG_ERROR("EVP_DigestVerifyUpdate failed: " << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -238,7 +238,7 @@ Error X509CertChain::verify_signature(
         return Error::InternalError;
     } 
     // An error occurred during finalization
-    LOG_PUSH_ERROR(Error::InternalError, "EVP_DigestVerifyFinal failed with error: " << get_openssl_error());
+    LOG_ERROR("EVP_DigestVerifyFinal failed with error: " << get_openssl_error());
     return Error::InternalError;
 }
 
@@ -248,7 +248,7 @@ Error X509CertChain::verify_signature_pkcs11(
     const EVP_MD* md) {
 
     if (pkcs11_signature.size() % 2 != 0) {
-        LOG_PUSH_ERROR(Error::InternalError, "PKCS#11 signature length must be even (R and S components of equal length).");
+        LOG_ERROR("PKCS#11 signature length must be even (R and S components of equal length).");
         return Error::InternalError;
     }
 
@@ -257,29 +257,29 @@ Error X509CertChain::verify_signature_pkcs11(
     nv_unique_ptr<BIGNUM> r_bignum(BN_new());
     nv_unique_ptr<BIGNUM> s_bignum(BN_new());
     if (!r_bignum || !s_bignum) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to allocate BIGNUM for R or S: " << get_openssl_error());
+        LOG_ERROR("Failed to allocate BIGNUM for R or S: " << get_openssl_error());
         return Error::InternalError;
     }
 
     if (BN_bin2bn(pkcs11_signature.data(), static_cast<int>(component_len), r_bignum.get()) == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to convert R component to BIGNUM: " << get_openssl_error());
+        LOG_ERROR("Failed to convert R component to BIGNUM: " << get_openssl_error());
         return Error::InternalError;
     }
     if (BN_bin2bn(pkcs11_signature.data() + component_len, static_cast<int>(component_len), s_bignum.get()) == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to convert S component to BIGNUM: " << get_openssl_error());
+        LOG_ERROR("Failed to convert S component to BIGNUM: " << get_openssl_error());
         return Error::InternalError;
     }
 
     nv_unique_ptr<ECDSA_SIG> ecdsa_sig(ECDSA_SIG_new());
     if (!ecdsa_sig) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to allocate ECDSA_SIG: " << get_openssl_error());
+        LOG_ERROR("Failed to allocate ECDSA_SIG: " << get_openssl_error());
         return Error::InternalError;
     }
 
     // ECDSA_SIG_set0 takes ownership of r and s if successful.
     // We need to release our nv_unique_ptr ownership if the call is successful.
     if (ECDSA_SIG_set0(ecdsa_sig.get(), r_bignum.get(), s_bignum.get()) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to set R and S in ECDSA_SIG: " << get_openssl_error());
+        LOG_ERROR("Failed to set R and S in ECDSA_SIG: " << get_openssl_error());
         // r_bignum and s_bignum are still managed by their nv_unique_ptr and will be freed.
         return Error::InternalError;
     }
@@ -290,14 +290,14 @@ Error X509CertChain::verify_signature_pkcs11(
 
     int der_len = i2d_ECDSA_SIG(ecdsa_sig.get(), nullptr);
     if (der_len <= 0) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to get DER encoding length for ECDSA_SIG: " << get_openssl_error());
+        LOG_ERROR("Failed to get DER encoding length for ECDSA_SIG: " << get_openssl_error());
         return Error::InternalError;
     }
 
     std::vector<uint8_t> der_signature(der_len);
     unsigned char *ptr = der_signature.data();
     if (i2d_ECDSA_SIG(ecdsa_sig.get(), &ptr) <= 0) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to DER encode ECDSA_SIG: " << get_openssl_error());
+        LOG_ERROR("Failed to DER encode ECDSA_SIG: " << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -317,19 +317,19 @@ Error X509CertChain::verify() const {
     // OpenSSL_add_all_algorithms();
     // ERR_load_crypto_strings();
     if (m_certs.empty()) {
-        LOG_PUSH_ERROR(Error::InternalError, "No certs in chain");
+        LOG_ERROR("No certs in chain");
         return Error::InternalError;
     }
 
     // Use the member trust store
     if (m_trust_store == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Trust store is not initialized. Cannot verify certificate chain.");
+        LOG_ERROR("Trust store is not initialized. Cannot verify certificate chain.");
         return Error::InternalError;
     }
     
     nv_unique_ptr<X509_STORE_CTX> ctx(X509_STORE_CTX_new());
     if(ctx == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to create X509_STORE_CTX" << get_openssl_error());
+        LOG_ERROR("Error: unable to create X509_STORE_CTX" << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -337,20 +337,20 @@ Error X509CertChain::verify() const {
     // initialize stack of (x509)
     nv_unique_ptr<STACK_OF(X509)> untrusted_certs(sk_X509_new_null());
     if(untrusted_certs == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: unable to create STACK_OF(X509): " << get_openssl_error());
+        LOG_ERROR("Error: unable to create STACK_OF(X509): " << get_openssl_error());
         return Error::InternalError;
     }
 
     for (size_t i = 1; i < m_certs.size(); i++) {
         if(sk_X509_push(untrusted_certs.get(), m_certs[i].get()) <= 0) {
-            LOG_PUSH_ERROR(Error::InternalError, "Error: unable to push cert to stack: " << get_openssl_error());
+            LOG_ERROR("Error: unable to push cert to stack: " << get_openssl_error());
             return Error::InternalError;
         }
     }
     
     
     if(X509_STORE_CTX_init(ctx.get(), m_trust_store.get(), m_certs[0].get(), untrusted_certs.get()) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "Error: X509_STORE_CTX_init failed: " << get_openssl_error());
+        LOG_ERROR("Error: X509_STORE_CTX_init failed: " << get_openssl_error());
         return Error::InternalError;
     }
     
@@ -361,7 +361,7 @@ Error X509CertChain::verify() const {
     int ret = X509_verify_cert(ctx.get());
     if(ret != 1) {
         int err = X509_STORE_CTX_get_error(ctx.get());
-        LOG_PUSH_ERROR(Error::InternalError, "Certificate chain verification failed: " 
+        LOG_ERROR("Certificate chain verification failed: " 
                 << X509_verify_cert_error_string(err));
         return Error::CertChainVerificationFailure;
     } 
@@ -371,7 +371,7 @@ Error X509CertChain::verify() const {
 
 Error X509CertChain::calculate_min_expiration_time(time_t& out_min_expiration_time, std::string* iso8601_time_out) const {
     if (m_certs.empty()) {
-        LOG_PUSH_ERROR(Error::InternalError, "No certificates in chain to calculate expiration time");
+        LOG_ERROR("No certificates in chain to calculate expiration time");
         return Error::InternalError;
     }
     
@@ -380,20 +380,20 @@ Error X509CertChain::calculate_min_expiration_time(time_t& out_min_expiration_ti
     
     for (const auto& cert : m_certs) {
         if (cert == nullptr) {
-            LOG_PUSH_ERROR(Error::InternalError, "Null certificate in chain");
+            LOG_ERROR("Null certificate in chain");
             return Error::InternalError;
         }
         
         // Get the "not after" time from the certificate
         const ASN1_TIME* not_after = X509_get0_notAfter(cert.get());
         if (not_after == nullptr) {
-            LOG_PUSH_ERROR(Error::InternalError, "Could not get expiration time from certificate");
+            LOG_ERROR("Could not get expiration time from certificate");
             return Error::InternalError;
         }
         
         struct tm tm_expiration;
         if (ASN1_TIME_to_tm(not_after, &tm_expiration) != 1) {
-            LOG_PUSH_ERROR(Error::InternalError, "Failed to convert ASN1_TIME to tm: " << get_openssl_error());
+            LOG_ERROR("Failed to convert ASN1_TIME to tm: " << get_openssl_error());
             return Error::InternalError;
         }
         
@@ -405,7 +405,7 @@ Error X509CertChain::calculate_min_expiration_time(time_t& out_min_expiration_ti
     }
     
     if (!valid_expiration_found) {
-        LOG_PUSH_ERROR(Error::InternalError, "Could not determine valid expiration time for the certificate chain");
+        LOG_ERROR("Could not determine valid expiration time for the certificate chain");
         return Error::InternalError;
     }
     
@@ -467,7 +467,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
 
     // Use the member trust store
     if (!m_trust_store) {
-        LOG_PUSH_ERROR(Error::InternalError, "Trust store is not initialized. Cannot generate OCSP claims.");
+        LOG_ERROR("Trust store is not initialized. Cannot generate OCSP claims.");
         return Error::InternalError;
     }
 
@@ -482,7 +482,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
     // Stack for intermediate certificates for OCSP_basic_verify, built incrementally.
     nv_unique_ptr<STACK_OF(X509)> ocsp_verify_intermediates(sk_X509_new_null());
     if(!ocsp_verify_intermediates) {
-        LOG_PUSH_ERROR(Error::InternalError, "unable to create STACK_OF(X509) for ocsp_verify_intermediates: " << get_openssl_error());
+        LOG_ERROR("unable to create STACK_OF(X509) for ocsp_verify_intermediates: " << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -562,7 +562,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
         // The current m_certs[subject_idx] becomes an intermediate for the next subject.
         // sk_X509_insert does not increment ref count, which is fine as m_certs owns X509.
         if (sk_X509_insert(ocsp_verify_intermediates.get(), m_certs[subject_idx].get(), 0) <= 0) {
-            LOG_PUSH_ERROR(Error::InternalError, "Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
+            LOG_ERROR("Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
             return Error::InternalError;
         }
 
@@ -582,13 +582,13 @@ Error X509CertChain::create_from_cert_chain_str(
     )
 {
     if (cert_chain.empty()) {
-        LOG_PUSH_ERROR(Error::InternalError, "Input PEM chain string is empty");
+        LOG_ERROR("Input PEM chain string is empty");
         return Error::InternalError;
     }
 
     Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, root_cert_str, out_cert_chain);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create X509CertChain");
+        LOG_ERROR("Failed to create X509CertChain");
         return error;
     }
 
@@ -605,7 +605,7 @@ Error X509CertChain::create_from_cert_chain_str(
 
         Error error = out_cert_chain.push_back(cert_str);
         if (error != Error::Ok) {
-            LOG_PUSH_ERROR(Error::InternalError, "Failed to add parsed GPU certificate to chain");
+            LOG_ERROR("Failed to add parsed GPU certificate to chain");
             return Error::InternalError;
         }
 
@@ -615,7 +615,7 @@ Error X509CertChain::create_from_cert_chain_str(
         }
     }
     if (out_cert_chain.size() == 0) {
-            LOG_PUSH_ERROR(Error::InternalError, "No certificate chain available after parsing");
+            LOG_ERROR("No certificate chain available after parsing");
             return Error::InternalError;
     }
     return Error::Ok;
