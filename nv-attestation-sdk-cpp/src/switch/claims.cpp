@@ -95,6 +95,13 @@ namespace nvattestation {
         out_claims.m_switch_arch_match = js.at("x-nvidia-switch-arch-check").get<bool>();
         out_claims.m_switch_bios_version = js.at("x-nvidia-switch-bios-version").get<std::string>();
 
+        if (js.contains("x-nvidia-switch-pdi")) {
+            out_claims.m_switch_pdi = js.at("x-nvidia-switch-pdi").get<std::string>();
+        }
+        if (js.contains("x-nvidia-switch-gpu-pdis")) {
+            out_claims.m_switch_gpu_pdis = js.at("x-nvidia-switch-gpu-pdis").get<std::vector<std::string>>();
+        }
+
         out_claims.m_ar_cert_chain_claims = js.at("x-nvidia-switch-attestation-report-cert-chain").get<SerializableCertChainClaims>();
         out_claims.m_ar_cert_chain_fwid_match = js.at("x-nvidia-switch-attestation-report-cert-chain-fwid-match").get<bool>();
         out_claims.m_ar_parsed = js.at("x-nvidia-switch-attestation-report-parsed").get<bool>();
@@ -124,6 +131,13 @@ namespace nvattestation {
 
         js["x-nvidia-switch-arch-check"] = claims.m_switch_arch_match;
         js["x-nvidia-switch-bios-version"] = claims.m_switch_bios_version;
+
+        if (!claims.m_switch_pdi.empty()) {
+            js["x-nvidia-switch-pdi"] = claims.m_switch_pdi;
+        }
+        if (!claims.m_switch_gpu_pdis.empty()) {
+            js["x-nvidia-switch-gpu-pdis"] = claims.m_switch_gpu_pdis;
+        }
 
         js["x-nvidia-switch-attestation-report-cert-chain"] = claims.m_ar_cert_chain_claims;
         js["x-nvidia-switch-attestation-report-cert-chain-fwid-match"] = claims.m_ar_cert_chain_fwid_match;
@@ -157,6 +171,8 @@ namespace nvattestation {
                 lhs.m_switch_arch_match == rhs.m_switch_arch_match &&
                 lhs.m_switch_ar_nonce_match == rhs.m_switch_ar_nonce_match &&
                 lhs.m_switch_bios_version == rhs.m_switch_bios_version &&
+                lhs.m_switch_pdi == rhs.m_switch_pdi &&
+                lhs.m_switch_gpu_pdis == rhs.m_switch_gpu_pdis &&
                 lhs.m_ar_cert_chain_claims == rhs.m_ar_cert_chain_claims &&
                 lhs.m_ar_cert_chain_fwid_match == rhs.m_ar_cert_chain_fwid_match &&
                 lhs.m_ar_parsed == rhs.m_ar_parsed &&

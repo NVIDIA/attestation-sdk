@@ -30,7 +30,7 @@
 #include "nv_attestation/nv_cache.h"
 
 namespace nvattestation {
-    
+
 
 struct NvOcspResponse {
     time_t thisupd;
@@ -78,6 +78,7 @@ class NvHttpOcspClient : public IOcspHttpClient {
 public:
     NvHttpOcspClient() = default;
     static constexpr const char* DEFAULT_BASE_URL = "https://ocsp.ndis.nvidia.com";
+    static constexpr time_t DEFAULT_NEXT_UPDATE_TTL_SECONDS = 3600;
 
     Error get_ocsp_response(
         const nv_unique_ptr<X509>& subject_cert,
@@ -96,7 +97,7 @@ public:
 
     /**
      * @brief Creates an NvHttpOcspClient instance.
-     * 
+     *
      * @param out_client Output parameter for the created client
      * @param ocsp_url The OCSP server URL
      * @param http_options HTTP options for the client
@@ -153,8 +154,8 @@ public:
         time_t ttl_seconds,
         std::shared_ptr<IOcspHttpClient>& out_client
     );
-    
-    private: 
+
+    private:
     std::shared_ptr<IOcspHttpClient> m_inner_client;
     std::shared_ptr<INvCache> m_cache;
 

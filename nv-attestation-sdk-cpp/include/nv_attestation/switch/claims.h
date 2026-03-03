@@ -43,6 +43,8 @@ class SerializableSwitchClaimsV3 : public Claims {
         bool m_switch_arch_match; // true if switch architecture is supported
         bool m_switch_ar_nonce_match; // true if nonce matches between switch evidence and switch attestation report
         std::string m_switch_bios_version; 
+        std::string m_switch_pdi;
+        std::vector<std::string> m_switch_gpu_pdis;
         
         // AR claims
         SerializableCertChainClaims m_ar_cert_chain_claims;

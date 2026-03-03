@@ -18,6 +18,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <set>
 #include <ctime>
 #include <algorithm>
 
@@ -25,6 +26,7 @@
 #include "nv_attestation/switch/nscq_client.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
+#include "internal/debug.hpp"
 #include <nlohmann/json.hpp>
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/spdm/spdm_req.hpp"
@@ -206,6 +208,16 @@ Error SwitchEvidence::generate_switch_evidence_claims(const AttestationReport& p
     }
     out_switch_evidence_claims.m_switch_bios_version = bios_version;
 
+    error = parsed_attestation_report.get_switch_pdi(out_switch_evidence_claims.m_switch_pdi);
+    if (error != Error::Ok && error != Error::SpdmFieldNotFound) {
+        return error;
+    }
+
+    error = parsed_attestation_report.get_switch_gpu_pdis(out_switch_evidence_claims.m_switch_gpu_pdis);
+    if (error != Error::Ok && error != Error::SpdmFieldNotFound) {
+        return error;
+    }
+
     error = parsed_attestation_report.generate_attestation_report_claims(ocsp_verify_options, ocsp_client, arch_data, out_switch_evidence_claims.m_attestation_report_claims);
     if (error != Error::Ok) {
         return error;
@@ -230,6 +242,8 @@ Error SwitchEvidence::AttestationReport::get_spdm_request(const SpdmMeasurementR
 
 
 Error SwitchEvidence::AttestationReport::create(const std::vector<uint8_t>& attestation_report_data, const std::string& ar_cert_chain, SwitchArchitecture architecture, AttestationReport& out_attestation_report) {
+    LOG_DEBUG("Switch attestation report (base64): " << encode_base64_for_log(attestation_report_data));
+    LOG_DEBUG("Switch attestation cert chain:\n" << format_cert_chain_for_log(ar_cert_chain));
 
     Error error = X509CertChain::create_from_cert_chain_str(CertificateChainType::NVSWITCH_DEVICE_IDENTITY, DEVICE_ROOT_CERT, ar_cert_chain, out_attestation_report.m_attestation_cert_chain);
     if (error != Error::Ok) {
@@ -318,6 +332,7 @@ Error SwitchEvidence::AttestationReport::generate_attestation_report_claims(cons
 
     error = m_attestation_cert_chain.generate_cert_chain_claims(ocsp_verify_options, ocsp_client, out_attestation_report_claims.m_cert_chain_claims);
     if (error != Error::Ok) {
+        LOG_ERROR("Failed to validate attestation report certificate chain");
         return error;
     }
 
@@ -362,6 +377,44 @@ Error SwitchEvidence::AttestationReport::get_vbios_version(std::string& out_bios
     }
     out_bios_version = std::string(bios_version_data->begin(), bios_version_data->end());
     remove_null_terminators(out_bios_version);
+    return Error::Ok;
+}
+
+Error SwitchEvidence::AttestationReport::get_switch_pdi(std::string& out_pdi) const {
+    const SwitchParsedOpaqueFieldData* pdi_field = nullptr;
+    Error error = m_switch_opaque_data_parser.get_field(SwitchOpaqueDataType::DEVICE_PDI, pdi_field);
+    if (error != Error::Ok) {
+        return error;
+    }
+    const std::vector<uint8_t>* pdi_data = nullptr;
+    error = pdi_field->get_byte_vector(pdi_data);
+    if (error != Error::Ok) {
+        return error;
+    }
+    out_pdi = to_hex_string(*pdi_data);
+    std::transform(out_pdi.begin(), out_pdi.end(), out_pdi.begin(), ::toupper);
+    return Error::Ok;
+}
+
+Error SwitchEvidence::AttestationReport::get_switch_gpu_pdis(std::vector<std::string>& out_pdis) const {
+    const SwitchParsedOpaqueFieldData* pdis_field = nullptr;
+    Error error = m_switch_opaque_data_parser.get_field(SwitchOpaqueDataType::SWITCH_GPU_PDIS, pdis_field);
+    if (error != Error::Ok) {
+        return error;
+    }
+    const std::vector<std::array<uint8_t, SwitchOpaqueFieldSizes::PDI_DATA_SIZE>>* pdis_data = nullptr;
+    error = pdis_field->get_pdi_vector(pdis_data);
+    if (error != Error::Ok) {
+        return error;
+    }
+    
+    std::set<std::string> unique_pdis;
+    for (const auto& pdi : *pdis_data) {
+        std::string pdi_str = to_hex_string(pdi);
+        std::transform(pdi_str.begin(), pdi_str.end(), pdi_str.begin(), ::toupper);
+        unique_pdis.insert(pdi_str);
+    }
+    out_pdis.assign(unique_pdis.begin(), unique_pdis.end());
     return Error::Ok;
 }
 

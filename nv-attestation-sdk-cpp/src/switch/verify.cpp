@@ -21,6 +21,8 @@
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/switch/evidence.h"
 #include "nv_attestation/verify.h"
+#include "nv_attestation/utils.h"
+#include "internal/debug.hpp"
 #include "nvat.h.in"
 
 namespace nvattestation {
@@ -123,6 +125,8 @@ Error LocalSwitchVerifier::set_switch_evidence_claims(const SwitchEvidenceClaims
     out_serializable_claims.m_switch_arch_match = switch_evidence_claims.m_switch_arch_match;
     out_serializable_claims.m_switch_ar_nonce_match = switch_evidence_claims.m_switch_ar_nonce_match;
     out_serializable_claims.m_switch_bios_version = switch_evidence_claims.m_switch_bios_version;
+    out_serializable_claims.m_switch_pdi = switch_evidence_claims.m_switch_pdi;
+    out_serializable_claims.m_switch_gpu_pdis = switch_evidence_claims.m_switch_gpu_pdis;
 
     out_serializable_claims.m_ar_cert_chain_claims.m_cert_expiration_date = switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.expiration_date;
     out_serializable_claims.m_ar_cert_chain_claims.m_cert_status = to_string(switch_evidence_claims.m_attestation_report_claims.m_cert_chain_claims.status);
@@ -278,6 +282,8 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
         if (error != Error::Ok) {
             return error;
         }
+        LOG_DEBUG("Switch remote attestation report (base64): " << evidence_b64);
+        LOG_DEBUG("Switch remote attestation cert chain:\n" << format_cert_chain_for_log(evidence_item->get_attestation_cert_chain()));
         evidence_list.push_back({evidence_b64, cert_chain_b64});
     }
     attest_request.evidence_list = evidence_list;

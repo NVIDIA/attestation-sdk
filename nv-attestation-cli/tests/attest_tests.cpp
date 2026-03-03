@@ -699,10 +699,12 @@ TEST(ClaimsParity, GPULocalVsRemote) { // integration + unit
             // (e.g. "GH100 A01 GSP BROM") while remote NRAS returns shortened model name (e.g. "GH100")
             entry.second["hwmodel"] = nullptr;
             entry.second["eat_nonce"] = nullptr;
+            sort_json_array(entry.second, "x-nvidia-gpu-switch-pdis");
         }
         for (auto& entry : remote_by_ueid) {
             entry.second["hwmodel"] = nullptr;
             entry.second["eat_nonce"] = nullptr;
+            sort_json_array(entry.second, "x-nvidia-gpu-switch-pdis");
         }
 
         // Call label-specific handler with full context (can inspect cert chain data and modify return codes)
@@ -834,6 +836,9 @@ TEST(ClaimsParity, SwitchLocalVsRemote) { // integration + unit
 
             local_claim["eat_nonce"] = nullptr;
             remote_claim["eat_nonce"] = nullptr;
+
+            sort_json_array(local_claim, "x-nvidia-switch-gpu-pdis");
+            sort_json_array(remote_claim, "x-nvidia-switch-gpu-pdis");
 
             // Compare all fields
             EXPECT_EQ(local_claim, remote_claim) 

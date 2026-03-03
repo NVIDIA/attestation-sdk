@@ -92,22 +92,22 @@ Error NvHttpOcspClient::get_ocsp_response(
 ) {
     nv_unique_ptr<OCSP_REQUEST> ocsp_req(OCSP_REQUEST_new());
     if (OCSP_request_add1_nonce(ocsp_req.get(), nullptr, -1) != 1) {
-        LOG_PUSH_ERROR(Error::InternalError, "Unable to add nonce to ocsp request");
+        LOG_ERROR("Unable to add nonce to ocsp request");
         return Error::InternalError;
     }
     // Create the original Cert ID
     nv_unique_ptr<OCSP_CERTID> id_orig (OCSP_cert_to_id(EVP_sha1(), subject_cert.get(), issuer_cert.get()));
     if (!id_orig) {
-            LOG_PUSH_ERROR(Error::InternalError, "Unable to create OCSP_CERTID: " << get_openssl_error());
+            LOG_ERROR("Unable to create OCSP_CERTID: " << get_openssl_error());
             return Error::InternalError;
     }
     // Duplicate the Cert ID for the request
     // We duplicate the ID because OCSP_request_add0_id takes ownership of the ID
-    // The original ID is used by the caller to get ocsp status of the cert 
-    // from the ocsp response    
+    // The original ID is used by the caller to get ocsp status of the cert
+    // from the ocsp response
     OCSP_CERTID *id_for_req = OCSP_CERTID_dup(id_orig.get());
     if (id_for_req == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Unable to duplicate OCSP_CERTID: " << get_openssl_error());
+        LOG_ERROR("Unable to duplicate OCSP_CERTID: " << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -115,18 +115,18 @@ Error NvHttpOcspClient::get_ocsp_response(
     if (OCSP_request_add0_id(ocsp_req.get(), id_for_req) == nullptr) {
             // If adding fails, we need to free the duplicated ID manually
             OCSP_CERTID_free(id_for_req);
-            LOG_PUSH_ERROR(Error::InternalError, "Unable to add subject to ocsp request");
+            LOG_ERROR("Unable to add subject to ocsp request");
             return Error::InternalError;
     }
 
     // Serialize the OCSP request to a memory BIO
     nv_unique_ptr<BIO> req_bio(BIO_new(BIO_s_mem()));
     if (!req_bio) {
-        LOG_PUSH_ERROR(Error::InternalError, "Unable to create memory BIO for OCSP request: " << get_openssl_error());
+        LOG_ERROR("Unable to create memory BIO for OCSP request: " << get_openssl_error());
         return Error::InternalError;
     }
     if (!i2d_OCSP_REQUEST_bio(req_bio.get(), ocsp_req.get())) {
-        LOG_PUSH_ERROR(Error::InternalError, "Unable to serialize OCSP request to BIO: " << get_openssl_error());
+        LOG_ERROR("Unable to serialize OCSP request to BIO: " << get_openssl_error());
         return Error::InternalError;
     }
     // Get serialized OCSP request data from the BIO
@@ -148,18 +148,19 @@ Error NvHttpOcspClient::get_ocsp_response(
     // Create HTTP request
     NvRequest request(
         m_ocsp_url,
-        NvHttpMethod::HTTP_METHOD_POST, 
-        {{"Content-Type", "application/ocsp-request"}, 
-        {"Accept", "application/ocsp-response"}, 
-        {"User-Agent", "nv-attestation-sdk/" NVAT_VERSION_STRING}}, 
+        NvHttpMethod::HTTP_METHOD_POST,
+        {{"Content-Type", "application/ocsp-request"},
+        {"Accept", "application/ocsp-response"},
+        {"User-Agent", "nv-attestation-sdk/" NVAT_VERSION_STRING}},
         request_payload
     );
-    
+
     // Perform HTTP request
     long http_status = 0;
     std::string response_body;
     Error error = m_http_client.do_request_as_string(request, http_status, response_body);
     if (error != Error::Ok) {
+        LOG_ERROR("Failed to perform OCSP check with url: " << m_ocsp_url);
         return error;
     }
 
@@ -254,9 +255,9 @@ Error NvHttpOcspClient::validate_ocsp_response(
         if (verification_status == 0) {
             // verification_status == 0 means verification failure (e.g., signature mismatch, untrusted signer)
             std::string err_msg = "OCSP response verification failed. OpenSSL errors: " + get_openssl_error();
-            LOG_PUSH_ERROR(Error::OcspInvalidResponse, err_msg);
+            LOG_ERROR(err_msg);
             return Error::OcspInvalidResponse;
-        } 
+        }
         // verification_status < 0 means some other error occurred during verification (e.g., memory allocation)
         LOG_ERROR("OCSP basic verification encountered an internal error with status: "
                 << verification_status << ". OpenSSL errors: " << get_openssl_error());
@@ -274,13 +275,13 @@ Error NvHttpOcspClient::get_ocsp_status(
     nv_unique_ptr<OCSP_CERTID>& id,
     NvOcspResponse& out_ocsp_response
 ) {
-        /** 
+        /**
          * do not free these thisupd and nextupd pointers as they are internal pointers of OCSP_BASICRESP
          * and will be freed when OCSP_BASICRESP is freed
         */
         ASN1_GENERALIZEDTIME *thisupd = nullptr;
         ASN1_GENERALIZEDTIME *nextupd = nullptr;
-        int reason = -1; 
+        int reason = -1;
         int status = -1;
         // Use the original Cert ID (managed by id_orig) to find the status
         int result = OCSP_resp_find_status(basic_resp.get(), id.get(), &status, &reason,
@@ -289,30 +290,34 @@ Error NvHttpOcspClient::get_ocsp_status(
             LOG_DEBUG("OCSP basic response is not present for subject index ");
             return Error::OcspInvalidResponse;
         }
-    
 
-        LOG_DEBUG("Generating expiration time claim");
-        // generate expiration time claim
-        struct tm next_update_tm{};
-        if (ASN1_TIME_to_tm((const ASN1_TIME *)nextupd, &next_update_tm) != 1) {
-            LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
-            return Error::InternalError;
-        }
-        
         // note: timegm only works on linux.
-        time_t next_update_time = timegm(&next_update_tm);
-        LOG_DEBUG("ASN1_TIME_to_tm successful for next update time: " << next_update_time);
-        out_ocsp_response.nextupd = next_update_time;
-
         struct tm this_update_tm{};
         if (ASN1_TIME_to_tm((const ASN1_TIME *)thisupd, &this_update_tm) != 1) {
             LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
             return Error::InternalError;
         }
-        
+
         time_t this_update_time = timegm(&this_update_tm);
         LOG_DEBUG("ASN1_TIME_to_tm successful for this update time: " << this_update_time);
         out_ocsp_response.thisupd = this_update_time;
+
+        LOG_DEBUG("Generating expiration time claim");
+        if (nextupd == nullptr) {
+            LOG_DEBUG("nextUpdate is absent in OCSP response, using default TTL");
+            out_ocsp_response.nextupd = this_update_time + NvHttpOcspClient::DEFAULT_NEXT_UPDATE_TTL_SECONDS;
+            LOG_DEBUG("Using default nextUpdate time: " << out_ocsp_response.nextupd);
+        } else {
+            struct tm next_update_tm{};
+            if (ASN1_TIME_to_tm((const ASN1_TIME *)nextupd, &next_update_tm) != 1) {
+                LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
+                return Error::InternalError;
+            }
+
+            time_t next_update_time = timegm(&next_update_tm);
+            LOG_DEBUG("ASN1_TIME_to_tm successful for next update time: " << next_update_time);
+            out_ocsp_response.nextupd = next_update_time;
+        }
 
         out_ocsp_response.status = status;
         out_ocsp_response.reason = reason;
@@ -334,7 +339,7 @@ Error NvHttpOcspClient::create(
     }
     return Error::Ok;
 }
-    
+
 Error NvHttpOcspClient::init_from_env(
     NvHttpOcspClient& out_client,
     const char* base_url,
@@ -346,9 +351,9 @@ Error NvHttpOcspClient::init_from_env(
     } else {
         base_uri_str = std::string(base_url);
     }
-    
+
     return create(out_client, base_uri_str, service_key, http_options);
-} 
+}
 
 Error NvHttpOcspCacheClient::create(
     std::shared_ptr<IOcspHttpClient>& inner_client,
@@ -370,13 +375,13 @@ Error NvHttpOcspCacheClient::get_ocsp_response(
     const nv_unique_ptr<X509_STORE>& trust_store,
     NvOcspResponse& out_ocsp_response
 ) {
-    std::string key; 
+    std::string key;
     Error error = get_cache_key(subject_cert, issuer_cert, key);
     if (error != Error::Ok) {
         return error;
     }
     LOG_TRACE("Getting cached OCSP response for key: " << key);
-    std::shared_ptr<void> ocsp_resp_cache_ptr; 
+    std::shared_ptr<void> ocsp_resp_cache_ptr;
     std::shared_ptr<NvOcspResponse> ocsp_resp_cache;
     error = m_cache->get(key, ocsp_resp_cache_ptr);
     if (error != Error::Ok && error != Error::CacheObjectNotFound) {

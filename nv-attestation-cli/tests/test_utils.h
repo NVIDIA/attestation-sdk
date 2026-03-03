@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <array>
 #include <map>
+#include <algorithm>
 #include <sys/wait.h>
 #include "gtest/gtest.h"
 #include "environment.h"
@@ -89,4 +90,10 @@ inline std::map<std::string, nlohmann::json> index_claims_by_ueid(const nlohmann
         }
     }
     return result;
+}
+
+inline void sort_json_array(nlohmann::json& j, const std::string& key) {
+    if (j.contains(key) && j[key].is_array()) {
+        std::sort(j[key].begin(), j[key].end());
+    }
 }

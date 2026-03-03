@@ -22,7 +22,7 @@
 #include <array>
 #include <sstream> // For std::stringstream
 #include <algorithm>
-#include "nv_attestation/log.h" // For LOG_PUSH_ERROR
+#include "nv_attestation/log.h"
 #include "nv_attestation/error.h" // For Error enum
 #include "nv_attestation/utils.h"
 

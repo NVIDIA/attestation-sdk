@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "nv-attestation-sdk-sys",
+    "nv-attestation-sdk",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.2.0"
+edition = "2021"
+authors = ["NVIDIA Corporation"]
+license = "Apache-2.0"
+repository = "https://github.com/NVIDIA/attestation-sdk/nv-attestation-sdk-rust"
+keywords = ["nvidia", "attestation", "security", "gpu"]
+categories = ["api-bindings", "hardware-support"]

@@ -38,25 +38,25 @@ std::unique_ptr<std::string> RegorusRegoEngine::evaluate_policy(
         
         regorus::Result set_rego_v0_result = engine.set_rego_v0(true);
         if (!set_rego_v0_result) {
-            LOG_PUSH_ERROR(Error::PolicyEvaluationError, std::string("Failed to set the Rego version: ") + set_rego_v0_result.error());
+            LOG_ERROR(std::string("Failed to set the Rego version: ") + set_rego_v0_result.error());
             return nullptr;
         }
 
         regorus::Result add_policy_result = engine.add_policy("policy.rego", policy.c_str());
         if (!add_policy_result) {
-            LOG_PUSH_ERROR(Error::PolicyEvaluationError, std::string("Failed to add the policy: ") + add_policy_result.error());
+            LOG_ERROR(std::string("Failed to add the policy: ") + add_policy_result.error());
             return nullptr;
         }
 
         regorus::Result set_input_json_result = engine.set_input_json(input.c_str());
         if (!set_input_json_result) {
-            LOG_PUSH_ERROR(Error::PolicyEvaluationError, std::string("Failed to set the input json: ") + set_input_json_result.error());
+            LOG_ERROR(std::string("Failed to set the input json: ") + set_input_json_result.error());
             return nullptr;
         }
         
         regorus::Result evaluate_query_result = engine.eval_query(entrypoint.c_str());
         if (!evaluate_query_result) {
-            LOG_PUSH_ERROR(Error::PolicyEvaluationError, std::string("Failed to evaluate the policy: ") + evaluate_query_result.error());
+            LOG_ERROR(std::string("Failed to evaluate the policy: ") + evaluate_query_result.error());
             return nullptr;
         } 
 

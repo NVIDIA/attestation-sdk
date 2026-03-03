@@ -5,13 +5,34 @@ include(CTest)
 include(FetchContent)
 
 # Reuse SDK's in-repo Find-modules (not installed).
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+get_filename_component(_sdk_cmake_dir "${CMAKE_CURRENT_SOURCE_DIR}/../cmake" REALPATH)
+list(APPEND CMAKE_MODULE_PATH "${_sdk_cmake_dir}")
 
-find_package(GTest REQUIRED)
+include(nvat_fetch_gtest)
+
 find_package(CURL REQUIRED)
 find_package(LibXml2 REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(xmlsec REQUIRED)
+
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # Standalone mode: libnvat.so already has xmlsec statically linked, so we
+    # only need headers + compile definitions (for nv_types.h) from the system.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XMLSEC1 REQUIRED xmlsec1-openssl)
+
+    add_library(xmlsec::xmlsec INTERFACE IMPORTED)
+    set_target_properties(xmlsec::xmlsec PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${XMLSEC1_INCLUDE_DIRS}"
+        INTERFACE_COMPILE_OPTIONS "${XMLSEC1_CFLAGS_OTHER}"
+    )
+    add_library(xmlsec::xmlsec-openssl INTERFACE IMPORTED)
+    set_target_properties(xmlsec::xmlsec-openssl PROPERTIES
+        INTERFACE_LINK_LIBRARIES "xmlsec::xmlsec"
+    )
+else()
+    # Build-tree mode: use the static xmlsec built by the SDK's ExternalProject.
+    find_package(xmlsec REQUIRED)
+endif()
 
 option(SANITIZER "Select a sanitizer" OFF)
 
@@ -41,6 +62,7 @@ add_executable(nv-attestation-unit-tests
     gpu/verifier_test.cpp
     test_utils.cpp
     utils_test.cpp
+    debug_test.cpp
     spdm_test_utils.cpp
     switch/spdm/spdm_req_test.cpp
     switch/spdm/spdm_resp_test.cpp

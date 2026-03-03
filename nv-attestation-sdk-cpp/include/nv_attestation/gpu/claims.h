@@ -45,6 +45,8 @@ class SerializableGpuClaimsV3 : public Claims {
         std::string m_driver_version;
         std::string m_vbios_version;
 
+        std::vector<std::string> m_gpu_switch_pdis;
+
         // Top-level measurement claims
         SerializableMeasresClaim m_measurements_matching;
         bool m_gpu_arch_match;

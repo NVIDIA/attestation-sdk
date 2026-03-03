@@ -21,9 +21,13 @@
 #include <openssl/bio.h>
 #include <openssl/pem.h>
 #include <string>
+#include <vector>
+#include <algorithm>
 #include <sstream> // Include for std::ostringstream if needed elsewhere, or consider simplifying string creation
 
 #include "nv_attestation/nv_types.h"
+#include "nv_attestation/utils.h"
+#include "nv_attestation/error.h"
 
 namespace nvattestation {
 
@@ -62,6 +66,48 @@ inline std::string get_cert_subject_issuer_str(X509 *cert) {
         result.append("<error reading issuer>");
     }
 
+    return result;
+}
+
+// Helper to base64-encode binary data for debug logging.
+// Only call from within LOG_DEBUG() to ensure zero overhead when debug is off.
+inline std::string encode_base64_for_log(const std::vector<uint8_t>& data) {
+    if (data.empty()) {
+        return "";
+    }
+    std::string encoded;
+    Error err = encode_base64(data, encoded);
+    if (err != Error::Ok) {
+        return "<base64 encoding failed>";
+    }
+    return encoded;
+}
+
+// Helper to format a PEM certificate chain for debug logging.
+// Outputs one line per cert as base64-encoded DER (PEM content without headers/footers/newlines).
+// Only call from within LOG_DEBUG() to ensure zero overhead when debug is off.
+inline std::string format_cert_chain_for_log(const std::string& pem_cert_chain) {
+    std::string result;
+    const std::string begin_marker = "-----BEGIN CERTIFICATE-----";
+    const std::string end_marker = "-----END CERTIFICATE-----";
+    size_t cert_num = 0;
+    size_t start = 0;
+    while (true) {
+        size_t begin_pos = pem_cert_chain.find(begin_marker, start);
+        if (begin_pos == std::string::npos) break;
+        size_t end_pos = pem_cert_chain.find(end_marker, begin_pos);
+        if (end_pos == std::string::npos) break;
+
+        size_t content_start = begin_pos + begin_marker.length();
+        std::string content = pem_cert_chain.substr(content_start, end_pos - content_start);
+        content.erase(std::remove(content.begin(), content.end(), '\n'), content.end());
+        content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+
+        if (!result.empty()) result += "\n";
+        result += "  cert[" + std::to_string(cert_num) + "]: " + content;
+        cert_num++;
+        start = end_pos + end_marker.length();
+    }
     return result;
 }
 

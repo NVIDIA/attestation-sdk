@@ -709,6 +709,28 @@ size_t nvat_nonce_get_length(const nvat_nonce_t nonce) {
     return cpp_nonce->size();
 }
 
+nvat_rc_t nvat_nonce_get_bytes(const nvat_nonce_t nonce, char* bytes, size_t bytes_len) {
+    NVAT_C_API_BEGIN
+    if (nonce == nullptr) {
+        LOG_ERROR("nonce is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (bytes == nullptr) {
+        LOG_ERROR("bytes is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    const std::vector<uint8_t>* cpp_nonce = nvat_nonce_to_cpp(nonce);
+    if (bytes_len != cpp_nonce->size()) {
+        LOG_ERROR("bytes_len (" << bytes_len << ") does not match nonce length (" << cpp_nonce->size() << ")");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    std::memcpy(bytes, cpp_nonce->data(), bytes_len);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_nonce_to_hex_string(const nvat_nonce_t nonce, nvat_str_t* out_str) {
     NVAT_C_API_BEGIN
     if (nonce == nullptr) {
@@ -760,6 +782,28 @@ nvat_rc_t nvat_nonce_from_hex(nvat_nonce_t* out_nonce, const char* hex_string) {
     }
 
     auto nonce = make_unique<vector<uint8_t>>(std::move(bytes));
+    *out_nonce = nvat_nonce_from_cpp(nonce.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_nonce_from_bytes(nvat_nonce_t* out_nonce, const char* input_bytes, size_t length) {
+    NVAT_C_API_BEGIN
+    if (out_nonce == nullptr) {
+        LOG_ERROR("out_nonce is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (input_bytes == nullptr) {
+        LOG_ERROR("input_bytes is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (length < MIN_VALID_NONCE_LEN) {
+        LOG_ERROR("nonce too short: " << length << " bytes; minimum is " << MIN_VALID_NONCE_LEN);
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+
+    auto nonce = make_unique<vector<uint8_t>>(reinterpret_cast<const uint8_t*>(input_bytes), 
+                                               reinterpret_cast<const uint8_t*>(input_bytes) + length);
     *out_nonce = nvat_nonce_from_cpp(nonce.release());
     return NVAT_RC_OK;
     NVAT_C_API_END

@@ -1,0 +1,27 @@
+[package]
+name = "nv-attestation-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Safe Rust bindings for the NVIDIA Attestation SDK"
+documentation = "https://docs.nvidia.com/attestation/nv-attestation-sdk-rust/latest/overview.html"
+
+[dependencies]
+nv-attestation-sdk-sys = { version = "1.2.0", path = "../nv-attestation-sdk-sys" }
+log = { version = "0.4", optional = true }
+
+[dev-dependencies]
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = []
+logging = ["log"]
+
+[[example]]
+name = "logging_example"
+required-features = ["logging"]

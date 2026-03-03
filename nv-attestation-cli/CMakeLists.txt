@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nvattest VERSION 1.1.0)
+project(nvattest VERSION 1.2.0)
 
 option(BUILD_TESTING "Build tests" OFF)
 option(USE_SYSTEM_NVAT "Compile and link to the system nvat library. If OFF, nvat will be built from source." OFF)
@@ -30,6 +30,13 @@ add_executable(nvattest
     src/utils.cpp
     src/logging.cpp
 )
+
+# Set full version with build timestamp if provided, otherwise use PROJECT_VERSION
+if(DEFINED BUILD_TIMESTAMP AND NOT BUILD_TIMESTAMP STREQUAL "")
+    set(NVATTEST_FULL_VERSION "${PROJECT_VERSION}+${BUILD_TIMESTAMP}")
+else()
+    set(NVATTEST_FULL_VERSION "${PROJECT_VERSION}")
+endif()
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/version_config.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/version_config.h)

@@ -265,3 +265,71 @@ TEST(AttestationTestCApi, SwitchHighLevelApiRemoteVerify) { // integration + uni
     nvat_nonce_free(&nonce);
     nvat_attestation_ctx_free(&ctx);
 }
+
+TEST(AttestationTestCApi, NonceTests) { // unit
+    RecordProperty("description", "Verify nonce creation functions");
+    
+    // Test valid nonce from bytes (32 bytes)
+    uint8_t bytes_32[32];
+    for (size_t i = 0; i < 32; ++i) {
+        bytes_32[i] = static_cast<uint8_t>(i);
+    }
+    nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_OK);
+    ASSERT_NE(nonce, nullptr);
+    ASSERT_EQ(nvat_nonce_get_length(nonce), 32);
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test valid nonce from bytes (64 bytes)
+    uint8_t bytes_64[64];
+    for (size_t i = 0; i < 64; ++i) {
+        bytes_64[i] = static_cast<uint8_t>(i * 2);
+    }
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_64), 64), NVAT_RC_OK);
+    ASSERT_NE(nonce, nullptr);
+    ASSERT_EQ(nvat_nonce_get_length(nonce), 64);
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test too short (31 bytes)
+    uint8_t bytes_31[31];
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_31), 31), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test null pointer
+    ASSERT_EQ(nvat_nonce_from_bytes(nullptr, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nonce, nullptr);
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, nullptr, 32), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test nvat_nonce_get_bytes returns a copy (user can mutate without affecting nonce)
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_OK);
+    char copy1[32];
+    ASSERT_EQ(nvat_nonce_get_bytes(nonce, copy1, 32), NVAT_RC_OK);
+    ASSERT_EQ(copy1[0], 0);  // First byte should be 0
+    
+    // Mutate the copy
+    copy1[0] = 127;
+    
+    // Get another copy and verify nonce wasn't affected
+    char copy2[32];
+    ASSERT_EQ(nvat_nonce_get_bytes(nonce, copy2, 32), NVAT_RC_OK);
+    ASSERT_EQ(copy2[0], 0);  // Should still be 0, not 255
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test nvat_nonce_get_bytes with wrong size
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_OK);
+    char wrong_size[16];
+    ASSERT_EQ(nvat_nonce_get_bytes(nonce, wrong_size, 16), NVAT_RC_BAD_ARGUMENT);
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+    
+    // Test nvat_nonce_get_bytes with null pointers
+    ASSERT_EQ(nvat_nonce_get_bytes(nullptr, copy1, 32), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_OK);
+    ASSERT_EQ(nvat_nonce_get_bytes(nonce, nullptr, 32), NVAT_RC_BAD_ARGUMENT);
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+}

@@ -100,36 +100,36 @@ Error RimDocument::get_cert_chain(X509CertChain& out_cert_chain) const {
 
     auto x_path_ctx = nv_unique_ptr<xmlXPathContext>(xmlXPathNewContext(m_doc.get()));
     if (!x_path_ctx) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create XPath context");
+        LOG_ERROR("Failed to create XPath context");
         return Error::InternalError;
     }
 
     if(xmlXPathRegisterNs(x_path_ctx.get(), BAD_CAST "ds", BAD_CAST RimDocument::XML_DSIG_NAMESPACE_URI) != 0) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to register namespace");
+        LOG_ERROR("Failed to register namespace");
         return Error::InternalError;
     }
 
     auto x_path_obj = nv_unique_ptr<xmlXPathObject>(xmlXPathEvalExpression(BAD_CAST "//ds:X509Certificate", x_path_ctx.get()));
     if (!x_path_obj) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to get X509Certificate XPath object");
+        LOG_ERROR("Failed to get X509Certificate XPath object");
         return Error::InternalError;
     }
 
     xmlNodeSetPtr nodes = x_path_obj->nodesetval;
     if (nodes == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to get nodesetval from XPath object");
+        LOG_ERROR("Failed to get nodesetval from XPath object");
         return Error::InternalError;
     }
 
     if (nodes->nodeNr == 0) {
-        LOG_PUSH_ERROR(Error::InternalError, "No X509Certificate found in RIM data");
+        LOG_ERROR("No X509Certificate found in RIM data");
         return Error::InternalError;
     }
 
     // Create the root CA certificate from the predefined string
     nv_unique_ptr<X509> root_ca_cert = x509_from_cert_string(RIM_ROOT_CERT);
     if (root_ca_cert == nullptr) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create X509 from RIM_ROOT_CERT string in get_cert_chain.");
+        LOG_ERROR("Failed to create X509 from RIM_ROOT_CERT string in get_cert_chain.");
         return Error::InternalError;
     }
 
@@ -138,7 +138,7 @@ Error RimDocument::get_cert_chain(X509CertChain& out_cert_chain) const {
     Error error = X509CertChain::create(CertificateChainType::GPU_DRIVER_RIM, RIM_ROOT_CERT, out_cert_chain);
     if (error != Error::Ok) {
         // Error is logged within X509CertChain::create or x509_from_cert_string
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create X509CertChain in get_cert_chain.");
+        LOG_ERROR("Failed to create X509CertChain in get_cert_chain.");
         return error;
     }
 
@@ -525,13 +525,13 @@ Error NvRemoteRimStoreImpl::extract_rim_document(const std::string &rim_response
     std::string decoded_rim_data;
     Error error = decode_base64(rim_response_data, decoded_rim_data);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to decode RIM data");
+        LOG_ERROR("Failed to decode RIM data");
         return Error::InternalError;
     }
     RimDocument rim_document;
     error = RimDocument::create_from_rim_data(decoded_rim_data, rim_document);
     if (error != Error::Ok) {
-        LOG_PUSH_ERROR(Error::InternalError, "Failed to create RimDocument from RIM data");
+        LOG_ERROR("Failed to create RimDocument from RIM data");
         return Error::InternalError;
     }
     out_rim_document = std::move(rim_document);
