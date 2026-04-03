@@ -3,7 +3,7 @@
 */target/*
 */build/*
 *_build*
-*_repo*
+*_repo/
 build_docs/
 build/
 
