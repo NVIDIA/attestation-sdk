@@ -11,7 +11,7 @@ description = "Safe Rust bindings for the NVIDIA Attestation SDK"
 documentation = "https://docs.nvidia.com/attestation/nv-attestation-sdk-rust/latest/overview.html"
 
 [dependencies]
-nv-attestation-sdk-sys = { version = "1.2.0", path = "../nv-attestation-sdk-sys" }
+nv-attestation-sdk-sys = { version = "1.2.1", path = "../nv-attestation-sdk-sys" }
 log = { version = "0.4", optional = true }
 
 [dev-dependencies]

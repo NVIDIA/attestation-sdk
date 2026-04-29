@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.2.0)
+project(nv-attestation VERSION 1.2.1)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
