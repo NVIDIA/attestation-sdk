@@ -234,6 +234,7 @@ set_target_properties(CURL::libcurl PROPERTIES
 
 find_package(LibXml2 REQUIRED)
 find_package(xmlsec REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
 if (CMAKE_VERSION VERSION_LESS 3.24.0 AND CMAKE_COMPILE_WARNING_AS_ERROR)
@@ -342,6 +343,7 @@ target_link_libraries(nvat
     OpenSSL::Crypto
     CURL::libcurl
     LibXml2::LibXml2
+    ZLIB::ZLIB
     # Use TARGET_FILE to link the static library directly without creating
     # a target dependency that CMake would try to export
     $<TARGET_FILE:spdlog>
