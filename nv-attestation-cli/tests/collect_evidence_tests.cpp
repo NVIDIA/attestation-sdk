@@ -48,7 +48,7 @@ TEST_F(CliTest, CollectEvidenceGPU) { //integration
     
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -69,7 +69,7 @@ TEST_F(CliTest, CollectEvidenceNVSwitch) { //integration
     
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;

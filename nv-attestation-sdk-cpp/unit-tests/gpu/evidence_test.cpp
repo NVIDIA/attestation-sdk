@@ -82,7 +82,7 @@ TEST_F(GpuEvidenceTest, CorrectGpuEvidenceClaims) {
     // are not as expected, we would get an error
     ASSERT_EQ(claims.m_driver_version, m_mock_data.driver_version);
     ASSERT_EQ(claims.m_vbios_version, m_mock_data.vbios_version);
-    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "509096176156678437554566035365892618958504054724");
     ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GH100 A01 GSP BROM");
 }
 
@@ -202,7 +202,7 @@ TEST_F(GpuEvidenceTest, CanSerializeAndDeserialize) {
 
     ASSERT_EQ(claims.m_driver_version, mock_data.driver_version);
     ASSERT_EQ(claims.m_vbios_version, mock_data.vbios_version);
-    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims.m_attestation_report_claims.m_ueid, "509096176156678437554566035365892618958504054724");
     ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GH100 A01 GSP BROM");
 }
 

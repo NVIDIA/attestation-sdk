@@ -78,12 +78,13 @@ void SpdLogLogger::set_format(const std::string& format) {
 
 spdlog::level::level_enum SpdLogLogger::get_spdlog_level(LogLevel level) {
     switch (level) {
-        case LogLevel::TRACE: return spdlog::level::trace;
-            case LogLevel::DEBUG: return spdlog::level::debug;
-            case LogLevel::INFO: return spdlog::level::info;
-            case LogLevel::WARNING: return spdlog::level::warn;
-            case LogLevel::ERROR: return spdlog::level::err;
-        default: return spdlog::level::info;
+        case LogLevel::TRACE:   return spdlog::level::trace;
+        case LogLevel::DEBUG:   return spdlog::level::debug;
+        case LogLevel::INFO:    return spdlog::level::info;
+        case LogLevel::WARNING: return spdlog::level::warn;
+        case LogLevel::ERROR:   return spdlog::level::err;
+        case LogLevel::OFF:     return spdlog::level::off;
+        default:                return spdlog::level::info;
     }
 }
 

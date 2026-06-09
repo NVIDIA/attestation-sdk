@@ -245,10 +245,9 @@ fn test_sdk_options_creation() {
 }
 
 #[test]
-fn test_sdk_options_default() {
+fn test_sdk_options_new_is_fallible() {
     init_sdk();
-    let opts = SdkOptions::default();
-    // Should not panic - that's the test
+    let opts = SdkOptions::new().expect("SDK options creation should succeed");
     drop(opts);
 }
 
@@ -486,10 +485,9 @@ fn test_attestation_context_creation() {
 }
 
 #[test]
-fn test_attestation_context_default() {
+fn test_attestation_context_new_is_fallible() {
     init_sdk();
-    let ctx = AttestationContext::default();
-    // Should not panic - that's the test
+    let ctx = AttestationContext::new().expect("Attestation context creation should succeed");
     drop(ctx);
 }
 

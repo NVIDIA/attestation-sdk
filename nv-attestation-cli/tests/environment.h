@@ -99,9 +99,9 @@ class Environment : public ::testing::Environment {
             service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
             ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
 
-            rim_url = get_env_or_default("NVAT_RIM_URL", "https://rim-internal.attestation.nvidia.com/internal");
-            ocsp_url = get_env_or_default("NVAT_OCSP_URL", "https://ocsp.ndis-stg.nvidia.com");
-            nras_url = get_env_or_default("NVAT_NRAS_URL", "https://nras.attestation-stg.nvidia.com");
+            rim_url = get_env_or_default("NVAT_RIM_SERVICE_BASE_URL", "https://rim-internal.attestation.nvidia.com/internal");
+            ocsp_url = get_env_or_default("NVAT_OCSP_BASE_URL", "https://ocsp.ndis-stg.nvidia.com");
+            nras_url = get_env_or_default("NVAT_NRAS_BASE_URL", "https://nras.attestation-stg.nvidia.com");
 
             if (get_git_repo_root(git_repo_root) != 0) {
                 std::cerr << "Failed to get git repository root" << std::endl;

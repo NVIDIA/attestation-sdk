@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.2.1)
+project(nv-attestation VERSION 1.2.2)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
@@ -127,113 +127,169 @@ FetchContent_MakeAvailable(spdlog)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 
-set(_EP_CC "${CMAKE_C_COMPILER}")
-set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
+option(USE_SYSTEM_DEPS "Use system-installed OpenSSL, curl, and xmlsec instead of building from source" OFF)
 
-# Build OpenSSL statically — RHEL8 ships 1.1.1 but the code needs 3.x APIs
-set(OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/openssl-install")
+if(USE_SYSTEM_DEPS)
+  # Use system-installed packages (requires libssl-dev, libcurl4-openssl-dev, libxmlsec1-dev)
+  find_package(OpenSSL REQUIRED)
+  find_package(CURL REQUIRED)
+  find_package(LibXml2 REQUIRED)
 
-ExternalProject_Add(openssl_external
-  URL https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz
-  URL_HASH SHA256=b1bfedcd5b289ff22aee87c9d600f515767ebf45f77168cb6d64f231f518a82e
-  CONFIGURE_COMMAND <SOURCE_DIR>/Configure
-    "CC=${_EP_CC}"
-    "CFLAGS=${_EP_CFLAGS}"
-    --prefix=${OPENSSL_INSTALL_DIR}
-    --openssldir=${OPENSSL_INSTALL_DIR}
-    --libdir=lib
-    no-shared
-  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-  INSTALL_COMMAND make install_sw install_ssldirs
-  BUILD_IN_SOURCE 1
-)
+  # Find system xmlsec via pkg-config (IMPORTED_TARGET creates PkgConfig::XMLSEC1)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(XMLSEC1 REQUIRED IMPORTED_TARGET xmlsec1-openssl)
 
-set(OPENSSL_INCLUDE_DIR "${OPENSSL_INSTALL_DIR}/include")
-file(MAKE_DIRECTORY "${OPENSSL_INCLUDE_DIR}")
+  set(XMLSEC_COMPILE_DEFINITIONS
+    __XMLSEC_FUNCTION__=__func__
+    XMLSEC_NO_SIZE_T
+    XMLSEC_NO_XSLT=1
+    XMLSEC_NO_FTP=1
+    XMLSEC_NO_MD5=1
+    XMLSEC_NO_GOST=1
+    XMLSEC_NO_GOST2012=1
+    XMLSEC_NO_CRYPTO_DYNAMIC_LOADING=1
+    XMLSEC_CRYPTO_OPENSSL=1
+  )
 
-add_library(OpenSSL::Crypto STATIC IMPORTED)
-set_target_properties(OpenSSL::Crypto PROPERTIES
-  IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libcrypto.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-  INTERFACE_LINK_LIBRARIES "dl;pthread"
-)
+  if(NOT TARGET xmlsec::xmlsec)
+    add_library(xmlsec::xmlsec INTERFACE IMPORTED)
+    set_target_properties(xmlsec::xmlsec PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${XMLSEC1_INCLUDE_DIRS}"
+      INTERFACE_COMPILE_DEFINITIONS "${XMLSEC_COMPILE_DEFINITIONS}"
+      INTERFACE_LINK_LIBRARIES "LibXml2::LibXml2"
+    )
+  endif()
 
-add_library(OpenSSL::SSL STATIC IMPORTED)
-set_target_properties(OpenSSL::SSL PROPERTIES
-  IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libssl.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
-  INTERFACE_LINK_LIBRARIES "OpenSSL::Crypto"
-)
+  if(NOT TARGET xmlsec::xmlsec-openssl)
+    add_library(xmlsec::xmlsec-openssl INTERFACE IMPORTED)
+    set_target_properties(xmlsec::xmlsec-openssl PROPERTIES
+      INTERFACE_LINK_LIBRARIES "PkgConfig::XMLSEC1;xmlsec::xmlsec;OpenSSL::SSL;OpenSSL::Crypto"
+    )
+  endif()
 
-# Build xmlsec 1.2.39 statically (depends on OpenSSL 3)
-set(XMLSEC_INSTALL_DIR "${CMAKE_BINARY_DIR}/xmlsec-install")
+  # No-op targets for add_dependencies compatibility
+  add_custom_target(openssl_external)
+  add_custom_target(xmlsec_external)
+  add_custom_target(curl_external)
 
-ExternalProject_Add(xmlsec_external
-  DEPENDS openssl_external
-  URL https://github.com/lsh123/xmlsec/releases/download/xmlsec-1_2_39/xmlsec1-1.2.39.tar.gz
-  URL_HASH SHA256=15f2f55ea5968e578fcd24b3b427e553876c86c147dc7f03923e98fc2768a1fa
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure
-    --prefix=${XMLSEC_INSTALL_DIR}
-    --disable-shared
-    --enable-static
-    --disable-crypto-dl
-    --with-openssl=${OPENSSL_INSTALL_DIR}
-    --without-gnutls
-    --without-nss
-    --without-gcrypt
-    --with-libxslt=no
-    --disable-docs
-    --disable-apps
-    "CC=${_EP_CC}"
-    "CFLAGS=${_EP_CFLAGS}"
-    "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
-  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-  INSTALL_COMMAND make install
-  BUILD_IN_SOURCE 1
-)
+else()
+  # Build dependencies from source (production builds, RHEL8 compat)
 
-set(XMLSEC_ROOT "${XMLSEC_INSTALL_DIR}" CACHE PATH "xmlsec installation directory" FORCE)
+  set(_EP_CC "${CMAKE_C_COMPILER}")
+  set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
 
-# Build libcurl statically — RHEL8 ships 7.61 but the code needs the URL API (>= 7.62)
-set(CURL_INSTALL_DIR "${CMAKE_BINARY_DIR}/curl-install")
+  # Build OpenSSL statically — RHEL8 ships 1.1.1 but the code needs 3.x APIs
+  set(OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/openssl-install")
 
-ExternalProject_Add(curl_external
-  DEPENDS openssl_external
-  URL https://github.com/curl/curl/releases/download/curl-7_88_1/curl-7.88.1.tar.gz
-  URL_HASH SHA256=cdb38b72e36bc5d33d5b8810f8018ece1baa29a8f215b4495e495ded82bbf3c7
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure
-    --prefix=${CURL_INSTALL_DIR}
-    --with-openssl=${OPENSSL_INSTALL_DIR}
-    --without-libssh2
-    --without-nghttp2
-    --without-brotli
-    --without-zstd
-    --without-libidn2
-    --without-librtmp
-    --without-libpsl
-    --disable-ldap
-    --disable-shared
-    --enable-static
-    "CC=${_EP_CC}"
-    "CFLAGS=${_EP_CFLAGS}"
-    "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
-  BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-  INSTALL_COMMAND make install
-  BUILD_IN_SOURCE 1
-)
+  ExternalProject_Add(openssl_external
+    URL https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz
+    URL_HASH SHA256=b1bfedcd5b289ff22aee87c9d600f515767ebf45f77168cb6d64f231f518a82e
+    CONFIGURE_COMMAND <SOURCE_DIR>/Configure
+      "CC=${_EP_CC}"
+      "CFLAGS=${_EP_CFLAGS}"
+      --prefix=${OPENSSL_INSTALL_DIR}
+      --openssldir=${OPENSSL_INSTALL_DIR}
+      --libdir=lib
+      no-shared
+      no-tests      # Skip ~100+ test binaries — not needed, saves link-time memory
+      no-apps       # Skip openssl CLI binary
+      no-docs       # Skip man pages and HTML docs
+      no-legacy     # Disable legacy provider (MD2, RC4, DES, etc.)
+      no-engine     # Disable deprecated ENGINE API — unused with static linking
+      no-dtls       # Disable DTLS — SDK uses TLS only, not UDP-based DTLS
+    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    INSTALL_COMMAND make install_sw install_ssldirs
+    BUILD_IN_SOURCE 1
+  )
 
-set(CURL_INCLUDE_DIR "${CURL_INSTALL_DIR}/include")
-file(MAKE_DIRECTORY "${CURL_INCLUDE_DIR}")
+  set(OPENSSL_INCLUDE_DIR "${OPENSSL_INSTALL_DIR}/include")
+  file(MAKE_DIRECTORY "${OPENSSL_INCLUDE_DIR}")
 
-add_library(CURL::libcurl STATIC IMPORTED)
-set_target_properties(CURL::libcurl PROPERTIES
-  IMPORTED_LOCATION "${CURL_INSTALL_DIR}/lib/libcurl.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIR}"
-  INTERFACE_LINK_LIBRARIES "OpenSSL::SSL;OpenSSL::Crypto;z;pthread"
-)
+  add_library(OpenSSL::Crypto STATIC IMPORTED)
+  set_target_properties(OpenSSL::Crypto PROPERTIES
+    IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libcrypto.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "dl;pthread"
+  )
 
-find_package(LibXml2 REQUIRED)
-find_package(xmlsec REQUIRED)
+  add_library(OpenSSL::SSL STATIC IMPORTED)
+  set_target_properties(OpenSSL::SSL PROPERTIES
+    IMPORTED_LOCATION "${OPENSSL_INSTALL_DIR}/lib/libssl.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "OpenSSL::Crypto"
+  )
+
+  # Build xmlsec 1.2.39 statically (depends on OpenSSL 3)
+  set(XMLSEC_INSTALL_DIR "${CMAKE_BINARY_DIR}/xmlsec-install")
+
+  ExternalProject_Add(xmlsec_external
+    DEPENDS openssl_external
+    URL https://github.com/lsh123/xmlsec/releases/download/xmlsec-1_2_39/xmlsec1-1.2.39.tar.gz
+    URL_HASH SHA256=15f2f55ea5968e578fcd24b3b427e553876c86c147dc7f03923e98fc2768a1fa
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure
+      --prefix=${XMLSEC_INSTALL_DIR}
+      --disable-shared
+      --enable-static
+      --disable-crypto-dl
+      --with-openssl=${OPENSSL_INSTALL_DIR}
+      --without-gnutls
+      --without-nss
+      --without-gcrypt
+      --with-libxslt=no
+      --disable-docs
+      --disable-apps
+      "CC=${_EP_CC}"
+      "CFLAGS=${_EP_CFLAGS}"
+      "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
+    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    INSTALL_COMMAND make install
+    BUILD_IN_SOURCE 1
+  )
+
+  set(XMLSEC_ROOT "${XMLSEC_INSTALL_DIR}" CACHE PATH "xmlsec installation directory" FORCE)
+
+  # Build libcurl statically — RHEL8 ships 7.61 but the code needs the URL API (>= 7.62)
+  set(CURL_INSTALL_DIR "${CMAKE_BINARY_DIR}/curl-install")
+
+  ExternalProject_Add(curl_external
+    DEPENDS openssl_external
+    URL https://github.com/curl/curl/releases/download/curl-7_88_1/curl-7.88.1.tar.gz
+    URL_HASH SHA256=cdb38b72e36bc5d33d5b8810f8018ece1baa29a8f215b4495e495ded82bbf3c7
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure
+      --prefix=${CURL_INSTALL_DIR}
+      --with-openssl=${OPENSSL_INSTALL_DIR}
+      --without-libssh2
+      --without-nghttp2
+      --without-brotli
+      --without-zstd
+      --without-libidn2
+      --without-librtmp
+      --without-libpsl
+      --disable-ldap
+      --disable-shared
+      --enable-static
+      "CC=${_EP_CC}"
+      "CFLAGS=${_EP_CFLAGS}"
+      "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
+    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    INSTALL_COMMAND make install
+    BUILD_IN_SOURCE 1
+  )
+
+  set(CURL_INCLUDE_DIR "${CURL_INSTALL_DIR}/include")
+  file(MAKE_DIRECTORY "${CURL_INCLUDE_DIR}")
+
+  add_library(CURL::libcurl STATIC IMPORTED)
+  set_target_properties(CURL::libcurl PROPERTIES
+    IMPORTED_LOCATION "${CURL_INSTALL_DIR}/lib/libcurl.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "OpenSSL::SSL;OpenSSL::Crypto;z;pthread"
+  )
+
+  find_package(LibXml2 REQUIRED)
+  find_package(xmlsec REQUIRED)
+
+endif() # USE_SYSTEM_DEPS
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
 if (CMAKE_VERSION VERSION_LESS 3.24.0 AND CMAKE_COMPILE_WARNING_AS_ERROR)

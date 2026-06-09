@@ -299,6 +299,7 @@ Error SwitchEvidence::AttestationReport::create(const std::vector<uint8_t>& atte
         LOG_ERROR("Failed to parse SWITCH opaque data.");
         return Error::InternalError;
     }
+    LOG_TRACE("NVSwitch opaque data: " << out_attestation_report.m_switch_opaque_data_parser);
 
     return Error::Ok;
 }

@@ -56,6 +56,22 @@ inline std::string exec_and_capture_output(const std::string& command, int& exit
     return result;
 }
 
+inline std::string redact_secret(std::string text, const std::string& secret) {
+    if (secret.empty()) {
+        return text;
+    }
+    const std::string tail = secret.size() >= 4 ? secret.substr(secret.size() - 4) : std::string();
+    const std::string masked = "****" + tail;
+    for (std::size_t pos = text.find(secret); pos != std::string::npos; pos = text.find(secret, pos + masked.size())) {
+        text.replace(pos, secret.size(), masked);
+    }
+    return text;
+}
+
+inline std::string redact_cmd(const std::string& command) {
+    return redact_secret(command, g_cli_env->service_key);
+}
+
 inline bool extract_json_object(const std::string& input, std::string& json_out) {
     // Find the last balanced JSON object by scanning from the end and matching braces
     if (input.empty()) return false;
