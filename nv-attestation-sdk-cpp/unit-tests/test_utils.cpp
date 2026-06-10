@@ -24,9 +24,9 @@ MockGpuEvidenceData::MockGpuEvidenceData()
     : architecture(GpuArchitecture::Hopper),
       board_id(11111),
       uuid("GPU-11111111-2222-3333-4444-555555555555"),
-      vbios_version("96.00.9F.00.01"),
-      driver_version("550.90.07"),
-      nonce("931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"),
+      vbios_version("96.00.74.00.20"),
+      driver_version("580.159.03"),
+      nonce("5bb22e377702d4e1e8215a903ba094826b9ac7f731dee1fe8102958bf2840aca"),
       attestation_report_path("testdata/hopperAttestationReport.txt"),
       attestation_cert_chain_path("testdata/hopperCertChain.txt") {
 }

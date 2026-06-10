@@ -29,8 +29,8 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set_target_properties(xmlsec::xmlsec-openssl PROPERTIES
         INTERFACE_LINK_LIBRARIES "xmlsec::xmlsec"
     )
-else()
-    # Build-tree mode: use the static xmlsec built by the SDK's ExternalProject.
+elseif(NOT TARGET xmlsec::xmlsec)
+    # Build-tree mode without USE_SYSTEM_DEPS: use the static xmlsec built by ExternalProject.
     find_package(xmlsec REQUIRED)
 endif()
 
@@ -80,7 +80,10 @@ target_include_directories(nv-attestation-unit-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_compile_options(nv-attestation-unit-tests PRIVATE -Wno-unused -Wno-c++17-attribute-extensions)
+target_compile_options(nv-attestation-unit-tests PRIVATE -Wno-unused)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(nv-attestation-unit-tests PRIVATE -Wno-c++17-attribute-extensions)
+endif()
 if (SANITIZER)
     target_compile_options(nv-attestation-unit-tests PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
     target_link_options(nv-attestation-unit-tests PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)

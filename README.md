@@ -8,14 +8,13 @@
 [![Stars](https://img.shields.io/github/stars/NVIDIA/attestation-sdk?style=social)](https://github.com/NVIDIA/attestation-sdk/stargazers)
 [![Forks](https://img.shields.io/github/forks/NVIDIA/attestation-sdk?style=social)](https://github.com/NVIDIA/attestation-sdk/network/members)
 
-NVAT (**NV**IDIA **At**ttestation SDK)
+NVAT (**NV**IDIA **At**testation SDK)
 is an open-source C++ SDK that provides resources for implementing and
 validating Trusted Computing Solutions on NVIDIA hardware.
 It focuses on attestation, a crucial aspect of ensuring the integrity and 
 security of confidential computing environments.
 
-The core SDK is written in C++ and wrapped with a C API and CLI,
-with more bindings to come.
+The core SDK is written in C++. It can be used via a C API, a CLI (nvattest), or Rust bindings.
 
 ## Project Status
 
@@ -24,10 +23,11 @@ NVAT provides utilities suitable for a broader range of environments and use-cas
 
 ## Components
 
-NVAT provides two components for different use cases:
+NVAT provides three components for different use cases:
 
 - **CLI (`nvattest`)**: For quick testing, scripts, and getting started. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-cli/introduction.html)
 - **C API**: For integrating attestation into C/C++ applications. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-c/introduction.html)
+- **Rust bindings**: For integrating attestation into Rust applications. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-rust/introduction.html)
 
 ## Quick Start Guide
 

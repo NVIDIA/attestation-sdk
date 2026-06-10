@@ -199,6 +199,7 @@ namespace nvattest {
         if(common_options.format == "text") {
             if (output.result_code == NVAT_RC_OK) {
                 SPDLOG_INFO("{} evidence collection was successful.", evidence_collection_options.pretty_device());
+                SPDLOG_INFO("Re-run with --format=json to print the collected evidence.");
             } else {
                 SPDLOG_CRITICAL("");
                 SPDLOG_CRITICAL("{} evidence collection failed!", evidence_collection_options.pretty_device());

@@ -25,7 +25,7 @@
 //! ```no_run
 //! use nv_attestation_sdk::{NvatSdk, SdkOptions};
 //!
-//! let options = SdkOptions::default();
+//! let options = SdkOptions::new()?;
 //! let client = NvatSdk::init(options)?;
 //! # Ok::<(), nv_attestation_sdk::NvatError>(())
 //! ```

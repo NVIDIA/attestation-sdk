@@ -58,7 +58,7 @@ TEST_F(CliTest, GPULocal) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -88,7 +88,7 @@ TEST_F(CliTest, GPULocalWithRelyingPartyPolicy) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -119,7 +119,7 @@ TEST_F(CliTest, GPULocalWithServiceKey) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -149,7 +149,7 @@ TEST_F(CliTest, GPURemote) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -180,7 +180,7 @@ TEST_F(CliTest, GPURemoteWithRelyingPartyPolicy) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -213,7 +213,7 @@ TEST_F(CliTest, GPURemoteWithServiceKey) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -243,7 +243,7 @@ TEST_F(CliTest, SwitchLocal) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -275,7 +275,7 @@ TEST_F(CliTest, SwitchLocalWithRelyingPartyPolicy) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -308,7 +308,7 @@ TEST_F(CliTest, SwitchLocalWithServiceKey) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -338,7 +338,7 @@ TEST_F(CliTest, SwitchRemote) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -369,7 +369,7 @@ TEST_F(CliTest, SwitchRemoteWithRelyingPartyPolicy) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -401,7 +401,7 @@ TEST_F(CliTest, SwitchRemoteWithServiceKey) { //integration + unit
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -427,7 +427,7 @@ TEST_F(CliTest, GPULocalWithIncorrectServiceKey) {
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_NE(exit_code, 0) << "Command should have failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_NE(exit_code, 0) << "Command should have failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -452,7 +452,7 @@ TEST_F(CliTest, GPURemoteWithIncorrectServiceKey) {
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_NE(exit_code, 0) << "Command should have failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_NE(exit_code, 0) << "Command should have failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -478,7 +478,7 @@ TEST_F(CliTest, SwitchLocalWithIncorrectServiceKey) {
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_NE(exit_code, 0) << "Command should have failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_NE(exit_code, 0) << "Command should have failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -503,7 +503,7 @@ TEST_F(CliTest, SwitchRemoteWithIncorrectServiceKey) {
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_NE(exit_code, 0) << "Command should have failed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_NE(exit_code, 0) << "Command should have failed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;

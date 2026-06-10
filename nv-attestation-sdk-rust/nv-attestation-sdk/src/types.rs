@@ -188,12 +188,6 @@ impl SdkOptions {
     }
 }
 
-impl Default for SdkOptions {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default SDK options")
-    }
-}
-
 impl Drop for SdkOptions {
     fn drop(&mut self) {
         unsafe {
@@ -227,7 +221,7 @@ impl Logger {
     /// // Create a logger that forwards C SDK logs to env_logger
     /// let logger = Logger::new().expect("Failed to create logger");
     ///
-    /// let mut opts = SdkOptions::default();
+    /// let mut opts = SdkOptions::new()?;
     /// opts.set_logger(logger);
     ///
     /// let client = NvatSdk::init(opts)?;

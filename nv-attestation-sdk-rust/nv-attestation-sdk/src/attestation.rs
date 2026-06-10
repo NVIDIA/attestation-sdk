@@ -312,12 +312,6 @@ impl AttestationContext {
     }
 }
 
-impl Default for AttestationContext {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default attestation context")
-    }
-}
-
 impl Drop for AttestationContext {
     fn drop(&mut self) {
         unsafe {

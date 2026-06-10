@@ -79,7 +79,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
     ASSERT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     ASSERT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
     ASSERT_EQ(claims_v3->m_hwmodel, "GH100 A01 GSP BROM");
-    ASSERT_EQ(claims_v3->m_ueid, "478176379286082186618948445787393647364802107249");
+    ASSERT_EQ(claims_v3->m_ueid, "509096176156678437554566035365892618958504054724");
     ASSERT_EQ(claims_v3->m_oem_id, "5703");
 
 }
@@ -107,7 +107,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
     EXPECT_EQ(claims_v3->m_hwmodel, "GH100");
-    EXPECT_EQ(claims_v3->m_ueid, "478176379286082186618948445787393647364802107249");
+    EXPECT_EQ(claims_v3->m_ueid, "509096176156678437554566035365892618958504054724");
     EXPECT_EQ(claims_v3->m_oem_id, "5703");
     EXPECT_EQ(claims_v3->m_nonce, mock_data.nonce);
 }

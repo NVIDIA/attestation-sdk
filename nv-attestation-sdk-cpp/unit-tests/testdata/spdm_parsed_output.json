@@ -5,9 +5,9 @@
     "Param2": "0x00",
     "NumberOfBlocks": 64,
     "MeasurementRecordLength": 3520,
-    "Nonce": "0xb4b8a06aaaa35542839388e159d447a5d6f6194998fd86513e2d591ccf640985",
-    "OpaqueLength": 422,
-    "Signature": "0x90d679ad2c04147eb31f4a99ff8f4f8ad1bce8f750e1bb75f266506c88a84150e8671ed5513b7718f5808e5b222661b21aa90dae6c655e652959c8046b5f81feb7b00db3fe1ae97e81d50b02ec9cc64c96f8d0dd5f3be286f82eb98fe07e67d0",
+    "Nonce": "0x1c877b01400fbe0d8c5530050fc3311098534bf65d0a95f1a21d32b62fe317fb",
+    "OpaqueLength": 435,
+    "Signature": "0x08e9e5438d4e63bb016c3b07e2e838e7eb124a1e5a63df6d8911440048eb4062003aad2c8e6a82ead7b22741a3a7470ccb548fb4c630b372abaa70c2372ddcd9e45eeb8b394f1573db4d85172f93acdda3189d52eb5c08cbbdd267b8598b5f60",
     "MeasurementRecord": {
         "NumberOfBlocks": 64,
         "MeasurementBlocks": {
@@ -19,12 +19,12 @@
             "2": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x8048dfd18fe229bf16eb9d30cca0f11a24dafe6eb731de1462984645a0b189b77c4e4e17de727a5e19e3d07de51da338"
+                "DMTFSpecMeasurementValue": "0xb558fdac9af53b91ff3bdb06ff589859d6fbc1050d875c88329347f24ff7b3d11ac53688ba56db03cf8751913107e0db"
             },
             "3": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x164f445c3e282ca8e4ab07c2179b8e02c8e3a2ceb83f9fae8dddaee70aa57207d87792d1481b46c02f9dba6e1fe1e77e"
+                "DMTFSpecMeasurementValue": "0x92b271965eb7789567d26de1f249ea0967ed89bf42ef36837483fd90edb839f5f7e4f1eb48881c3b7f6b54b7c0392c5b"
             },
             "4": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -49,7 +49,7 @@
             "8": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x80161aac5e7509f038a6457b111e048207d1dc0e78edbb8c172fca4139c1d5f29cda67ecdd261fdc9203b76387f7389f"
+                "DMTFSpecMeasurementValue": "0x3292ac26b8e5ff38316082758489115e7f1de0b4b48a60ecabfb01b557a233ab019f9b9da1c9c891f4c672cc58cff3c9"
             },
             "9": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -69,7 +69,7 @@
             "12": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x413d008cedd5526a79455a178154328ce960af252bdb06e7fe4080049add412488cac39ecf3d80efbdc6bdd363861773"
+                "DMTFSpecMeasurementValue": "0x842f2cc6573dc84ee4c0f23e675edfab8f6b03ffd9920f2d4bdd083ac27ad9b7e36796babb7863a06f7db7a0a147ebe7"
             },
             "13": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -119,12 +119,12 @@
             "22": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x68454d4bb5545a74e478e288469a6548bb4d4aa8556a512f9ddd41b0337a602b3f050a469578139c6cea0e0f7c9861c8"
+                "DMTFSpecMeasurementValue": "0x802da836f8481935a94c04637a70bb2f228adbb6f8837b10858e511382f1f7648129429868e967ef4771549c6976be46"
             },
             "23": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0xcf98e425ebfb0c20532162d772d5b355bbabc68b0876a3c91a676769a3d6e8460e01be987669f8196ec63b7b6a8d8581"
+                "DMTFSpecMeasurementValue": "0x9937c5ba2a51c387e756c3e564a04df5099646543646a8df923dbe110a9a031e087e3866d3ed41e845f5ccd0ffd8a53f"
             },
             "24": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -139,17 +139,17 @@
             "26": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0xb718948c035092ebd0c7d6f069141e6bd0cd40d8ddd436aa0d1a705afedfe67c12891d239e6ddf30ea09775d1056ac1a"
+                "DMTFSpecMeasurementValue": "0x2371ddf9e0dcf9dd47718ad3810628379859c3535b2aa6a54545ed74903b7bbc8ccd0318bb988751d87b2663469e783f"
             },
             "27": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x6dbc7f8e23ac6f69c4bf3cb4c61566d7957fce2f0f16a499ac1f724bacb0935eefa5be16f548ba5141449f43555f240c"
+                "DMTFSpecMeasurementValue": "0xe18bb7c3bc62b1f3a2a0a7dc50c157adeb6f9ee497f05ea6af0a80916bcc58ceec229c10e65fd3caea413c091d087595"
             },
             "28": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x2191a06d9fad030cb8a707391f2e51838d8ca1e17109325b155f774ddcb2bf704ca023ba711a282c93a1afcd590ce20b"
+                "DMTFSpecMeasurementValue": "0x180656cd20c7d71e0ed8d64e4d19612b19d5a9b626fbbbdf2a6efbbff38efafe62b399ece753dcda69341c5657412fb8"
             },
             "29": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -159,17 +159,17 @@
             "30": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x1d040fdc3c8de3d8afbcebb79bf3a9ec09a277651b7ace16627f6201c90414d9917b57a7bd67482b1929c9ec0bd1a15d"
+                "DMTFSpecMeasurementValue": "0x480314d58900126e1e8ef34facaac0a063341b9203fb9b742427511ef9d79767c4a9395ce4d1d1dc5948e4dfbfefec07"
             },
             "31": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x1bd45c8a34c33ac6a316050cb0752aa648ac4c6cd26af165cec416557468d21f7a61b6c5c7c4ea6d131be92706593939"
+                "DMTFSpecMeasurementValue": "0x4cdeb293c79d089d7ba8ccf305baa670e885cc4cdf7c2be0c66ef44f5a4575c70c87377d9f7da6ac063f6f1f5a55a029"
             },
             "32": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0xa0d52c35704f13bf52745f27f16285292a7d8e9b8011320c18a58effd1a7934abb414ef99809ec9852568552904d361e"
+                "DMTFSpecMeasurementValue": "0x80fb1951f2e5695de2a47e2875c7bcd7637945811319e6c06893fb489e1d4f34d92a9eb38cb5f6eca42acb670b658aea"
             },
             "33": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -184,7 +184,7 @@
             "35": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x07bbc504d3327cb76d4c4f3b3f1daf8779e40cc31d60826cb11dcc5d09dc59a83bf693f0fb9b1f0b5e58ed4cdc3a580f"
+                "DMTFSpecMeasurementValue": "0x2625aca7b14d7b842e8837604c14d14c40500dd87155cd808b94da5a01ac8d9cc3d1d619007f81be4d1e2f682e466bb9"
             },
             "36": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -209,17 +209,17 @@
             "40": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x5d7a8a08deeeeef3df07828dafeb112bd2372504d324eff2f4eb43893315fe331428c9afbc52fcc06159d406f0ca90af"
+                "DMTFSpecMeasurementValue": "0x485de7b863a2850fda4de8a048d6865a8c997c3e7f3d62510533c52f71a3a85c659aab859198fa83ba3870c2d846e7d3"
             },
             "41": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x9d2c6389c070dde430ffd510cad0c546fb9a73b9ee7a478fa804d2ab14c674487abdc7aa12d90215ced4f3678f2765fa"
+                "DMTFSpecMeasurementValue": "0x8620af613a2f0cabea390f354d850840b1d45d1c5d9168b03329c4b9c36c1078b27ce35416dd9d25f3ee51ab2a6c570e"
             },
             "42": {
                 "DMTFSpecMeasurementValueType": 1,
                 "DMTFSpecMeasurementValueSize": 48,
-                "DMTFSpecMeasurementValue": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+                "DMTFSpecMeasurementValue": "0x11baaa3599e7a7b70151cf427c62fc95556d9102a9f87499085b3ec122ba64c35b78d505ce847e8b7b1bd90e0c59dcce"
             },
             "43": {
                 "DMTFSpecMeasurementValueType": 1,
@@ -335,12 +335,14 @@
     },
     "OpaqueData": {
         "OpaqueDataField": {
-            "OPAQUE_FIELD_ID_BOARD_ID": "0xb1030000",
-            "OPAQUE_FIELD_ID_CHIP_SKU": "0x383832000000000000",
+            "OPAQUE_FIELD_ID_VBIOS_VERSION": "0x0074009620000000",
+            "OPAQUE_FIELD_ID_BOARD_ID": "0xa1040000",
+            "OPAQUE_FIELD_ID_CHIP_SKU": "0x383632000000000000",
             "OPAQUE_FIELD_ID_CHIP_SKU_MOD": "0x3000000000",
-            "OPAQUE_FIELD_ID_CPRINFO": "0x00c00100",
-            "OPAQUE_FIELD_ID_DRIVER_VERSION": "0x3535302e39302e303700",
-            "OPAQUE_FIELD_ID_FWID": "0xf5c384aebb579217a2c66b17ed0f28e6a9b8d639041acd7b4721cec004f7275494ba94bb5cdfdb3055ee051762b1f75d",
+            "OPAQUE_FIELD_ID_PROJECT": "0x3130313000",
+            "OPAQUE_FIELD_ID_PROJECT_SKU": "0x3032303500",
+            "OPAQUE_FIELD_ID_PROJECT_SKU_MOD": "0x0000",
+            "OPAQUE_FIELD_ID_DRIVER_VERSION": "0x3538302e3135392e303300",
             "OPAQUE_FIELD_ID_GPU_INFO": "0x8001000000000000",
             "OPAQUE_FIELD_ID_MSRSCNT": [
                 0,
@@ -364,27 +366,27 @@
                 0,
                 0,
                 0,
-                2,
-                2,
-                0,
-                0,
-                1,
-                1,
-                1,
-                0,
-                1,
-                1,
-                1,
-                1,
                 1,
                 2,
-                1,
-                1,
-                1,
+                0,
+                0,
                 1,
                 1,
                 1,
                 0,
+                1,
+                1,
+                1,
+                1,
+                1,
+                2,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
                 0,
                 0,
                 0,
@@ -408,12 +410,10 @@
                 0,
                 0
             ],
+            "OPAQUE_FIELD_ID_CPRINFO": "0x00c00100",
             "OPAQUE_FIELD_ID_NVDEC0_STATUS": "0x55",
-            "OPAQUE_FIELD_ID_PROJECT": "0x3130313000",
-            "OPAQUE_FIELD_ID_PROJECT_SKU": "0x3032303000",
-            "OPAQUE_FIELD_ID_PROJECT_SKU_MOD": "0x0000",
-            "OPAQUE_FIELD_ID_PROTECTED_PCIE_STATUS": "0x55",
-            "OPAQUE_FIELD_ID_VBIOS_VERSION": "0x009f009601000000"
+            "OPAQUE_FIELD_ID_FWID": "0xf1ae7d0093a3f5689cced58045c9744f94eb2aa4ddca88135197fb41a7be45576c2881cf920e2cbcc090b1cb921f7b2d",
+            "OPAQUE_FIELD_ID_PROTECTED_PCIE_STATUS": "0x55"
         }
     }
 }

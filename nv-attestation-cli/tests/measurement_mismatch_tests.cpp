@@ -49,7 +49,7 @@ Expected output:
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, NVAT_RC_OVERALL_RESULT_FALSE) << "Expected exit code " << NVAT_RC_OVERALL_RESULT_FALSE << " but got " << exit_code << ". Command: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, NVAT_RC_OVERALL_RESULT_FALSE) << "Expected exit code " << NVAT_RC_OVERALL_RESULT_FALSE << " but got " << exit_code << ". Command: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
@@ -120,7 +120,7 @@ Expected output:
 
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
-    ASSERT_EQ(exit_code, 0) << "Command should have passed: " << cmd << "\nOutput:\n" << output;
+    ASSERT_EQ(exit_code, 0) << "Command should have passed: " << redact_cmd(cmd) << "\nOutput:\n" << output;
 
     std::string json_str;
     ASSERT_TRUE(extract_json_object(output, json_str)) << "Did not find JSON in output. Raw output:\n" << output;
