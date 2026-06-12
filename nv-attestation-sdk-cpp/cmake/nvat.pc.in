@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/@PKGCONFIG_RELATIVE_PREFIX@
+exec_prefix=${prefix}
+libdir=@PKGCONFIG_LIBDIR@
+includedir=@PKGCONFIG_INCLUDEDIR@
+
+Name: nv-attestation
+Description: NVIDIA Attestation SDK C++ Library
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lnvat
+Cflags: -I${includedir}
