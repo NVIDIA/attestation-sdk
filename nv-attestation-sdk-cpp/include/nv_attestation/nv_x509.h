@@ -29,8 +29,21 @@
 #include "nv_attestation/verify.h"
 #include "nv_attestation/nv_http.h"
 #include "nv_attestation/nv_ocsp.h"
+#include "nv_attestation/dice_tcb_info.h"
 
 namespace nvattestation {
+
+// DMTF device-info fields from a certificate's SubjectAltName otherName.
+struct DmtfDeviceInfo {
+    std::string manufacturer;
+    std::string product;
+    std::string serial;
+};
+
+// DSP0274 §330 fixes the value at exactly "<manufacturer>:<product>:<serial>",
+// with no colon inside a field; anything else is Error::BadArgument.
+Error parse_dmtf_device_info(const std::string& device_info,
+                             DmtfDeviceInfo& out_info);
 
 /**
  * @brief Creates an X509 object from a certificate file path.
@@ -47,6 +60,15 @@ nv_unique_ptr<X509> x509_from_cert_path(const std::string &path);
 nv_unique_ptr<X509_STORE> create_trust_store(X509* trust_anchor_cert);
 
 /**
+ * @brief Creates an X509_STORE holding multiple trust anchors. A chain
+ *        verified against it anchors if it roots to any one of them.
+ * @param trust_anchor_certs The trust anchor certificates.
+ * @return A unique pointer to the X509_STORE, or nullptr on error (including
+ *         an empty input).
+ */
+nv_unique_ptr<X509_STORE> create_trust_store(const std::vector<X509*>& trust_anchor_certs);
+
+/**
  * @brief Creates an X509 object from a certificate string.
  * @param cert_string The certificate string.
  * @return A unique pointer to the X509 object, or nullptr on error.
@@ -59,6 +81,7 @@ enum class CertificateChainType {
     GPU_DRIVER_RIM,
     NVSWITCH_DEVICE_IDENTITY,
     NVSWITCH_VBIOS_RIM,
+    GENERIC,
 };
 
 enum class OCSPStatus {
@@ -66,6 +89,8 @@ enum class OCSPStatus {
     GOOD = 0,
     REVOKED = 1,
     UNKOWN = 2,
+    NOT_CHECKED = 3,
+    ERROR = 4,
 };
 
 inline std::string to_string(OCSPStatus status) {
@@ -76,6 +101,10 @@ inline std::string to_string(OCSPStatus status) {
             return "revoked";
         case OCSPStatus::UNKOWN:
             return "unknown";
+        case OCSPStatus::NOT_CHECKED:
+            return "not_checked";
+        case OCSPStatus::ERROR:
+            return "error";
         case OCSPStatus::UNDEFINED:
             return "undefined";
         default:
@@ -112,7 +141,8 @@ struct OCSPClaims {
 
 
     OCSPClaims(OCSPStatus status, const std::string& reason, bool nonce_matches, time_t ocsp_resp_expiration_time) : status(status), revocation_reason(std::make_shared<std::string>(reason)), nonce_matches(nonce_matches), ocsp_resp_expiration_time(ocsp_resp_expiration_time) {}
-    OCSPClaims() : status(OCSPStatus::UNDEFINED), revocation_reason(nullptr), nonce_matches(false), ocsp_resp_expiration_time(0), ocsp_response_valid(false) {}
+    OCSPClaims() : status(OCSPStatus::NOT_CHECKED), revocation_reason(nullptr), nonce_matches(false), ocsp_resp_expiration_time(0), ocsp_response_valid(false) {}
+    explicit OCSPClaims(OCSPStatus s) : OCSPClaims() { status = s; }
 };
 
 std::ostream& operator<<(std::ostream& os, const OCSPClaims& claims) ;
@@ -147,6 +177,29 @@ struct CertChainClaims {
 
 std::ostream& operator<<(std::ostream& os, const CertChainClaims& claims);
 
+struct PerCertStatus {
+    std::string expiration_date;
+    bool expired = false;
+    CertChainStatus cert_check_status = CertChainStatus::VALID;
+
+    struct OcspInfo {
+        bool response_valid = false;
+        OCSPStatus crl_status = OCSPStatus::UNDEFINED;
+        std::shared_ptr<std::string> revocation_reason;
+        bool nonce_matches = false;
+        bool response_expired = false;
+        std::string response_expiration_date;
+        std::string response_produced_at;
+        // Set only when crl_status == REVOKED.
+        std::string response_revoked_at;
+    };
+    std::shared_ptr<OcspInfo> ocsp;
+};
+
+// True only if every cert is unexpired and, when it has a known OCSP
+// status, that status is GOOD with a matching nonce and valid response.
+// No data or NOT_CHECKED is treated as not applicable.
+bool all_certs_trusted(const std::vector<PerCertStatus>& chain);
 
 class X509CertChain{
     private:
@@ -156,7 +209,17 @@ class X509CertChain{
         // fwid is 48 bytes long
         static const size_t m_fwid_hash_length = 48;
         // Private constructor
-        static Error get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_data, unsigned int length, std::vector<uint8_t>& out_fwid);
+        static Error get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_data, unsigned int length, std::vector<uint8_t>& out_fwid, bool silent = false);
+        // Split a PEM chain string and push each certificate onto this chain.
+        Error append_pem_chain(const std::string& cert_chain);
+        // Shared by signature verification and get_end_entity_public_key_pem(),
+        // so the exported key is the one signatures are checked against.
+        Error get_leaf_public_key(nv_unique_ptr<EVP_PKEY>& out_pkey) const;
+        // Raw per-cert OCSP collection shared by generate_ocsp_claims and generate_per_cert_status.
+        Error collect_ocsp_responses(const OcspVerifyOptions& options, IOcspHttpClient& client,
+                                     std::vector<std::pair<size_t, NvOcspResponse>>& out) const;
+        // Maps one cert's raw OCSP response into its PerCertStatus::OcspInfo.
+        static std::shared_ptr<PerCertStatus::OcspInfo> build_ocsp_info(const NvOcspResponse& resp, time_t now);
 
     public:
         static const std::string kFwidOid;
@@ -166,13 +229,17 @@ class X509CertChain{
         // Static factory method
         static Error create(CertificateChainType type, const std::string& root_cert_str, X509CertChain& out_cert_chain);
         static Error create_from_cert_chain_str(CertificateChainType type, const std::string& root_cert_str, const std::string& cert_chain, X509CertChain& out_cert_chain);
+        // Uses a caller-supplied (possibly multi-anchor) trust store instead of a single root string.
+        static Error create_from_cert_chain_str(CertificateChainType type, nv_unique_ptr<X509_STORE> trust_store, const std::string& cert_chain, X509CertChain& out_cert_chain);
 
         Error set_root_cert(nv_unique_ptr<X509> root_cert);
         Error push_back(const std::string &cert_string);
         
-        Error verify() const;
+        Error verify(bool allow_partial_chain = false) const;
         Error generate_cert_chain_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, CertChainClaims& out_cert_chain_claims) const;
         Error generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const;
+        Error generate_per_cert_status(const OcspVerifyOptions& ocsp_options, IOcspHttpClient* ocsp_client,
+                                       std::vector<PerCertStatus>& out_statuses) const;
         
         /**
          * @brief Calculate the minimum expiration time across all certificates in the chain
@@ -234,12 +301,63 @@ class X509CertChain{
          * the hwmodel claim.
          */
         Error get_hwmodel(std::string& out_hwmodel) const;
+        // Subject CN of the certificate at cert_index. Generic version of
+        // the extraction get_hwmodel() does for a hardcoded index.
+        Error get_subject_cn(std::size_t cert_index, std::string& out_cn) const;
         /**
-         * @brief Extracts the serial number from the first certificate in the chain.
-         * This is used to generate the ueid claim for GPU and NVSwitch evidence claims
+         * @brief Extracts the serial number of the certificate at @p cert_index
+         * as a decimal string.
          */
-        Error get_ueid(std::string& out_ueid) const;
+        Error get_cert_serial(size_t cert_index, std::string& out_serial) const;
 
+        /**
+         * @brief Extracts the serial number of the end-entity certificate
+         * (index 0) as a decimal string.
+         * The ueid claim for GPU and NVSwitch evidence is derived from this value.
+         */
+        Error get_end_entity_serial(std::string& out_serial) const;
+
+        /**
+         * @brief Extracts the SubjectPublicKeyInfo of the end-entity
+         * certificate (index 0) as a PEM-encoded public key.
+         * This is the key verify_signature_pkcs11() verifies against.
+         */
+        Error get_end_entity_public_key_pem(std::string& out_pem) const;
+
+        /**
+         * @brief Extracts the DMTF device info from the end-entity
+         * certificate's SubjectAlternativeName otherName carrying the DMTF OID
+         * 1.3.6.1.4.1.412.274.1.
+         * Returns Error::CertNotFound when no such otherName is present.
+         */
+        Error get_end_entity_dmtf_device_info(DmtfDeviceInfo& out_info) const;
+
+        /**
+         * @brief Extracts and parses a DiceTcbInfo extension from a certificate in the chain.
+         * @param cert_index Index of the certificate in the chain.
+         * @param oid The OID of the DiceTcbInfo extension to parse (e.g., OID_TCG_DICE_TCB_INFO_ALIAS).
+         * @param out_dice_tcb_info Output parameter for the parsed DiceTcbInfo.
+         * @return Error::Ok on success.
+         */
+        Error get_dice_tcb_info(size_t cert_index, const std::string& oid, DiceTcbInfo& out_dice_tcb_info,
+                                bool silent = false) const;
+
+        /**
+         * @brief Extracts and parses a MultiDiceTcbInfo extension from a certificate in the chain.
+         * @param cert_index Index of the certificate in the chain.
+         * @param out_multi_dice_tcb_info Output parameter for the parsed MultiDiceTcbInfo.
+         * @return Error::Ok on success.
+         */
+        Error get_multi_dice_tcb_info(size_t cert_index, MultiDiceTcbInfo& out_multi_dice_tcb_info,
+                                      bool silent = false) const;
+
+        /**
+         * @brief Extract DiceUeid (OID 2.23.133.5.4.4) octets from the cert at `cert_index`.
+         * Returns raw UEID bytes (the inner OCTET STRING content), or Error::CertFwidNotFound
+         * if the extension is absent.
+         */
+        Error get_dice_ueid(size_t cert_index, std::vector<uint8_t>& out_ueid,
+                            bool silent = false) const;
 
 };
 }

@@ -47,6 +47,7 @@ namespace nvattestation
 const std::vector<GpuArchitecture> GpuArchitectureData::m_supported_architectures = {
     GpuArchitecture::Hopper,
     GpuArchitecture::Blackwell,
+    GpuArchitecture::Rubin,
 };
 
 Error GpuArchitectureData::create(GpuArchitecture arch, GpuArchitectureData& out_arch_data) {
@@ -63,6 +64,7 @@ Error GpuArchitectureData::create(GpuArchitecture arch, GpuArchitectureData& out
             out_arch_data.m_fwid_type = X509CertChain::FWIDType::FWID_2_23_133_5_4_1;
             break;
         case GpuArchitecture::Blackwell:
+        case GpuArchitecture::Rubin:
             out_arch_data.m_ar_signature_hash_algorithm = EVP_sha384();
             // NOLINTNEXTLINE(readability-magic-numbers)
             out_arch_data.m_ar_signature_length = 96;
@@ -146,13 +148,18 @@ Error GpuEvidence::collection_to_json(const std::vector<std::shared_ptr<GpuEvide
 }
 
 Error GpuEvidence::collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<GpuEvidence>>& out_collection) {
-    return deserialize_from_json(json_string, out_collection);
+    Error err = deserialize_from_json(json_string, out_collection);
+    if (err != Error::Ok) {
+        return Error::EvidenceMalformed;
+    }
+    return Error::Ok;
 }
 
 std::string to_string(GpuArchitecture arch) {
     switch (arch) {
         case GpuArchitecture::Hopper: return "HOPPER";
         case GpuArchitecture::Blackwell: return "BLACKWELL";
+        case GpuArchitecture::Rubin: return "RUBIN";
         default: return "UNKNOWN";
     }
 }
@@ -168,6 +175,10 @@ void from_string(const std::string& arch_str, GpuArchitecture& out_arch) {
     }
     if (upper_arch == "BLACKWELL") {
         out_arch = GpuArchitecture::Blackwell;
+        return;
+    }
+    if (upper_arch == "RUBIN") {
+        out_arch = GpuArchitecture::Rubin;
         return;
     }
     LOG_ERROR("Unknown GPU architecture: " << arch_str);
@@ -305,7 +316,7 @@ Error GpuEvidence::AttestationReport::generate_attestation_report_claims(const O
         return error;
     }
 
-    error = m_attestation_cert_chain.get_ueid(out_attestation_report_claims.m_ueid);
+    error = m_attestation_cert_chain.get_end_entity_serial(out_attestation_report_claims.m_ueid);
     if (error != Error::Ok) {
         return error;
     }
@@ -371,7 +382,9 @@ Error GpuEvidence::AttestationReport::create(const std::vector<uint8_t>& attesta
         return error;
     }
 
-    error = GpuOpaqueDataParser::create(*parsed_opaque_data_ptr, out_attestation_report.m_gpu_opaque_data_parser);
+    error = GpuOpaqueDataParser::create(*parsed_opaque_data_ptr,
+                                        out_attestation_report.m_spdm_response.get_parsed_opaque_struct().get_format_version(),
+                                        out_attestation_report.m_gpu_opaque_data_parser);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to parse GPU opaque data");
         return error;
@@ -505,8 +518,8 @@ Error GpuEvidence::AttestationReport::get_driver_rim_id(GpuArchitecture architec
         LOG_TRACE("Chip type string: " << chip_type_string);
         out_driver_rim_id = "NV_GPU_CC_DRIVER_" + chip_type_string + "_" + driver_version;
     } else {
-        LOG_ERROR("Unsupported GPU architecture: ");
-        return Error::InternalError;
+        LOG_ERROR("Unsupported GPU architecture for driver RIM ID: " << to_string(architecture));
+        return Error::GpuArchitectureNotSupported;
     }
 
     return Error::Ok;

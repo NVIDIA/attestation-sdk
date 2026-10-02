@@ -1,0 +1,127 @@
+/ tagged-spdm-toc / 570({
+  / tagged-evidence / 0: [
+    / tagged-concise-evidence / 571({
+      / ce.ev-triples / 0: {
+        / ce.evidence-triples / 0: [
+          [
+            / environment-map /
+            {
+              / class / 0: {
+                / vendor / 1: "NVIDIA",
+                / model / 2: "GB100 A01 FSP",
+                / layer / 3: 1
+              }
+            },
+            / measurement-map array /
+            [
+              {
+                / mkey / 0: 1,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [1]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 3,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [3]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 4,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [4]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 5,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [5]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 6,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [6]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 7,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [7]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 8,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [8]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 11,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [11]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 12,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [12]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 13,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [13]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 18,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [18]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 51,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [51]
+                  }
+                }
+              },
+              {
+                / mkey / 0: 52,
+                / mval / 1: {
+                  / spdm-indirect / 12: {
+                    / index / 0: [52]
+                  }
+                }
+              }
+            ]
+          ]
+        ]
+      }
+    })
+  ]
+})

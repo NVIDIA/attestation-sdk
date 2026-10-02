@@ -1,0 +1,34 @@
+/ OCP EAT claims-set exercising every optional claim plus rim-locators and a
+  variety of private-claim value types. Drives the optional-decode branches,
+  convert_locator (single URI and URI list), the CBOR walker multi-byte length
+  and array, map, text value branches, and the to_json optional branches.
+  Keys grouped mandatory then named optionals then catch-all, matching the
+  other fixtures (the zcbor decoder matches map members by key, not position). /
+{
+  / nonce / 10: h'0011223344556677',
+  / dbgstat = Disabled / 263: 1,
+  / eat_profile: OID 1.3.6.1.4.1.42623.1.3 / 265: h'2b0601040182cc7f0103',
+  / measurements: one CoEv entry; body is a tagged-concise-evidence (#6.571) /
+  273: [
+    [ 10571, h'd9023ba100a1008182a100a2016a5465737456656e646f720269546573744d6f64656c81a101a102818201582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' ]
+  ],
+  / iss / 1: "https://ocp.example/attestation",
+  / cti / 7: h'cafecafecafecafe',
+  / ueid / 256: h'01deadbeefcafef00dba',
+  / sueid / 257: h'02beadfeedcafef00dba',
+  / hwmodel / 259: h'1122334455',
+  / uptime / 261: 123456,
+  / bootcount / 267: 7,
+  / bootseed / 268: h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
+  / rim-locators: one single-URI locator plus one URI-list locator / -70001: [
+    { 0: 32("https://rim.example/single.corim") },
+    { 0: [ 32("https://rim.example/primary.corim"), 32("https://rim.example/mirror.corim") ] }
+  ],
+  / private claims (keys below -65536): varied value types exercise the walker /
+  -70002: 1000000,
+  -70003: [1, 2, 3],
+  -70004: {1: 2},
+  -70005: "opaque-text",
+  -70006: -5,
+  -70007: true
+}

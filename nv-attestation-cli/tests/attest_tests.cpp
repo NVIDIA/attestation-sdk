@@ -626,6 +626,16 @@ TEST(ClaimsParity, GPULocalVsRemote) { // integration + unit
             cert-status claim for rim driver and makes sure that its expired
         */
     }
+    if (g_cli_env->test_label == "rubin-nvml" ||
+        g_cli_env->test_label == "hopper-nvml" ||
+        g_cli_env->test_label == "blackwell-nvml") {
+        GTEST_SKIP() << "Skipping: architecture-specific run";
+        /*
+            These runs attest the machine's live GPU to exercise attest-v2.
+            The v1 verifier only supports Hopper and Blackwell, so this would
+            fail on Rubin, and it adds nothing to the other two runs.
+        */
+    }
     RecordProperty("description", "Verify local and remote GPU claims match for same evidence");
 
     std::string nvattest_bin = g_cli_env->nvattest_bin;

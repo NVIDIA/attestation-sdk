@@ -51,7 +51,7 @@ namespace nvattestation
       public:
          EvidencePolicy(): 
              ocsp_options(OcspVerifyOptions()),
-             gpu_claims_version(GpuClaimsVersion::V3),
+             gpu_claims_version(GpuClaimsVersion::V4),
              switch_claims_version(SwitchClaimsVersion::V3),
              verify_rim_signature(true),
              verify_rim_cert_chain(true) {}
@@ -68,9 +68,45 @@ namespace nvattestation
       std::shared_ptr<JwkStore>& jwk_store,
       std::string& eat_issuer,
       NvHttpClient& http_client,
+      const JwtValidationOptions& jwt_options,
       std::vector<uint8_t>& out_eat_nonce,
       std::unordered_map<std::string, std::string>& out_claims,
       bool& out_overall_result
+   );
+
+   // Maps the per-device claim payloads produced by validate_and_decode_EAT
+   // (device_id -> claims-JSON string) into a typed ClaimsCollection, routing
+   // each submod to its device-specific claims type. Network-free.
+   Error map_submod_payloads_to_claims(
+      const std::unordered_map<std::string, std::string>& device_claims_json,
+      ClaimsCollection& out_claims
+   );
+
+   // Verifies a detached EAT (overall + per-device submod JWTs) against the
+   // JWKS published at `nras_base_url`/.well-known/jwks.json, then maps the
+   // verified payloads to a typed ClaimsCollection. The JWKS endpoint is public,
+   // so `service_key` is optional; pass an empty string to send no credential.
+   // When `expected_nonce` is non-empty, the token's overall eat_nonce must
+   // equal it or Error::NonceMismatch is returned; an empty `expected_nonce`
+   // skips the nonce check.
+   Error verify_attestation_result(
+      const std::string& detached_eat_json,
+      const std::string& nras_base_url,
+      const std::string& service_key,
+      const HttpOptions& http_options,
+      const JwtValidationOptions& jwt_options,
+      const std::vector<uint8_t>& expected_nonce,
+      ClaimsCollection& out_claims
+   );
+
+   Error verify_ear(
+      const std::string& ear_jwt,
+      const std::string& verifier_base_url,
+      const std::string& service_key,
+      const HttpOptions& http_options,
+      const JwtValidationOptions& jwt_options,
+      const std::vector<uint8_t>& expected_nonce,
+      std::string& out_ear_json
    );
 
    class NRASAttestRequestV4 {

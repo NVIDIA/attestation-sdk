@@ -1,0 +1,28 @@
+/ profile (key 2) is present but is an int rather than a profile-type-choice /
+/ (uri or tagged-oid). Same silent-drop hazard as the rim-locators case: the /
+/ member decodes as "absent" instead of raising an error.                    /
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+                  ]
+                }
+              }
+            ]
+          ]
+        ]
+      }
+    })
+  ],
+  / profile / 2: 42
+})

@@ -80,8 +80,8 @@ namespace nvattest {
             return CollectEvidenceOutput(err);
         }
 
-        nv_unique_ptr<nvat_nonce_t> nonce;
         nvat_nonce_t raw_nonce = nullptr;
+        nv_unique_ptr<nvat_nonce_t> nonce;
         if (!evidence_collection_options.nonce.empty()) {
             err = nvat_nonce_from_hex(&raw_nonce, evidence_collection_options.nonce.c_str());
             if (err != NVAT_RC_OK) {
@@ -90,8 +90,8 @@ namespace nvattest {
         }
         nonce.reset(&raw_nonce);
  
-        nv_unique_ptr<nvat_str_t> serialized_evidence;
         nvat_str_t raw_serialized_evidence = nullptr;
+        nv_unique_ptr<nvat_str_t> serialized_evidence;
         std::string evidences_str = "[]";
  
         if (evidence_collection_options.device == "gpu") {
@@ -103,8 +103,8 @@ namespace nvattest {
                 }
             }
 
-            nv_unique_ptr<nvat_gpu_evidence_source_t> source;
             nvat_gpu_evidence_source_t raw_source = nullptr;
+            nv_unique_ptr<nvat_gpu_evidence_source_t> source;
             if (evidence_collection_options.gpu_evidence_source == "file") {
                 err = nvat_gpu_evidence_source_from_json_file(&raw_source, evidence_collection_options.gpu_evidence_file.c_str());
                 if (err != NVAT_RC_OK) {
@@ -142,8 +142,8 @@ namespace nvattest {
                 return CollectEvidenceOutput(NVAT_RC_INTERNAL_ERROR);
             }
         } else if (evidence_collection_options.device == "nvswitch") {
-            nv_unique_ptr<nvat_switch_evidence_source_t> source;
             nvat_switch_evidence_source_t raw_source = nullptr;
+            nv_unique_ptr<nvat_switch_evidence_source_t> source;
             if (evidence_collection_options.switch_evidence_source == "file") {
                 err = nvat_switch_evidence_source_from_json_file(&raw_source, evidence_collection_options.switch_evidence_file.c_str());
                 if (err != NVAT_RC_OK) {

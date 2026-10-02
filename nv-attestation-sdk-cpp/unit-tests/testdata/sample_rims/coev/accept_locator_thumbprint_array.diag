@@ -1,0 +1,41 @@
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestLocator" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899']
+                  ]
+                }
+              }
+            ]
+          ]
+        ]
+      }
+    })
+  ],
+  / rim-locators / 1: [
+    {
+      / corim-href / 0: 32("https://example.test/rim-single.corim"),
+      / corim-thumbprint / 1: [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+    },
+    {
+      / corim-href / 0: [
+        32("https://example.test/rim-primary.corim"),
+        32("https://example.test/rim-mirror.corim")
+      ]
+    },
+    {
+      / corim-href / 0: 32("https://example.test/rim-arr-thumb.corim"),
+      / corim-thumbprint / 1: [[1, h'ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100']]
+    }
+  ],
+  / profile / 2: 32("https://example.test/profile-uri")
+})

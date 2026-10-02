@@ -1,0 +1,19 @@
+/ spdm-indirect.index (key 0) is a tstr rather than [1*64 uint], so it is
+  shadowed into the map's `* int => any` catch-all. Without the check the
+  measurement would resolve to no SPDM block indexes at all — silently
+  under-verified instead of rejected. /
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestDirectAndIndirect" }
+        },
+        [
+          { / mval / 1: { / digests / 2: [ [1, h'1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff'] ] } },
+          { / mval / 1: { / spdm-indirect / 12: { / index: tstr, not [1*64 uint] / 0: "bad" } } }
+        ]
+      ]
+    ]
+  }
+})

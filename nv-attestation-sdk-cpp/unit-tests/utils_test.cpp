@@ -34,6 +34,12 @@ class UtilsTest : public ::testing::Test {
         }
 };
 
+TEST_F(UtilsTest, ToHexStringUppercase) {
+    EXPECT_EQ(to_hex_string(std::vector<uint8_t>{0x00, 0xFF, 0x0A}, /*uppercase=*/true), "00FF0A");
+    EXPECT_EQ(to_hex_string(std::vector<uint8_t>{0x00, 0xFF, 0x0A}), "00ff0a");
+    EXPECT_EQ(to_hex_string(std::vector<uint8_t>{}, /*uppercase=*/true), "");
+}
+
 TEST_F(UtilsTest, GenerateValidNonceLengths) {
     std::vector<size_t> lengths = {32, 64, 128};
     for (const auto length : lengths) {
@@ -163,4 +169,127 @@ TEST_F(CustomLoggerTest, NullLoggerTest) {
     ASSERT_TRUE(logger.should_log(LogLevel::INFO, __FILE__, __FUNCTION__, __LINE__));
     logger.log(LogLevel::INFO, "test message!", __FILE__, __FUNCTION__, __LINE__);
     logger.flush();
+}
+
+TEST(Base64UrlTest, RoundTripAllTailLengths) {
+    // Cover each residue of len % 3 (0, 1, 2) to exercise both tail branches.
+    for (std::size_t len = 0; len <= 8; ++len) {
+        std::vector<uint8_t> input(len);
+        for (std::size_t i = 0; i < len; ++i) {
+            input[i] = static_cast<uint8_t>(i * 37 + 11);
+        }
+        std::string encoded;
+        ASSERT_EQ(encode_base64url(input, encoded), Error::Ok) << "len=" << len;
+        EXPECT_EQ(encoded.find('='), std::string::npos) << "len=" << len;
+        std::vector<uint8_t> decoded;
+        ASSERT_EQ(decode_base64url(encoded, decoded), Error::Ok) << "len=" << len;
+        EXPECT_EQ(decoded, input) << "len=" << len;
+    }
+}
+
+TEST(Base64UrlTest, EncodesUrlSafeAlphabet) {
+    // 0xFB 0xFF 0xFE encodes to the two chars that differ from standard base64
+    // ('-' and '_'), proving the URL-safe alphabet is used.
+    std::vector<uint8_t> input = {0xFB, 0xFF, 0xFE};
+    std::string encoded;
+    ASSERT_EQ(encode_base64url(input, encoded), Error::Ok);
+    EXPECT_EQ(encoded, "-__-");
+}
+
+TEST(Base64UrlTest, RejectsPadding) {
+    std::vector<uint8_t> out;
+    EXPECT_EQ(decode_base64url("QQ==", out), Error::BadArgument);
+}
+
+TEST(Base64UrlTest, RejectsInvalidCharacter) {
+    std::vector<uint8_t> out;
+    EXPECT_EQ(decode_base64url("AB*D", out), Error::BadArgument);
+}
+
+TEST(Base64UrlTest, RejectsImpossibleLength) {
+    std::vector<uint8_t> out;
+    // 5 chars == 1 (mod 4): no byte string base64url-encodes to this length.
+    EXPECT_EQ(decode_base64url("QUJDQ", out), Error::BadArgument);
+}
+
+TEST(Base64UrlTest, EmptyRoundTrips) {
+    std::string encoded = "stale";
+    ASSERT_EQ(encode_base64url({}, encoded), Error::Ok);
+    EXPECT_EQ(encoded, "");
+    std::vector<uint8_t> out = {1, 2, 3};
+    ASSERT_EQ(decode_base64url("", out), Error::Ok);
+    EXPECT_TRUE(out.empty());
+}
+
+TEST_F(UtilsTest, RequireHttpsAndNormalizeAcceptsHttpsUrl) {
+    std::string normalized;
+    ASSERT_EQ(require_https_and_normalize("https://nras.example.com", normalized), Error::Ok);
+    EXPECT_EQ(normalized, "https://nras.example.com");
+}
+
+TEST_F(UtilsTest, RequireHttpsAndNormalizeTrimsTrailingSlashes) {
+    std::string normalized;
+    ASSERT_EQ(require_https_and_normalize("https://nras.example.com///", normalized), Error::Ok);
+    EXPECT_EQ(normalized, "https://nras.example.com");
+}
+
+TEST_F(UtilsTest, RequireHttpsAndNormalizeRejectsNonHttpsScheme) {
+    std::string normalized;
+    EXPECT_EQ(require_https_and_normalize("http://nras.example.com", normalized), Error::BadArgument);
+    EXPECT_EQ(require_https_and_normalize("ftp://nras.example.com", normalized), Error::BadArgument);
+    // A bare host with no scheme is also rejected.
+    EXPECT_EQ(require_https_and_normalize("nras.example.com", normalized), Error::BadArgument);
+}
+// IANA Named Information registry IDs used by CoRIM/CoEV digest records.
+TEST(HashAlgorithmTest, NiAlgorithmIds) {
+    EXPECT_EQ(to_ni_algorithm_id(HashAlgorithm::Sha256), 1);
+    EXPECT_EQ(to_ni_algorithm_id(HashAlgorithm::Sha384), 7);
+    EXPECT_EQ(to_ni_algorithm_id(HashAlgorithm::Sha512), 8);
+}
+
+TEST(HashAlgorithmTest, EvpDigests) {
+    const EVP_MD* digest = nullptr;
+
+    ASSERT_EQ(evp_md_for_hash_algorithm(HashAlgorithm::Sha256, digest),
+              Error::Ok);
+    EXPECT_EQ(EVP_MD_get_type(digest), NID_sha256);
+
+    ASSERT_EQ(evp_md_for_hash_algorithm(HashAlgorithm::Sha384, digest),
+              Error::Ok);
+    EXPECT_EQ(EVP_MD_get_type(digest), NID_sha384);
+
+    ASSERT_EQ(evp_md_for_hash_algorithm(HashAlgorithm::Sha512, digest),
+              Error::Ok);
+    EXPECT_EQ(EVP_MD_get_type(digest), NID_sha512);
+
+    EXPECT_EQ(evp_md_for_hash_algorithm(static_cast<HashAlgorithm>(99), digest),
+              Error::BadArgument);
+    EXPECT_EQ(digest, nullptr);
+}
+
+constexpr std::size_t kSha256DigestBytes = 32;
+constexpr std::size_t kSha384DigestBytes = 48;
+constexpr std::size_t kSha512DigestBytes = 64;
+constexpr std::size_t kSha1DigestBytes = 20;
+
+TEST(HashAlgorithmTest, FromDigestSizeMapsKnownLengths) {
+    HashAlgorithm alg = HashAlgorithm::Sha256;
+    ASSERT_EQ(hash_algorithm_from_digest_size(kSha256DigestBytes, alg), Error::Ok);
+    EXPECT_EQ(alg, HashAlgorithm::Sha256);
+    ASSERT_EQ(hash_algorithm_from_digest_size(kSha384DigestBytes, alg), Error::Ok);
+    EXPECT_EQ(alg, HashAlgorithm::Sha384);
+    ASSERT_EQ(hash_algorithm_from_digest_size(kSha512DigestBytes, alg), Error::Ok);
+    EXPECT_EQ(alg, HashAlgorithm::Sha512);
+}
+
+TEST(HashAlgorithmTest, FromDigestSizeRejectsUnknownLengths) {
+    HashAlgorithm alg = HashAlgorithm::Sha384;
+    EXPECT_EQ(hash_algorithm_from_digest_size(0, alg), Error::BadArgument);
+    // SHA-1 length, and one byte short of SHA-384.
+    EXPECT_EQ(hash_algorithm_from_digest_size(kSha1DigestBytes, alg),
+              Error::BadArgument);
+    EXPECT_EQ(hash_algorithm_from_digest_size(kSha384DigestBytes - 1, alg),
+              Error::BadArgument);
+    // Left untouched on failure.
+    EXPECT_EQ(alg, HashAlgorithm::Sha384);
 }

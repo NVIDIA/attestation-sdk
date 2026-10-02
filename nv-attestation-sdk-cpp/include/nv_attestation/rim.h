@@ -21,6 +21,7 @@
 #include <vector>
 #include <memory>
 #include <map>
+#include <nlohmann/json.hpp>
 #include "error.h"
 #include "nv_attestation/nv_http.h"
 #include "nv_attestation/nv_cache.h"
@@ -38,7 +39,16 @@ struct RimResponse {
     std::string request_id;
     std::string sha256;
     std::string rim_format;
+    // Optional: absent on RIM entries with no uploaded CoEV. Default-valued
+    // so older entries without these fields still deserialize.
+    std::string coev;
+    std::string coev_sha256;
 };
+// ref: https://github.com/nlohmann/json?tab=readme-ov-file#simplify-your-life-with-macros
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(RimResponse, id, rim,
+                                                 request_id, sha256,
+                                                 rim_format, coev,
+                                                 coev_sha256);
 
 /**
  * @brief Represents a measurement entry from RIM document
@@ -144,8 +154,28 @@ public:
 struct RimClaims {
     CertChainClaims m_cert_chain_claims;
     bool m_signature_verified;
-    
+
     RimClaims() : m_signature_verified(false) {}
+};
+
+static constexpr uint32_t OPAQUE_DATA_RIM_INDEX_BASE = 0x1000U;
+
+struct OpaqueRimRecord {
+    uint16_t    type_id           = 0;
+    std::string name;
+    std::string golden_type       = "MIN_SVN";
+    uint64_t    min_svn           = 0;
+    bool        include_in_result = false;
+};
+
+class OpaqueRimRecords {
+public:
+    void                                add_record(const OpaqueRimRecord& record);
+    size_t                              size() const;
+    Error                               get_record(size_t index, OpaqueRimRecord& out_record) const;
+    const std::vector<OpaqueRimRecord>& all() const;
+private:
+    std::vector<OpaqueRimRecord> m_records;
 };
 
 class RimDocument{
@@ -155,9 +185,11 @@ class RimDocument{
         static constexpr const char* ISO_19770_SCHEMA_NAMESPACE_URI = "http://standards.iso.org/iso/19770/-2/2015/schema.xsd";
         static constexpr const char* XML_ENC_SHA384_NAMESPACE_URI = "http://www.w3.org/2001/04/xmlenc#sha384";
         static constexpr const char* TCG_RIM_NAMESPACE_URI = "https://trustedcomputinggroup.org/resource/tcg-reference-integrity-manifest-rim-information-model/";
+        static constexpr const char* NS3_OPAQUE_DATA_URI = "https://docs.nvidia.com/attestation/specs/latest/opaque-data.html";
 
         // 1 indexed vector of measurements
         Error get_measurements(Measurements& out_measurements) const;
+        Error get_opaque_records(OpaqueRimRecords& out_records) const;
         Error verify_signature() const;
         Error get_cert_chain(X509CertChain& out_cert_chain) const;
         Error get_version(std::string& out_version) const;
@@ -171,6 +203,8 @@ class RimDocument{
         void set_rim_id(const std::string& rim_id);
         std::string get_rim_id() const;
     private:
+        Error query_measurement_resource_nodes(nv_unique_ptr<xmlXPathContext>& out_ctx, nv_unique_ptr<xmlXPathObject>& out_xpath_obj) const;
+
         std::string m_rim_id = "";
         nv_unique_ptr<xmlDoc> m_doc;
         std::string m_rim_data;
@@ -219,7 +253,6 @@ class FilesystemRimStoreImpl : public IRimStore {
 /**
  * @brief Enriches a wrapped IRimStore with in-memory caching behavior.
  */
-// TODO(p0): implement and add additional settings for TTL
 class InMemoryCachingRimStoreImpl : public IRimStore {
     public:
         InMemoryCachingRimStoreImpl (std::shared_ptr<IRimStore> inner_client, uint64_t max_size_bytes, time_t ttl_seconds);

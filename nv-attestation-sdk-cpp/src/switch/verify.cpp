@@ -43,9 +43,13 @@ Error LocalSwitchVerifier::create(LocalSwitchVerifier& out_verifier, const std::
 }
 
 Error LocalSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<SwitchEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) {
+    if (evidence.empty()) {
+        LOG_ERROR("No switch evidence provided");
+        return Error::BadArgument;
+    }
     if (evidence_policy.switch_claims_version == SwitchClaimsVersion::V3) {
         return generate_claims_v3(evidence, evidence_policy, out_detached_eat, out_claims);
-    } 
+    }
     LOG_ERROR("Switch claims version not supported");
     return Error::BadArgument;
 }
@@ -246,9 +250,8 @@ Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier
         return err;
     }
 
-    std::string jwks_url = nras_url_str + "/.well-known/jwks.json";
-    out_verifier.m_jwk_store = std::make_shared<JwkStore>();
-    err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, service_key, http_options);
+    err = JwkStore::create_from_issuer(
+        out_verifier.m_jwk_store, nras_url_str, service_key, http_options);
     if (err != Error::Ok) {
         return err;
     }
@@ -260,12 +263,12 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
     // todo(p2): much of the functionality here and in the gpu remote verifier is the same.
     // can probably be refactored to use some common code using a evidence base class and generics for SerializableSwitchClaimsV3
     if (evidence.empty()) {
-        LOG_ERROR("No evidence provided");
+        LOG_ERROR("No switch evidence provided");
         return Error::BadArgument;
     }
 
     Error error = Error::InternalError;
-    
+
     NRASAttestRequestV4 attest_request;
     attest_request.nonce = to_hex_string(evidence[0]->get_nonce());
     attest_request.arch = to_string(evidence[0]->get_switch_architecture());
@@ -320,7 +323,11 @@ Error NvRemoteSwitchVerifier::verify_evidence(const std::vector<std::shared_ptr<
     std::vector<uint8_t> eat_nonce;
     std::unordered_map<std::string, std::string> claims;
     bool overall_result = true;
-    error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims, overall_result);
+    const JwtValidationOptions jwt_options;
+    error = validate_and_decode_EAT(attest_response, m_jwk_store,
+                                    m_eat_issuer, m_http_client,
+                                    jwt_options, eat_nonce, claims,
+                                    overall_result);
     if (error != Error::Ok) {
         return error;
     }

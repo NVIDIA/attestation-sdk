@@ -125,6 +125,11 @@ nvat_rc_t attest(void) {
         teardown(ctx);
         return err;
     }
+    if (ctx.num_evidences == 0) {
+        printf("no GPU evidence collected\n");
+        teardown(ctx);
+        return 1;
+    }
 
     // URL can also be set using the NVAT_RIM_SERVICE_BASE_URL environment variable.
     err = nvat_rim_store_create_remote(&ctx.rim_store, NULL, NULL, NULL);
@@ -175,10 +180,11 @@ nvat_rc_t attest(void) {
         return 1;
     }
 
-    // divide the work between 4 threads and run them
+    // divide the work between up to 4 threads and run them; fewer threads
+    // are used when there is less evidence than threads (e.g. 1 GPU)
     pthread_t threads[4];
     thread_data_t data[4];
-    int num_threads = 4;
+    int num_threads = ctx.num_evidences < 4 ? (int)ctx.num_evidences : 4;
     int evidences_per_thread = ctx.num_evidences / num_threads;
     for (int i = 0; i < num_threads; i++) {
         data[i] = (thread_data_t){0};
@@ -202,14 +208,18 @@ nvat_rc_t attest(void) {
         pthread_create(&threads[i], NULL, verify_thread_func, &data[i]);
     }
 
-    for (int i = 0; i < 4; i++) {
+    nvat_rc_t thread_err = NVAT_RC_OK;
+    for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
-        if (data[i].result != NVAT_RC_OK) {
-            print_nvat_rc("pthread_join failed: ", data[i].result);
-            thread_teardown(data, 4);
-            teardown(ctx);
-            return 1;
+        if (data[i].result != NVAT_RC_OK && thread_err == NVAT_RC_OK) {
+            thread_err = data[i].result;
         }
+    }
+    if (thread_err != NVAT_RC_OK) {
+        print_nvat_rc("pthread_join failed: ", thread_err);
+        thread_teardown(data, num_threads);
+        teardown(ctx);
+        return 1;
     }
 
     // combine the claims from all the threads - this is necessary 
@@ -218,14 +228,14 @@ nvat_rc_t attest(void) {
     // setting this to NULL to avoid double free in thread_teardown and teardown
     // teardown frees ctx.claims and thread_teardown frees data[i].claims
     data[0].claims = NULL;
-    for (int i = 1; i < 4; i++) {
+    for (int i = 1; i < num_threads; i++) {
         // data[i].claims is deep copied into ctx.claims, so it needs to be freed
-        // along with ctx.claims. this is done in thread_teardown. so we will not 
+        // along with ctx.claims. this is done in thread_teardown. so we will not
         // set data[i].claims to NULL
         err = nvat_claims_collection_extend(ctx.claims, data[i].claims);
         if (err != NVAT_RC_OK) {
             print_nvat_rc("nvat_claims_collection_extend failed: ", err);
-            thread_teardown(data, 4);
+            thread_teardown(data, num_threads);
             teardown(ctx);
             return 1;
         }
@@ -234,7 +244,7 @@ nvat_rc_t attest(void) {
     err = nvat_get_detached_eat_es384(ctx.claims, NULL, &ctx.detached_eat_str);
     if (err != NVAT_RC_OK) {
         print_nvat_rc("nvat_get_detached_eat_es384 failed: ", err);
-        thread_teardown(data, 4);
+        thread_teardown(data, num_threads);
         teardown(ctx);
         return 1;
     }
@@ -243,7 +253,7 @@ nvat_rc_t attest(void) {
     err = nvat_str_get_data(ctx.detached_eat_str, &detached_eat_data);
     if (err != NVAT_RC_OK) {
         print_nvat_rc("nvat_str_get_data failed: ", err);
-        thread_teardown(data, 4);
+        thread_teardown(data, num_threads);
         teardown(ctx);
         return 1;
     }
@@ -251,7 +261,7 @@ nvat_rc_t attest(void) {
     printf("detached eat: %s\n", detached_eat_data);
 
     teardown(ctx);
-    thread_teardown(data, 4);
+    thread_teardown(data, num_threads);
 
     return 0;
 }

@@ -1,0 +1,23 @@
+{
+  "ects": [
+    {
+      "claims": [
+        {
+          "values": {}
+        }
+      ],
+      "environment": {}
+    }
+  ],
+  "rim_locators": [
+    {
+      "thumbprints": [
+        "sha-384;RERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERE"
+      ],
+      "uris": [
+        "https://rim.example.com/primary.corim",
+        "https://rim-mirror.example.com/primary.corim"
+      ]
+    }
+  ]
+}

@@ -181,3 +181,16 @@ TEST(SwitchEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     nvat_switch_evidence_source_free(&switch_evidence_source);
     nvat_str_free(&serialized_evidence);
 }
+
+TEST(SwitchEvidenceJsonTest, MalformedJsonReturnsEvidenceMalformed) {
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
+    Error error = SwitchEvidence::collection_from_json("not valid json {{{", evidence_list);
+    EXPECT_EQ(error, Error::EvidenceMalformed);
+}
+
+TEST(SwitchEvidenceJsonTest, EmptyJsonArrayReturnsEmptyCollection) {
+    std::vector<std::shared_ptr<SwitchEvidence>> evidence_list;
+    Error error = SwitchEvidence::collection_from_json("[]", evidence_list);
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_TRUE(evidence_list.empty());
+}

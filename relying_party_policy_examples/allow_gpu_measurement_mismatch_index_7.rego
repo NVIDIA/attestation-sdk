@@ -22,6 +22,7 @@ validate_claim_by_device_type(claim) {
 
 validate_gpu_claims(claims) {
     check_gpu_measurements_match(claims)
+    check_opaque_data_match(claims)
     check_gpu_ar_cert_chain(claims)
     check_gpu_driver_rim_cert_chain(claims)
     check_gpu_vbios_rim_cert_chain(claims)
@@ -33,18 +34,21 @@ validate_switch_claims(claims) {
     check_switch_bios_rim_cert_chain(claims)
 }
 
-# GPU: Allow success
 check_gpu_measurements_match(claims) {
-    claims.measres == "success"
+    object.get(claims, "x-nvidia-mismatch-measurement-records", null) == null
 }
 
 # GPU: Allow failure only if all mismatched indices are in the allowed set (index 7)
 check_gpu_measurements_match(claims) {
-    claims.measres == "fail"
     mismatch_records := claims["x-nvidia-mismatch-measurement-records"]
+    mismatch_records != null
     every record in mismatch_records {
         record.index == 7
     }
+}
+
+check_opaque_data_match(claims) {
+    object.get(claims, "x-nvidia-mismatch-opaque-data-records", null) == null
 }
 
 # Switch: Only allow success (no measurement mismatches allowed)

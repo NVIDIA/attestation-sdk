@@ -1,0 +1,52 @@
+{
+  "evidence": [
+    {
+      "ev_triples": {
+        "evidence_triples": [
+          {
+            "environment": {
+              "class": {
+                "model": "TestLocator",
+                "vendor": "TestVendor"
+              }
+            },
+            "measurements": [
+              {
+                "values": {
+                  "digests": [
+                    "sha-256;qrvM3e7/ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJk="
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "profile": "https://example.test/profile-uri",
+  "rim_locators": [
+    {
+      "thumbprints": [
+        "sha-256;ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJmqu8zd7v8="
+      ],
+      "uris": [
+        "https://example.test/rim-single.corim"
+      ]
+    },
+    {
+      "uris": [
+        "https://example.test/rim-primary.corim",
+        "https://example.test/rim-mirror.corim"
+      ]
+    },
+    {
+      "thumbprints": [
+        "sha-256;/+7dzLuqmYh3ZlVEMyIRAP/u3cy7qpmId2ZVRDMiEQA="
+      ],
+      "uris": [
+        "https://example.test/rim-arr-thumb.corim"
+      ]
+    }
+  ]
+}

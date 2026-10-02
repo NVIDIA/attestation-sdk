@@ -1,0 +1,22 @@
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestFirmware" }
+        },
+        [
+          {
+            / mval / 1: {
+              / version / 0: { / version-text / 0: "1.0.0" },
+              / digests / 2: [
+                [1, h'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899']
+              ],
+              / name / 11: "test_firmware"
+            }
+          }
+        ]
+      ]
+    ]
+  }
+})

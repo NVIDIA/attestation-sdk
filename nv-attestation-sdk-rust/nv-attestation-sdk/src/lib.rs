@@ -46,16 +46,30 @@ pub mod types;
 /// Attestation types for NVAT SDK operations (SDK, contexts, verifiers, policies)
 pub mod attestation;
 
+// CoRIM verification
+pub mod corim;
+
+// Shared helpers
+mod util;
+
 // Re-export commonly used types
 pub use attestation::{
-    AttestationContext, AttestationContextBuilder, AttestationResult, ClaimsCollection, DeviceType,
-    EvidencePolicy, EvidencePolicyBuilder, GpuLocalVerifier, GpuNrasVerifier, NvatSdk, OcspClient,
-    RimStore, SwitchLocalVerifier, SwitchNrasVerifier, VerifierType,
+    verify_attestation_result, verify_attestation_result_with_options, verify_ear,
+    verify_ear_with_options, AiaOptions, AttestationContext, AttestationContextBuilder,
+    AttestationResult, ClaimsCollection, DetachedEatOptions, DeviceType, EvidencePolicy,
+    EvidencePolicyBuilder, GpuLocalVerifier, GpuNrasVerifier, NvatSdk, OcspCertIdHashAlgorithm,
+    OcspClient, OcspClientOptions, RelyingPartyPolicy, RimStore, SwitchLocalVerifier,
+    SwitchNrasVerifier, UrlRewrite, VerifiedAttestationResult, VerifierType,
+};
+pub use corim::{
+    CmwCollection, CmwFormat, CorimStore, EarResult, EarSigningOptions, HashAlgorithm,
+    LocalCorimVerifier,
 };
 pub use error::{NvatError, Result};
 pub use types::{
-    GpuEvidenceCollection, GpuEvidenceSource, HttpOptions, HttpOptionsBuilder, Logger, Nonce,
-    NvatString, SdkOptions, SwitchEvidenceCollection, SwitchEvidenceSource,
+    GpuEvidenceCollection, GpuEvidenceSource, HttpOptions, HttpOptionsBuilder,
+    JwtValidationOptions, Logger, Nonce, NvatString, SdkOptions, SwitchEvidenceCollection,
+    SwitchEvidenceSource,
 };
 
 // Unit tests

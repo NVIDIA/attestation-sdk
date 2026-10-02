@@ -26,6 +26,8 @@
 #include "gpu/verify.h"
 #include "nv_attestation/attestation.h"
 #include "nv_attestation/claims_evaluator.h"
+#include "nv_attestation/cmw.h"
+#include "nv_attestation/corim_verify.h"
 #include "nv_attestation/nv_http.h"
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/rim.h"
@@ -154,5 +156,11 @@ NVAT_PTR_CONVERSION_FUNCTIONS(gpu_nras_verifier,  NvRemoteGpuVerifier);
 NVAT_PTR_CONVERSION_FUNCTIONS(switch_verifier,  ISwitchVerifier);
 NVAT_PTR_CONVERSION_FUNCTIONS(switch_local_verifier,  LocalSwitchVerifier);
 NVAT_PTR_CONVERSION_FUNCTIONS(switch_nras_verifier,  NvRemoteSwitchVerifier);
+
+// === V2 Input + Local CoRIM Verifier ===
+
+NVAT_PTR_CONVERSION_FUNCTIONS(cmw_collection, CmwCollection);
+NVAT_PTR_CONVERSION_FUNCTIONS(corim_store, CorimStore);
+NVAT_PTR_CONVERSION_FUNCTIONS(local_corim_verifier, LocalCorimVerifier);
 
 } // extern "C"

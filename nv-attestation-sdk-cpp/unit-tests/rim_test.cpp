@@ -268,7 +268,7 @@ TEST_F(RimDocumentFixture, OcspInvalidRequest) {
 
 TEST(RimClientTest, DownloadGetRim) {
     NvRemoteRimStoreImpl rim_store;
-    Error error = NvRemoteRimStoreImpl::init_from_env(rim_store, "https://rim.attestation.nvidia.com", g_env->service_key, HttpOptions());
+    Error error = NvRemoteRimStoreImpl::init_from_env(rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key, HttpOptions());
     EXPECT_EQ(error, Error::Ok);
     std::string driver_version = "550.144.03";
     std::string rim_id = "NV_GPU_DRIVER_GH100_" + driver_version;
@@ -335,6 +335,198 @@ TEST_F(RimDocumentFixture, GenerateCertChainClaims) {
     EXPECT_EQ(claims.ocsp_claims.status, OCSPStatus::GOOD);
     EXPECT_TRUE(claims.ocsp_claims.nonce_matches);
     EXPECT_GT(claims.ocsp_claims.ocsp_resp_expiration_time, time(nullptr));
+}
+
+// Opaque record test data
+
+static const char* OPAQUE_RECORD_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="1"
+              name="FSP_UCODE_MIN_SVN" ns3:minSvn="5" ns3:includeInResult="True"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+static const char* OPAQUE_RECORD_HASH0_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns2="http://www.w3.org/2001/04/xmlenc#sha384">
+  <Payload>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="48"
+              name="FSP_FMC_MIN_SVN"
+              ns2:Hash0="000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+static const char* INCLUDE_IN_RESULT_FALSE_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="1"
+              name="FSP_UCODE_MIN_SVN" ns3:minSvn="4"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+static const char* OPAQUE_RECORD_MISSING_NAME_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="1"
+              ns3:minSvn="5" ns3:includeInResult="True"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+static const char* OPAQUE_RECORD_TRAILING_GARBAGE_MIN_SVN_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="1"
+              name="FSP_UCODE_MIN_SVN" ns3:minSvn="5garbage" ns3:includeInResult="True"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+// index == OPAQUE_DATA_RIM_INDEX_BASE (0x1000 = 4096) exactly, so type_id = index - BASE = 0.
+// type_id 0 is not reserved/excluded -- it's a legitimate opaque field id like any other.
+static const char* OPAQUE_RECORD_TYPE_ID_ZERO_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="4096" active="True" alternatives="1" size="1"
+              name="TYPE_ID_ZERO_MIN_SVN" ns3:minSvn="5" ns3:includeInResult="True"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+TEST(RimOpaqueRecordTest, ParsesMinSvnRecord) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    ASSERT_EQ(doc.get_opaque_records(records), Error::Ok);
+    ASSERT_EQ(records.size(), 1U);
+
+    OpaqueRimRecord rec;
+    ASSERT_EQ(records.get_record(0, rec), Error::Ok);
+    EXPECT_EQ(rec.type_id, 37U);
+    EXPECT_EQ(rec.name, "FSP_UCODE_MIN_SVN");
+    EXPECT_EQ(rec.min_svn, 5U);
+    EXPECT_TRUE(rec.include_in_result);
+}
+
+TEST(RimOpaqueRecordTest, GetRecordRejectsOutOfRangeIndex) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    ASSERT_EQ(doc.get_opaque_records(records), Error::Ok);
+    ASSERT_EQ(records.size(), 1U);
+
+    OpaqueRimRecord rec;
+    EXPECT_EQ(records.get_record(1, rec), Error::BadArgument);
+}
+
+TEST(RimOpaqueRecordTest, IndexAtBaseYieldsTypeIdZero) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_TYPE_ID_ZERO_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    ASSERT_EQ(doc.get_opaque_records(records), Error::Ok);
+    ASSERT_EQ(records.size(), 1U);
+
+    OpaqueRimRecord rec;
+    ASSERT_EQ(records.get_record(0, rec), Error::Ok);
+    EXPECT_EQ(rec.type_id, 0U);
+    EXPECT_EQ(rec.name, "TYPE_ID_ZERO_MIN_SVN");
+    EXPECT_EQ(rec.min_svn, 5U);
+    EXPECT_TRUE(rec.include_in_result);
+}
+
+TEST(RimOpaqueRecordTest, RejectsMissingNameAttribute) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_MISSING_NAME_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    EXPECT_EQ(doc.get_opaque_records(records), Error::RimInvalidSchema);
+}
+
+TEST(RimOpaqueRecordTest, RejectsTrailingGarbageInMinSvn) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_TRAILING_GARBAGE_MIN_SVN_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    EXPECT_EQ(doc.get_opaque_records(records), Error::RimInvalidSchema);
+}
+
+TEST(RimOpaqueRecordTest, RejectsOpaqueIndexWithHash0) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(OPAQUE_RECORD_HASH0_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    EXPECT_NE(doc.get_opaque_records(records), Error::Ok);
+}
+
+TEST(RimOpaqueRecordTest, IncludeInResultDefaultsFalse) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(INCLUDE_IN_RESULT_FALSE_RIM, doc), Error::Ok);
+
+    OpaqueRimRecords records;
+    ASSERT_EQ(doc.get_opaque_records(records), Error::Ok);
+    ASSERT_EQ(records.size(), 1U);
+    OpaqueRimRecord rec;
+    ASSERT_EQ(records.get_record(0, rec), Error::Ok);
+    EXPECT_FALSE(rec.include_in_result);
+    EXPECT_EQ(rec.min_svn, 4U);
+}
+
+TEST(RimOpaqueRecordTest, NormalMeasurementsUnaffected) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_file("testdata/NV_GPU_DRIVER_GH100_550.144.03.xml", doc), Error::Ok);
+
+    Measurements msrs;
+    ASSERT_EQ(doc.get_measurements(msrs), Error::Ok);
+    EXPECT_GT(msrs.size(), 0U);
+
+    OpaqueRimRecords opaque;
+    ASSERT_EQ(doc.get_opaque_records(opaque), Error::Ok);
+    EXPECT_EQ(opaque.size(), 0U);
+}
+
+static const char* MIXED_NORMAL_AND_OPAQUE_RIM = R"(<?xml version="1.0" encoding="UTF-8"?>
+<SoftwareIdentity
+    xmlns="http://standards.iso.org/iso/19770/-2/2015/schema.xsd"
+    xmlns:ns2="http://www.w3.org/2001/04/xmlenc#sha384"
+    xmlns:ns3="https://docs.nvidia.com/attestation/specs/latest/opaque-data.html">
+  <Payload>
+    <Resource type="Measurement" index="1" active="True" alternatives="1" size="48"
+              name="Measurement_1"
+              ns2:Hash0="000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"/>
+    <Resource type="Measurement" index="4133" active="True" alternatives="1" size="2"
+              name="FSP_UCODE_MIN_SVN" ns3:minSvn="5" ns3:includeInResult="True"/>
+  </Payload>
+</SoftwareIdentity>)";
+
+TEST(RimOpaqueRecordTest, MixedNormalAndOpaqueRecordsSeparatedCorrectly) {
+    RimDocument doc;
+    ASSERT_EQ(RimDocument::create_from_rim_data(MIXED_NORMAL_AND_OPAQUE_RIM, doc), Error::Ok);
+
+    Measurements msrs;
+    ASSERT_EQ(doc.get_measurements(msrs), Error::Ok);
+    ASSERT_EQ(msrs.size(), 1U);
+    EXPECT_TRUE(msrs.has_measurement_at_index(1));
+    EXPECT_FALSE(msrs.has_measurement_at_index(4133));
+
+    OpaqueRimRecords opaque;
+    ASSERT_EQ(doc.get_opaque_records(opaque), Error::Ok);
+    ASSERT_EQ(opaque.size(), 1U);
+    OpaqueRimRecord rec;
+    ASSERT_EQ(opaque.get_record(0, rec), Error::Ok);
+    EXPECT_EQ(rec.type_id, static_cast<uint16_t>(4133U - 0x1000U));
+    EXPECT_EQ(rec.min_svn, 5U);
 }
 
 // Test for get_measurements method

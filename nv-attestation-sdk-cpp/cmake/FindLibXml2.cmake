@@ -1,3 +1,9 @@
+# Short-circuit if already provided (e.g. built from source via ExternalProject)
+if(TARGET LibXml2::LibXml2)
+  set(LibXml2_FOUND TRUE)
+  return()
+endif()
+
 # Prevent infinite recursion
 if(DEFINED _FIND_LIBXML2_GUARD)
     return()

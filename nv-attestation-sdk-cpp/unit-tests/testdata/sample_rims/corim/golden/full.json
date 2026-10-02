@@ -1,0 +1,101 @@
+{
+  "entities": [
+    {
+      "name": "NVIDIA Corporation",
+      "reg_id": "https://nvidia.com",
+      "roles": [
+        "manifest-creator"
+      ]
+    }
+  ],
+  "id": "test-corim-full",
+  "rim_validity": {
+    "not_after": 1924905600,
+    "not_before": 1704067200
+  },
+  "tags": [
+    {
+      "entities": [
+        {
+          "name": "ACME Corp.",
+          "reg_id": "https://acme.example",
+          "roles": [
+            "tag-creator",
+            "creator",
+            "maintainer"
+          ]
+        }
+      ],
+      "language": "en-US",
+      "reference_triples": [
+        {
+          "environment": {
+            "class": {
+              "class_id": "uuid:00000000-0000-4000-8000-000000000001",
+              "index": 2,
+              "layer": 1,
+              "model": "FAKE",
+              "vendor": "NVIDIA"
+            }
+          },
+          "measurements": [
+            {
+              "key": "uuid:00000000-0000-4000-8000-000000000002",
+              "values": {
+                "digests": [
+                  "sha-256;AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                  "sha-384;AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v",
+                  "sha-512;AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw=="
+                ],
+                "flags": {
+                  "configured": true,
+                  "debug": true,
+                  "immutable": true,
+                  "integrity_protected": true,
+                  "recovery": true,
+                  "replay_protected": true,
+                  "runtime_meas": true,
+                  "secure": true
+                },
+                "raw_value": "AQIDBA==",
+                "svn": {
+                  "kind": "exact",
+                  "value": 7
+                },
+                "version": {
+                  "scheme": 1,
+                  "value": "3.2.1"
+                }
+              }
+            },
+            {
+              "values": {
+                "digests": [
+                  "sha-256;zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw="
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "vendor": "NVIDIA"
+            }
+          },
+          "measurements": [
+            {
+              "values": {
+                "version": {
+                  "scheme": 4,
+                  "value": "1.0.0"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "tag_id": "test-comid-full"
+    }
+  ]
+}

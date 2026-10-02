@@ -6,6 +6,7 @@
 *_repo/
 build_docs/
 build/
+venv/
 
 # IDE and editor files
 .vscode
@@ -41,6 +42,7 @@ _obj
 out
 dist
 generated
+!nv-attestation-sdk-cpp/generated/
 mocks
 reports
 
@@ -49,3 +51,14 @@ reports
 core
 .cache/
 .spectral.yaml
+
+# C++ coverage build artifacts
+build-coverage/
+coverage-profraw/
+coverage-merged.profdata
+coverage.txt
+*.profraw
+
+CLAUDE.md
+.claude/
+.worktrees/

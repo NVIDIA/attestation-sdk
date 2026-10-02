@@ -1,0 +1,50 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+;
+; TCG DICE Concise Evidence Binding for SPDM v1.1 (RC1, 10-April-2025) — subset.
+; Section references in comments are to that document. References to CoRIM types
+; (environment-map, measurement-map, corim-locator-map, profile-type-choice,
+; tagged-uuid-type) resolve through corim.cddl when both files are passed to
+; zcbor with -c.
+
+; ---- §6.3.1 SPDM Table of Contents ---------------------------------------
+spdm-toc = spdm-toc-map / tagged-spdm-toc
+tagged-spdm-toc = #6.570 (spdm-toc-map)
+
+spdm-toc-map = {
+    tagged-evidence: 0    => [ 1*8 tagged-concise-evidence ],   ; mandatory, 1+
+  ? rim-locators:    1    => [ 1*8 corim-locator-map ],         ; from corim.cddl
+  ? profile:         2    => profile-type-choice,               ; from corim.cddl
+  * int             => any,                                      ; extension keys, surfaced opaquely
+}
+
+; ---- §6.3.2 Concise Evidence ---------------------------------------------
+concise-evidence = concise-evidence-map / tagged-concise-evidence
+tagged-concise-evidence = #6.571 (concise-evidence-map)
+
+concise-evidence-map = {
+    ev-triples:    0    => ev-triples-map,
+  ? evidence-id:  1    => tagged-uuid-type,    ; from corim.cddl
+  ? profile:      2    => profile-type-choice, ; from corim.cddl
+  * int          => any,
+}
+
+ev-triples-map = {
+  ? evidence-triples:    0    => [ 1*100 evidence-triple-record ],   ; fully parsed
+  ? identity-triples:    1    => any,    ; rejected by C++ wrapper
+  ? dependency-triples:  2    => any,    ; rejected by C++ wrapper
+  ? membership-triples:  3    => any,    ; rejected by C++ wrapper
+  ? coswid-triples:      4    => any,    ; rejected by C++ wrapper
+  ? attest-key-triples:  5    => any,    ; rejected by C++ wrapper
+  * int                 => any,
+}
+
+evidence-triple-record = [
+  environment-map,                       ; from corim.cddl
+  [ 1*50 measurement-map ],              ; from corim.cddl; mval.measurement-values-map carries spdm-indirect (§7.1) as declared in corim.cddl
+]
+
+; The §7.1 spdm-indirect-map type and its measurement-values-map field live in
+; corim.cddl rather than here because zcbor 0.9.1 does not apply the CDDL
+; `$$socket //= ...` extension construct across CDDL files. See corim.cddl
+; for the spdm-indirect-map declaration and the field on measurement-values-map.

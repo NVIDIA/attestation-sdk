@@ -17,6 +17,10 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstddef>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -32,6 +36,11 @@ public:
     std::string pem_public_key;
 };
 
+struct JwtValidationOptions {
+    // Applied to exp, nbf, and iat validation. Defaults to 60 seconds.
+    std::size_t clock_skew_leeway_seconds = 60;
+};
+
 class JwkStore {
 public:
     static const long long DEFAULT_JWKS_CACHE_DURATION_MS = 900000; // 15 minutes
@@ -40,6 +49,13 @@ public:
     static Error init_from_env(
         std::shared_ptr<JwkStore>& jwk_store,
         const std::string& jwks_url,
+        const std::string& service_key,
+        const HttpOptions& http_options,
+        long long cache_duration_ms = DEFAULT_JWKS_CACHE_DURATION_MS
+    );
+    static Error create_from_issuer(
+        std::shared_ptr<JwkStore>& jwk_store,
+        const std::string& issuer,
         const std::string& service_key,
         const HttpOptions& http_options,
         long long cache_duration_ms = DEFAULT_JWKS_CACHE_DURATION_MS
@@ -60,11 +76,31 @@ private:
 
 class NvJwt {
 public:
+    // Validates a JWT using an already resolved signing key. This supports
+    // focused JWT validation tests without coupling them to JWKS transport.
     static Error validate_and_decode(
-        const std::string &jwt_token,
+        const std::string& jwt_token,
+        const Jwk& jwk,
+        const JwtValidationOptions& options,
+        const std::string& expected_issuer,
+        Error invalid_token_error,
+        bool require_nonempty_kid,
+        std::chrono::system_clock::time_point now,
+        std::string& out_payload
+    );
+
+    // Resolves the JWT header's kid through JwkStore, then validates the JWT.
+    // EAT and EAR share this path and therefore the same JWKS error contract.
+    static Error validate_and_decode(
+        const std::string& jwt_token,
         std::shared_ptr<JwkStore>& jwk_store,
-        std::string &eat_issuer,
-        std::string &out_payload
+        const std::string& expected_issuer,
+        std::string& out_payload,
+        const JwtValidationOptions& options = JwtValidationOptions{0},
+        Error invalid_token_error = Error::NrasTokenInvalid,
+        bool require_nonempty_kid = true,
+        std::chrono::system_clock::time_point now =
+            std::chrono::system_clock::now()
     );
 };
 

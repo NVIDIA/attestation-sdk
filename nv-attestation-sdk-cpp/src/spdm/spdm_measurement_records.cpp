@@ -128,7 +128,13 @@ bool SpdmMeasurementRecordParser::parse_measurement_block(const std::vector<uint
         return false;
     }
     
-    m_dmtf_measurement_blocks[index] = std::move(dmtf_measurement_value);
+    const auto inserted = m_dmtf_measurement_blocks.emplace(
+        index, std::move(dmtf_measurement_value));
+    if (!inserted.second) {
+        LOG_ERROR("Duplicate MeasurementBlock Index: " +
+                  std::to_string(index));
+        return false;
+    }
     return true;
 }
 

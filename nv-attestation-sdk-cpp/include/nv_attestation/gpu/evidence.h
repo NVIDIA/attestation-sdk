@@ -70,7 +70,8 @@ enum class GpuArchitecture {
     Unknown,
     Ampere,
     Hopper,
-    Blackwell
+    Blackwell,
+    Rubin
 };
 
 class GpuArchitectureData {
@@ -114,6 +115,7 @@ class GpuEvidence {
                 Error get_measurements(std::unordered_map<int, std::vector<uint8_t>>& out_measurements) const;
                 Error get_opaque_data_version(uint64_t& out_opaque_data_version) const;
                 Error get_feature_flag(OpaqueDataFeatureFlag& out_feature_flag) const;
+                const GpuOpaqueDataParser& get_opaque_data_parser() const { return m_gpu_opaque_data_parser; }
                 AttestationReport() = default;
                 static Error create(const std::vector<uint8_t>& attestation_report, const std::string& ar_cert_chain, GpuArchitecture architecture, AttestationReport& out_attestation_report);
             private:

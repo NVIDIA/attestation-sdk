@@ -101,19 +101,10 @@ namespace nvattest {
             return NVAT_RC_OK;
         }
 
-        std::ifstream file(relying_party_policy_filename);
-        if (!file) {
-            std::cerr << "Failed to open relying party policy file: " << relying_party_policy_filename << std::endl;
-            return NVAT_RC_BAD_ARGUMENT;
-        }
-
-        std::ostringstream ss;
-        ss << file.rdbuf();
-        std::string rego_str = ss.str();
-
-        nv_unique_ptr<nvat_relying_party_policy_t> rp_policy;
         nvat_relying_party_policy_t rp_raw = nullptr;
-        nvat_rc_t err = nvat_relying_party_policy_create_rego_from_str(&rp_raw, rego_str.c_str());
+        nv_unique_ptr<nvat_relying_party_policy_t> rp_policy;
+        nvat_rc_t err = load_relying_party_policy(
+            relying_party_policy_filename, rp_raw);
         if (err != NVAT_RC_OK) {
             return err;
         }
@@ -142,8 +133,8 @@ namespace nvattest {
             return AttestOutput(err);
         }
 
-        nv_unique_ptr<nvat_attestation_ctx_t> ctx;
         nvat_attestation_ctx_t raw_ctx = nullptr;
+        nv_unique_ptr<nvat_attestation_ctx_t> ctx;
         err = nvat_attestation_ctx_create(&raw_ctx);
         if (err != NVAT_RC_OK) return AttestOutput(err);
         ctx.reset(&raw_ctx);
@@ -206,14 +197,25 @@ namespace nvattest {
             }
         }
 
-        // Configure RIM store 
+        // Create http_options if CA settings are provided.
+        nvat_http_options_t http_options_raw = nullptr;
+        nv_unique_ptr<nvat_http_options_t> http_options_guard;
+        err = make_http_options(evidence_verification_options, http_options_raw);
+        if (err != NVAT_RC_OK) {
+            return AttestOutput(err);
+        }
+        if (http_options_raw != nullptr) {
+            http_options_guard.reset(&http_options_raw);
+        }
+
+        // Configure RIM store
         if (evidence_verification_options.verifier == "local") {
-            nv_unique_ptr<nvat_rim_store_t> rim_store;
             nvat_rim_store_t rim_store_raw = nullptr;
+            nv_unique_ptr<nvat_rim_store_t> rim_store;
             if (evidence_verification_options.rim_store == "remote") {
                 auto rim_url = evidence_verification_options.rim_url.c_str();
                 auto service_key = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
-                err = nvat_rim_store_create_remote(&rim_store_raw, rim_url, service_key, nullptr);
+                err = nvat_rim_store_create_remote(&rim_store_raw, rim_url, service_key, http_options_raw);
                 if (err != NVAT_RC_OK) {
                     return AttestOutput(err);
                 }
@@ -236,12 +238,25 @@ namespace nvattest {
 
         if (!evidence_verification_options.ocsp_url.empty()) {
             std::string ocsp_base = evidence_verification_options.ocsp_url;
-            nv_unique_ptr<nvat_ocsp_client_t> ocsp_client;
             nvat_ocsp_client_t ocsp_client_raw = nullptr;
+            nv_unique_ptr<nvat_ocsp_client_t> ocsp_client;
             const char* service_key_cstr = evidence_verification_options.service_key.empty() ? nullptr : evidence_verification_options.service_key.c_str();
-            err = nvat_ocsp_client_create_default(&ocsp_client_raw, ocsp_base.c_str(), service_key_cstr, nullptr);
-            if (err != NVAT_RC_OK) {
-                return AttestOutput(err);
+            {
+                nvat_ocsp_client_options_t ocsp_options_raw = nullptr;
+                nv_unique_ptr<nvat_ocsp_client_options_t> ocsp_options_guard;
+                err = make_ocsp_client_options(
+                    evidence_verification_options.ocsp_cert_id_hash,
+                    ocsp_options_raw);
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
+                ocsp_options_guard.reset(&ocsp_options_raw);
+                err = nvat_ocsp_client_create_default_with_options(
+                    &ocsp_client_raw, ocsp_base.c_str(), service_key_cstr,
+                    http_options_raw, ocsp_options_raw);
+                if (err != NVAT_RC_OK) {
+                    return AttestOutput(err);
+                }
             }
             ocsp_client.reset(&ocsp_client_raw);
             err = nvat_attestation_ctx_set_default_ocsp_client(*(ctx.get()), *(ocsp_client.get()));
@@ -275,18 +290,20 @@ namespace nvattest {
             return AttestOutput(NVAT_RC_BAD_ARGUMENT);
         }
 
-        nv_unique_ptr<nvat_claims_collection_t> claims;
         nvat_claims_collection_t raw_claims = nullptr;
-        nv_unique_ptr<nvat_str_t> detached_eat;
+        nv_unique_ptr<nvat_claims_collection_t> claims;
         nvat_str_t raw_detached_eat = nullptr;
-        nvat_nonce_t nonce = nullptr; 
+        nv_unique_ptr<nvat_str_t> detached_eat;
+        nvat_nonce_t raw_nonce = nullptr;
+        nv_unique_ptr<nvat_nonce_t> nonce;
         if (!evidence_collection_options.nonce.empty()) {
-            err = nvat_nonce_from_hex(&nonce, evidence_collection_options.nonce.c_str());
+            err = nvat_nonce_from_hex(&raw_nonce, evidence_collection_options.nonce.c_str());
             if (err != NVAT_RC_OK) {
                 return AttestOutput(err);
             }
         }
-        err = nvat_attest_device(*(ctx.get()), nonce, &raw_detached_eat, &raw_claims);
+        nonce.reset(&raw_nonce);
+        err = nvat_attest_device(*(ctx.get()), *(nonce.get()), &raw_detached_eat, &raw_claims);
         if (err != NVAT_RC_OK && err != NVAT_RC_RP_POLICY_MISMATCH && err != NVAT_RC_OVERALL_RESULT_FALSE) {
             return AttestOutput(err);
         }
@@ -295,8 +312,8 @@ namespace nvattest {
 
         AttestOutput final_output(err);
 
-        nv_unique_ptr<nvat_str_t> serialized_claims;
         nvat_str_t raw_serialized_claims;
+        nv_unique_ptr<nvat_str_t> serialized_claims;
         err = nvat_claims_collection_serialize_json(*(claims.get()), &raw_serialized_claims);
         if (err != NVAT_RC_OK) {
             return AttestOutput(err);
@@ -321,10 +338,10 @@ namespace nvattest {
 
     }
 
-    void print_device_claims(const std::string& claims_json) {
-        SPDLOG_CRITICAL("Devices: ");
+    void print_device_claims(std::ostream& out, const std::string& claims_json) {
+        out << "Devices: " << "\n";
         if (claims_json.empty()) {
-            SPDLOG_CRITICAL("[no device claims]");
+            out << "[no device claims]" << "\n";
             return;
         }
 
@@ -332,7 +349,7 @@ namespace nvattest {
         try {
             claims = nlohmann::json::parse(claims_json);
         } catch (...) {
-            SPDLOG_CRITICAL("[failed to parse device JSON claims]");
+            out << "[failed to parse device JSON claims]" << "\n";
             return;
         }
 
@@ -353,7 +370,7 @@ namespace nvattest {
             return j.contains(key) && j[key].is_string() && !j[key].get<std::string>().empty();
         };
 
-        auto print_cert_chain = [&get_string, &string_key_not_blank](
+        auto print_cert_chain = [&out, &get_string, &string_key_not_blank](
             const nlohmann::json& device_claims,
             const std::string& key,
             const std::string& label
@@ -363,24 +380,24 @@ namespace nvattest {
             }
             const auto& cert_chain = device_claims[key];
             if (!cert_chain.is_object()) {
-                SPDLOG_CRITICAL("    {}: [invalid]", label);
+                out << "    " << label << ": [invalid]" << "\n";
                 return;
             }
             std::string status = get_string(cert_chain, "x-nvidia-cert-status");
             std::string ocsp_status = get_string(cert_chain, "x-nvidia-cert-ocsp-status");
             std::string expiration = get_string(cert_chain, "x-nvidia-cert-expiration-date");
 
-            SPDLOG_CRITICAL("    {}:", label);
-            SPDLOG_CRITICAL("        Status: {}, OCSP: {}", status, ocsp_status);
-            SPDLOG_CRITICAL("        Expires: {}", expiration);
+            out << "    " << label << ":" << "\n";
+            out << "        Status: " << status << ", OCSP: " << ocsp_status << "\n";
+            out << "        Expires: " << expiration << "\n";
             if (string_key_not_blank(cert_chain,  "x-nvidia-cert-revocation-reason")) {
                 std::string revocation = get_string(cert_chain, "x-nvidia-cert-revocation-reason");
-                SPDLOG_CRITICAL("        Revocation Reason: {}", revocation);
+                out << "        Revocation Reason: " << revocation << "\n";
             }
         };
 
         if (!claims.is_array()) {
-            SPDLOG_CRITICAL("[expected array of device claims]");
+            out << "[expected array of device claims]" << "\n";
             return;
         }
 
@@ -388,40 +405,40 @@ namespace nvattest {
             const nlohmann::json& device_claims = claims[idx];
 
             if (!device_claims.is_object()) {
-                SPDLOG_CRITICAL("- Device {}: [invalid claims format]", idx);
+                out << "- Device " << idx << ": [invalid claims format]" << "\n";
                 continue;
             }
 
-            SPDLOG_CRITICAL("- Device {}:", idx);
+            out << "- Device " << idx << ":" << "\n";
 
             std::string device_type = get_string(device_claims, "x-nvidia-device-type");
             std::string hwmodel = get_string(device_claims, "hwmodel");
             std::string ueid = get_string(device_claims, "ueid");
 
-            SPDLOG_CRITICAL("    Device Type: {}", device_type);
-            SPDLOG_CRITICAL("    Hardware Model: {}", hwmodel);
-            SPDLOG_CRITICAL("    UEID: {}", ueid);
+            out << "    Device Type: " << device_type << "\n";
+            out << "    Hardware Model: " << hwmodel << "\n";
+            out << "    UEID: " << ueid << "\n";
 
             bool is_gpu = (device_type == "gpu");
             bool is_switch = (device_type == "nvswitch");
 
             if (is_gpu) {
                 std::string vbios_version = get_string(device_claims, "x-nvidia-gpu-vbios-version");
-                SPDLOG_CRITICAL("    VBIOS Version: {}", vbios_version);
+                out << "    VBIOS Version: " << vbios_version << "\n";
 
                 std::string driver_version = get_string(device_claims, "x-nvidia-gpu-driver-version");
-                SPDLOG_CRITICAL("    Driver Version: {}", driver_version);
+                out << "    Driver Version: " << driver_version << "\n";
             } else if (is_switch) {
                 std::string bios_version = get_string(device_claims, "x-nvidia-switch-bios-version");
-                SPDLOG_CRITICAL("    BIOS Version: {}", bios_version);
+                out << "    BIOS Version: " << bios_version << "\n";
             }
 
             std::string measres = get_string(device_claims, "measres");
-            SPDLOG_CRITICAL("    Measurement Result: {}", measres);
+            out << "    Measurement Result: " << measres << "\n";
 
             if (is_gpu && string_key_not_blank(device_claims, "x-nvidia-gpu-mode")) {
                 std::string gpu_mode = get_string(device_claims, "x-nvidia-gpu-mode");
-                SPDLOG_CRITICAL("    GPU Mode: {}", gpu_mode);
+                out << "    GPU Mode: " << gpu_mode << "\n";
             }
 
             if (is_gpu) {
@@ -437,10 +454,10 @@ namespace nvattest {
                 const auto& mismatches = device_claims["x-nvidia-mismatch-measurement-records"];
                 if (mismatches.is_array()) {
                     if (!mismatches.empty()) {
-                        SPDLOG_CRITICAL("    Measurement Mismatches ({}):", mismatches.size());
+                        out << "    Measurement Mismatches (" << mismatches.size() << "):" << "\n";
                         for (const auto& mismatch : mismatches) {
                             if (!mismatch.is_object()) {
-                                SPDLOG_CRITICAL("      - [invalid mismatch record]");
+                                out << "      - [invalid mismatch record]" << "\n";
                                 continue;
                             }
 
@@ -453,21 +470,59 @@ namespace nvattest {
                             std::string runtime = mismatch.contains("runtimeValue") && mismatch["runtimeValue"].is_string()
                                 ? mismatch["runtimeValue"].get<std::string>() : "N/A";
 
-                            SPDLOG_CRITICAL("      - Index {}: source={}", index, source);
-                            SPDLOG_CRITICAL("          Golden:  {}", golden);
-                            SPDLOG_CRITICAL("          Runtime: {}", runtime);
+                            out << "      - Index " << index << ": source=" << source << "\n";
+                            out << "          Golden:  " << golden << "\n";
+                            out << "          Runtime: " << runtime << "\n";
                         }
                     }
                 } else if (mismatches.is_null()) {
                     // no mismatches - null
                 } else {
-                    SPDLOG_CRITICAL("    Measurement Mismatches: [invalid record]");
+                    out << "    Measurement Mismatches: [invalid record]" << "\n";
+                }
+            } else {
+                // no mismatches - no claim
+            }
+
+            if (device_claims.contains("x-nvidia-mismatch-opaque-data-records")) {
+                const auto& opaque_mismatches = device_claims["x-nvidia-mismatch-opaque-data-records"];
+                if (opaque_mismatches.is_array()) {
+                    if (!opaque_mismatches.empty()) {
+                        out << "    Opaque Data Mismatches (" << opaque_mismatches.size() << "):" << "\n";
+                        for (const auto& mismatch : opaque_mismatches) {
+                            if (!mismatch.is_object()) {
+                                out << "      - [invalid mismatch record]" << "\n";
+                                continue;
+                            }
+
+                            uint32_t id = mismatch.contains("id") && mismatch["id"].is_number()
+                                ? mismatch["id"].get<uint32_t>() : 0;
+                            std::string name = mismatch.contains("name") && mismatch["name"].is_string()
+                                ? mismatch["name"].get<std::string>() : "unknown";
+                            std::string golden_type = mismatch.contains("goldenType") && mismatch["goldenType"].is_string()
+                                ? mismatch["goldenType"].get<std::string>() : "N/A";
+                            std::string golden_value = mismatch.contains("goldenValue")
+                                ? mismatch["goldenValue"].dump() : "N/A";
+                            std::string runtime_type = mismatch.contains("runtimeType") && mismatch["runtimeType"].is_string()
+                                ? mismatch["runtimeType"].get<std::string>() : "N/A";
+                            std::string runtime_value = mismatch.contains("runtimeValue")
+                                ? mismatch["runtimeValue"].dump() : "N/A";
+
+                            out << "      - Id " << id << ": name=" << name << "\n";
+                            out << "          Golden:  type=" << golden_type << " value=" << golden_value << "\n";
+                            out << "          Runtime: type=" << runtime_type << " value=" << runtime_value << "\n";
+                        }
+                    }
+                } else if (opaque_mismatches.is_null()) {
+                    // no mismatches - null
+                } else {
+                    out << "    Opaque Data Mismatches: [invalid record]" << "\n";
                 }
             } else {
                 // no mismatches - no claim
             }
         }
-        SPDLOG_CRITICAL("");
+        out << "\n";
     }
 
 
@@ -483,7 +538,7 @@ namespace nvattest {
         nvat_sdk_shutdown();
 
         if(common_options.format == "text") {
-            print_device_claims(output.claims);
+            print_device_claims(std::cout, output.claims);
             if (output.result_code == NVAT_RC_OK) {
                 SPDLOG_INFO("{} attestation was successful", evidence_collection_options.pretty_device());
             } else {

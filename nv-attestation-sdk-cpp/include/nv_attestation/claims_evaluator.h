@@ -32,6 +32,14 @@ namespace nvattestation {
 class IClaimsEvaluator {
     public:
         virtual ~IClaimsEvaluator() = default;
+
+        /**
+         * @brief Evaluates a JSON value against the configured policy.
+         *
+         * @param json JSON value supplied to Rego as `input`.
+         * @param out_match Set to the boolean policy decision on success.
+         */
+        virtual Error evaluate_json(const std::string& json, bool& out_match) = 0;
         
         /**
          * @brief Evaluates GPU_DEVICE_IDENTITY claims.

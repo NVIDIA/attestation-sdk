@@ -53,8 +53,9 @@ SpdmMeasurementResponseMessage11::SpdmMeasurementResponseMessage11() = default;
 Error SpdmMeasurementResponseMessage11::create(
     const std::vector<uint8_t>& response_data,
     size_t signature_length,
-    SpdmMeasurementResponseMessage11& out_message) {
-    return out_message.parse(response_data, signature_length);
+    SpdmMeasurementResponseMessage11& out_message,
+    bool parse_opaque_data) {
+    return out_message.parse(response_data, signature_length, parse_opaque_data);
 }
 
 /**
@@ -63,7 +64,8 @@ Error SpdmMeasurementResponseMessage11::create(
  */
 Error SpdmMeasurementResponseMessage11::parse( // NOLINT(readability-function-cognitive-complexity)
     const std::vector<uint8_t>& response_data,
-    size_t signature_length) {
+    size_t signature_length,
+    bool parse_opaque_data) {
     size_t current_offset = 0;
 
     // SPDMVersion (1 byte)
@@ -161,17 +163,12 @@ Error SpdmMeasurementResponseMessage11::parse( // NOLINT(readability-function-co
     }
     current_offset += m_opaque_data_length;
 
-    if(m_opaque_data.empty()) {
-        LOG_ERROR("OpaqueData is empty but is required for SPDM GET_MEASUREMENTS response.");
-        return Error::SpdmParseError;
-    }
-
-    // Attempt to parse the opaque data if it exists
-    Error error = OpaqueDataParser::create(m_opaque_data, m_parsed_opaque_data);
-    if (error != Error::Ok) {
-        // Error already logged by OpaqueDataParser, but we can indicate context.
-        LOG_ERROR("Failed to parse the OpaqueData field within SPDM GET_MEASUREMENTS response.");
-        return Error::SpdmOpaqueDataParseError;
+    if (parse_opaque_data && !m_opaque_data.empty()) {
+        Error error = OpaqueDataParser::create(m_opaque_data, m_parsed_opaque_data);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to parse the OpaqueData field within SPDM GET_MEASUREMENTS response.");
+            return Error::SpdmOpaqueDataParseError;
+        }
     }
     
     // Signature

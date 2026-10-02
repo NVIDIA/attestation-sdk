@@ -1,0 +1,30 @@
+/ Both spdm-toc-map (§6.3.1) and ev-triples-map (§6.3.2) are declared        /
+/ extensible, so keys outside our CDDL must still parse. Only a key our      /
+/ CDDL *defines* landing in the extension array indicates a dropped member.  /
+/ This fixture pins that boundary: unknown keys 42 and 99 are tolerated.     /
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+                  ]
+                }
+              }
+            ]
+          ]
+        ],
+        / unknown extension key / 99: "tolerated"
+      }
+    })
+  ],
+  / unknown extension key / 42: "tolerated"
+})

@@ -1,0 +1,20 @@
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+              ]
+            }
+          }
+        ]
+      ]
+    ]
+  }
+})

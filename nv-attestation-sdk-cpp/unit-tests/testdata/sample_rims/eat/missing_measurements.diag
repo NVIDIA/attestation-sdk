@@ -1,0 +1,8 @@
+/ full minus the mandatory measurements claim (key 273) -> zcbor decode fails. /
+{
+  / nonce / 10: h'0011223344556677',
+  / dbgstat / 263: 3,
+  / eat_profile: OID 1.3.6.1.4.1.42623.1.3 / 265: h'2b0601040182cc7f0103',
+  / iss / 1: "https://ocp.example/attestation",
+  / ueid / 256: h'01deadbeefcafef00dba'
+}

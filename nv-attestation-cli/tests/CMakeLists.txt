@@ -9,10 +9,35 @@ option(SANITIZER "Select a sanitizer" OFF)
 add_executable(nv-attestation-cli-tests
     main.cpp
     attest_tests.cpp
+    attest_v2_tests.cpp
+    attest_v2_arch_tests.cpp
+    collect_evidence_v2_tests.cpp
+    collect_evidence_v2_arch_tests.cpp
+    collect_evidence_v1_rubin_tests.cpp
     gpu_faulty_driver_rim_tests.cpp
     measurement_mismatch_tests.cpp
     trust_outpost_tests.cpp
     collect_evidence_tests.cpp
+    verify_token_tests.cpp
+    verify_token_output_tests.cpp
+    verify_token_mock_tests.cpp
+    attest_mock_tests.cpp
+    attest_v2_mock_tests.cpp
+    collect_evidence_mock_tests.cpp
+    utils_mock_tests.cpp
+    # CLI orchestration compiled directly into the test binary so it can be
+    # unit-tested in-process (the test executable must not link libnvat — see
+    # note below). The nvat C API symbols these paths need are satisfied by
+    # fake_nvat.cpp.
+    ../src/verify_token_output.cpp
+    ../src/verify_token.cpp
+    ../src/ear_status.cpp
+    ../src/attest.cpp
+    ../src/attest_v2.cpp
+    ../src/collect_evidence.cpp
+    ../src/utils.cpp
+    ../src/logging.cpp
+    fake_nvat.cpp
     test_utils.h
     environment.h
 )
@@ -25,7 +50,7 @@ target_compile_options(nv-attestation-cli-tests PRIVATE -Wno-unused -Wno-c++17-a
 
 include(FetchContent)
 
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.12.0 GIT_SHALLOW TRUE EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(json)
 
 FetchContent_Declare(

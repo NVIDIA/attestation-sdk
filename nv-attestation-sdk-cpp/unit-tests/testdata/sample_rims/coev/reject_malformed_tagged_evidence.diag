@@ -1,0 +1,10 @@
+/ tagged-evidence (key 0) is present but is a tstr rather than                /
+/ [ 1*8 tagged-concise-evidence ]. Unlike the optional members, key 0 is      /
+/ mandatory in spdm-toc-map, so zcbor decodes it with an expect instead of a  /
+/ present_decode: the whole map decode hard-fails and the value can never     /
+/ backtrack into the extension array. This fixture pins that invariant, so    /
+/ omitting key 0 from kSpdmTocSchemaKeys stays correct.                       /
+570({
+  / tagged-evidence / 0: "not-a-list-of-concise-evidence",
+  / profile / 2: 32("http://example.com/profile")
+})

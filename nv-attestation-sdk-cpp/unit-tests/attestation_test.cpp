@@ -275,6 +275,17 @@ TEST(AttestationTestCApi, NonceTests) { // unit
         bytes_32[i] = static_cast<uint8_t>(i);
     }
     nvat_nonce_t nonce = nullptr;
+    ASSERT_EQ(nvat_nonce_create(&nonce, 32), NVAT_RC_OK);
+    ASSERT_NE(nonce, nullptr);
+    ASSERT_EQ(nvat_nonce_get_length(nonce), 32);
+    nvat_nonce_free(&nonce);
+    ASSERT_EQ(nonce, nullptr);
+
+    ASSERT_EQ(nvat_nonce_create(&nonce, 0), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nonce, nullptr);
+    ASSERT_EQ(nvat_nonce_create(&nonce, 31), NVAT_RC_BAD_ARGUMENT);
+    ASSERT_EQ(nonce, nullptr);
+
     ASSERT_EQ(nvat_nonce_from_bytes(&nonce, reinterpret_cast<const char*>(bytes_32), 32), NVAT_RC_OK);
     ASSERT_NE(nonce, nullptr);
     ASSERT_EQ(nvat_nonce_get_length(nonce), 32);

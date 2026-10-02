@@ -1,0 +1,59 @@
+{
+  "reference_triples": [
+    {
+      "environment": {
+        "class": {
+          "vendor": "VendorX"
+        },
+        "group": "uuid:00000000-0000-4000-8000-000000000010",
+        "instance": "uuid:00000000-0000-4000-8000-000000000010"
+      },
+      "measurements": [
+        {
+          "values": {
+            "version": {
+              "scheme": "rolling",
+              "value": "1.2.3"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "environment": {
+        "class": {
+          "vendor": "VendorX"
+        },
+        "group": "bytes:qrvM3Q==",
+        "instance": "ueid:AQIDBAUGBwg="
+      },
+      "measurements": [
+        {
+          "values": {
+            "version": {
+              "value": "9.9.9"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "environment": {
+        "class": {
+          "vendor": "VendorX"
+        },
+        "instance": "bytes:3q2+7w=="
+      },
+      "measurements": [
+        {
+          "values": {
+            "version": {
+              "value": "0.1"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "tag_id": "test-comid-env-id-variants"
+}

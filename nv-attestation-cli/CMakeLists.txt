@@ -1,8 +1,22 @@
 cmake_minimum_required(VERSION 3.11)
-project(nvattest VERSION 1.2.2)
+project(nvattest VERSION 2.0.0)
 
 option(BUILD_TESTING "Build tests" OFF)
 option(USE_SYSTEM_NVAT "Compile and link to the system nvat library. If OFF, nvat will be built from source." OFF)
+option(ENABLE_COVERAGE "Enable LLVM source-based code coverage instrumentation" OFF)
+if(ENABLE_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+endif()
+
+option(SANITIZER "Select a sanitizer [thread|address|undefined|leak|OFF]" OFF)
+
+option(ENABLE_SCCACHE "Enable sccache" OFF)
+if(ENABLE_SCCACHE)
+    find_program(SCCACHE sccache REQUIRED)
+    set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE})
+endif()
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_COMPILE_WARNING_AS_ERROR ON)
@@ -17,16 +31,22 @@ FetchContent_Declare(
     CLI11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
     GIT_TAG v2.6.1
+    GIT_SHALLOW TRUE
 )
 
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa EXCLUDE_FROM_ALL)
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.12.0 GIT_SHALLOW TRUE EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(CLI11 json)
 
 add_executable(nvattest
     src/main.cpp
     src/version.cpp
     src/attest.cpp
+    src/attest_v2.cpp
+    src/ear_status.cpp
     src/collect_evidence.cpp
+    src/verify_token.cpp
+    src/verify_token_output.cpp
+    src/collect_evidence_v2.cpp
     src/utils.cpp
     src/logging.cpp
 )
@@ -56,11 +76,13 @@ if(USE_SYSTEM_NVAT)
         fmt
         GIT_REPOSITORY https://github.com/fmtlib/fmt.git
         GIT_TAG 10.2.1
+        GIT_SHALLOW TRUE
     )
     FetchContent_Declare(
         spdlog
         GIT_REPOSITORY https://github.com/gabime/spdlog.git
         GIT_TAG v1.14.1
+        GIT_SHALLOW TRUE
     )
     # Just populate to get source directories for headers (don't add to build)
     FetchContent_GetProperties(fmt)
@@ -108,6 +130,14 @@ target_include_directories(nvattest PRIVATE
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
 )
+
+# Instrument the nvattest binary itself. The CLI tests drive nvattest as a child
+# process, so sanitizing only the test executable would never see a leak here.
+if (SANITIZER)
+    message("-- Building nvattest with sanitizer: ${SANITIZER}")
+    target_compile_options(nvattest PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
+    target_link_options(nvattest PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
+endif()
 
 if(BUILD_TESTING)
     enable_testing()

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include "nvat.h"
 
@@ -50,8 +51,11 @@ namespace nvattest {
         std::string rim_url; // if remote
         std::string rim_path; // if dir
         std::string ocsp_url;
+        std::string ocsp_cert_id_hash;
         std::string nras_url;
         std::string service_key;
+        std::string tls_ca_cert;
+        std::string tls_ca_path;
     };
 
     struct CommonOptions {
@@ -59,6 +63,13 @@ namespace nvattest {
         std::string format;
 
         nvat_log_level_t get_log_level() const;
+    };
+
+    struct VerifyTokenOptions {
+        std::string token_file;  // path to token; "-" or empty => stdin
+        std::string nonce;       // expected token nonce in hex; empty => nonce not checked
+        std::string token_type = "detached-eat";
+        uint64_t clock_skew_leeway_seconds = 60;
     };
 
 }

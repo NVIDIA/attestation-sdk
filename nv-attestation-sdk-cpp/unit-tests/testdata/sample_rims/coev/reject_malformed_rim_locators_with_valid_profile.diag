@@ -1,0 +1,31 @@
+/ rim-locators (key 1) is a tstr rather than [ 1*8 corim-locator-map ], and a /
+/ well-formed profile (key 2) follows it. Because members are decoded          /
+/ positionally, the failed rim-locators leaves the stream on key 1, so the     /
+/ profile's own key expect fails and both entries land in the extension array  /
+/ together. Only key 1 is actually malformed; key 2 was never evaluated.       /
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+                  ]
+                }
+              }
+            ]
+          ]
+        ]
+      }
+    })
+  ],
+  / rim-locators / 1: "not-a-locator-array",
+  / profile / 2: 32("http://example.com/profile")
+})

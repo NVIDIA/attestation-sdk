@@ -1,0 +1,33 @@
+{
+  "ev_triples": {
+    "evidence_triples": [
+      {
+        "environment": {
+          "class": {
+            "model": "TestDirectAndIndirect",
+            "vendor": "TestVendor"
+          }
+        },
+        "measurements": [
+          {
+            "values": {
+              "digests": [
+                "sha-256;EREiIjMzRERVVWZmd3eIiJmZAACqqru7zMzd3e7u//8="
+              ]
+            }
+          },
+          {
+            "values": {
+              "spdm_indirect": {
+                "indexes": [
+                  49
+                ]
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+

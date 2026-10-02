@@ -1,0 +1,31 @@
+{
+  "ects": [
+    {
+      "claims": [
+        {
+          "values": {
+            "digests": [
+              "sha-384;q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6ur"
+            ],
+            "raw_value": "cmF3Yml0cw==",
+            "svn": {
+              "kind": "exact",
+              "value": 5
+            },
+            "version": {
+              "value": "v2.1.0"
+            }
+          }
+        }
+      ],
+      "environment": {
+        "class": {
+          "layer": 0,
+          "model": "Rubin",
+          "vendor": "NVIDIA"
+        }
+      }
+    }
+  ],
+  "rim_locators": []
+}

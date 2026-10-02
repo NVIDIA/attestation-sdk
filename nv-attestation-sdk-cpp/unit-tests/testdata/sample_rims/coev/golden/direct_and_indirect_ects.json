@@ -1,0 +1,26 @@
+[
+  {
+    "claims": [
+      {
+        "values": {
+          "digests": [
+            "sha-256;EREiIjMzRERVVWZmd3eIiJmZAACqqru7zMzd3e7u//8="
+          ]
+        }
+      },
+      {
+        "values": {
+          "version": {
+            "value": "v3.0"
+          }
+        }
+      }
+    ],
+    "environment": {
+      "class": {
+        "model": "TestDirectAndIndirect",
+        "vendor": "TestVendor"
+      }
+    }
+  }
+]

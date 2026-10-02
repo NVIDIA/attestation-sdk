@@ -18,9 +18,12 @@
 //todo: clean up the includes everwhere
 // use <> for standard library headers and dependencies
 // use "" for headers belonging to this sdk
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <set>
@@ -46,10 +49,6 @@
 #include "internal/certs.h"
 
 namespace nvattestation {
-
-    
-// ref: https://github.com/nlohmann/json?tab=readme-ov-file#simplify-your-life-with-macros
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(RimResponse, id, rim, request_id, sha256);
 
 // RimDocumentImpl functions
 
@@ -283,35 +282,41 @@ Error RimDocument::generate_rim_claims(const EvidencePolicy& evidence_policy, IO
     return Error::Ok;
 }
 
-Error RimDocument::get_measurements(Measurements& out_measurements) const {
-    
+Error RimDocument::query_measurement_resource_nodes(nv_unique_ptr<xmlXPathContext>& out_ctx, nv_unique_ptr<xmlXPathObject>& out_xpath_obj) const {
     if (!m_doc) {
         LOG_ERROR("RIM document is null");
         return Error::InternalError;
     }
 
-    // Create XPath context
-    auto x_path_ctx = nv_unique_ptr<xmlXPathContext>(xmlXPathNewContext(m_doc.get()));
-    if (!x_path_ctx) {
-        LOG_ERROR("Failed to create XPath context for measurements");
+    out_ctx = nv_unique_ptr<xmlXPathContext>(xmlXPathNewContext(m_doc.get()));
+    if (!out_ctx) {
+        LOG_ERROR("Failed to create XPath context for measurement resource nodes");
         return Error::LibXml2Error;
     }
 
-    // Register namespaces
-    if (xmlXPathRegisterNs(x_path_ctx.get(), BAD_CAST "ns0", BAD_CAST RimDocument::ISO_19770_SCHEMA_NAMESPACE_URI) != 0) {
-        LOG_ERROR("Failed to register ns0 namespace for measurements");
+    if (xmlXPathRegisterNs(out_ctx.get(), BAD_CAST "ns0", BAD_CAST RimDocument::ISO_19770_SCHEMA_NAMESPACE_URI) != 0) {
+        LOG_ERROR("Failed to register ns0 namespace for measurement resource nodes");
         return Error::LibXml2Error;
     }
-    
+
+    out_xpath_obj = nv_unique_ptr<xmlXPathObject>(xmlXPathEvalExpression(BAD_CAST "//ns0:Resource[@type='Measurement']", out_ctx.get()));
+    if (!out_xpath_obj) {
+        LOG_ERROR("Failed to evaluate XPath expression for measurement resource nodes");
+        return Error::LibXml2Error;
+    }
+    return Error::Ok;
+}
+
+Error RimDocument::get_measurements(Measurements& out_measurements) const {
+    nv_unique_ptr<xmlXPathContext> x_path_ctx;
+    nv_unique_ptr<xmlXPathObject> x_path_obj;
+    Error error = query_measurement_resource_nodes(x_path_ctx, x_path_obj);
+    if (error != Error::Ok) {
+        return error;
+    }
+
     if (xmlXPathRegisterNs(x_path_ctx.get(), BAD_CAST "ns2", BAD_CAST RimDocument::XML_ENC_SHA384_NAMESPACE_URI) != 0) {
         LOG_ERROR("Failed to register ns2 namespace for measurements");
-        return Error::LibXml2Error;
-    }
-
-    // Query for measurement elements
-    auto x_path_obj = nv_unique_ptr<xmlXPathObject>(xmlXPathEvalExpression(BAD_CAST "//ns0:Resource[@type='Measurement']", x_path_ctx.get()));
-    if (!x_path_obj) {
-        LOG_ERROR("Failed to evaluate XPath expression for measurements");
         return Error::LibXml2Error;
     }
 
@@ -344,6 +349,11 @@ Error RimDocument::get_measurements(Measurements& out_measurements) const {
         int alternatives = std::stoi(reinterpret_cast<const char*>(alternatives_attr.get()));
         std::string name = reinterpret_cast<const char*>(name_attr.get());
         int size = std::stoi(reinterpret_cast<const char*>(size_attr.get()));
+
+        if (static_cast<uint32_t>(index) >= OPAQUE_DATA_RIM_INDEX_BASE) {
+            LOG_TRACE("Skipping opaque data record at index " << index << " in get_measurements()");
+            continue;
+        }
 
         // Filter to only include active measurements
         if (!active) {
@@ -654,6 +664,101 @@ Error Measurements::add_measurement(const Measurement& measurement) {
     return Error::Ok;
 }
 
+// OpaqueRimRecords implementations
 
+void OpaqueRimRecords::add_record(const OpaqueRimRecord& record) { m_records.push_back(record); }
+size_t OpaqueRimRecords::size() const { return m_records.size(); }
+
+Error OpaqueRimRecords::get_record(size_t index, OpaqueRimRecord& out_record) const {
+    if (index >= m_records.size()) {
+        return Error::BadArgument;
+    }
+    out_record = m_records[index];
+    return Error::Ok;
+}
+
+const std::vector<OpaqueRimRecord>& OpaqueRimRecords::all() const { return m_records; }
+
+// Largest RIM index that maps to a representable OpaqueRimRecord::type_id (uint16_t).
+static constexpr uint32_t OPAQUE_DATA_RIM_INDEX_MAX =
+    OPAQUE_DATA_RIM_INDEX_BASE + std::numeric_limits<uint16_t>::max();
+
+static constexpr int DECIMAL_BASE = 10;
+
+Error RimDocument::get_opaque_records(OpaqueRimRecords& out_records) const {
+    nv_unique_ptr<xmlXPathContext> ctx;
+    nv_unique_ptr<xmlXPathObject> xpobj;
+    Error error = query_measurement_resource_nodes(ctx, xpobj);
+    if (error != Error::Ok) {
+        return error;
+    }
+    if (xmlXPathRegisterNs(ctx.get(), BAD_CAST "ns3",
+                           BAD_CAST RimDocument::NS3_OPAQUE_DATA_URI) != 0) {
+        return Error::LibXml2Error;
+    }
+
+    xmlNodeSetPtr nodes = xpobj->nodesetval;
+    if (nodes == nullptr) { return Error::Ok; }
+
+    for (int node_idx = 0; node_idx < nodes->nodeNr; ++node_idx) {
+        xmlNodePtr node = nodes->nodeTab[node_idx];
+
+        auto index_attr = nv_unique_ptr<xmlChar>(xmlGetProp(node, BAD_CAST "index"));
+        if (!index_attr) { continue; }
+        const char* index_str = reinterpret_cast<const char*>(index_attr.get());
+        char* index_endptr = nullptr;
+        errno = 0;
+        long index = std::strtol(index_str, &index_endptr, DECIMAL_BASE);
+        if (errno == ERANGE || index_endptr == index_str || *index_endptr != '\0') {
+            LOG_ERROR("Opaque data RIM record has non-numeric index attribute: " << index_str);
+            return Error::RimInvalidSchema;
+        }
+        if (index < static_cast<long>(OPAQUE_DATA_RIM_INDEX_BASE)) { continue; }
+        if (index > static_cast<long>(OPAQUE_DATA_RIM_INDEX_MAX)) {
+            LOG_ERROR("Opaque data RIM record index " << index << " exceeds max supported "
+                      << OPAQUE_DATA_RIM_INDEX_MAX);
+            return Error::RimInvalidSchema;
+        }
+
+        auto active_attr = nv_unique_ptr<xmlChar>(xmlGetProp(node, BAD_CAST "active"));
+        if (!active_attr ||
+            std::string(reinterpret_cast<const char*>(active_attr.get())) != "True") {
+            continue;
+        }
+
+        auto min_svn_attr = nv_unique_ptr<xmlChar>(
+            xmlGetNsProp(node, BAD_CAST "minSvn", BAD_CAST RimDocument::NS3_OPAQUE_DATA_URI));
+        if (!min_svn_attr) {
+            LOG_ERROR("Opaque data RIM record at index " << index
+                      << " lacks ns3:minSvn; ns2:Hash0 is not valid for opaque records");
+            return Error::RimInvalidSchema;
+        }
+
+        auto name_attr    = nv_unique_ptr<xmlChar>(xmlGetProp(node, BAD_CAST "name"));
+        if (!name_attr) {
+            LOG_ERROR("Opaque data RIM record at index " << index << " lacks a name attribute");
+            return Error::RimInvalidSchema;
+        }
+        auto include_attr = nv_unique_ptr<xmlChar>(
+            xmlGetNsProp(node, BAD_CAST "includeInResult", BAD_CAST RimDocument::NS3_OPAQUE_DATA_URI));
+
+        OpaqueRimRecord rec;
+        rec.type_id = static_cast<uint16_t>(index - static_cast<long>(OPAQUE_DATA_RIM_INDEX_BASE));
+        const char* min_svn_str = reinterpret_cast<const char*>(min_svn_attr.get());
+        char* min_svn_endptr = nullptr;
+        errno = 0;
+        rec.min_svn = std::strtoull(min_svn_str, &min_svn_endptr, DECIMAL_BASE);
+        if (errno == ERANGE || min_svn_endptr == min_svn_str || *min_svn_endptr != '\0') {
+            LOG_ERROR("Opaque data RIM record at index " << index << " has non-numeric ns3:minSvn attribute");
+            return Error::RimInvalidSchema;
+        }
+        rec.name    = reinterpret_cast<const char*>(name_attr.get());
+        rec.include_in_result = include_attr &&
+            std::string(reinterpret_cast<const char*>(include_attr.get())) == "True";
+
+        out_records.add_record(rec);
+    }
+    return Error::Ok;
+}
 
 }

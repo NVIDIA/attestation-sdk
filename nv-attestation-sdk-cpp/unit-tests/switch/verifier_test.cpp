@@ -637,3 +637,19 @@ TEST_F(SwitchRemoteVerifierTestCApi, InvalidServiceKey) {
     ASSERT_EQ(detached_eat, nullptr);
     nvat_switch_verifier_free(&verifier);
 }
+
+TEST_F(SwitchVerifierTest, EmptyEvidenceReturnsBadArgument) {
+    auto rim_store = std::make_shared<MockNvRemoteRimStore>();
+    auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.example.com", "", HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    LocalSwitchVerifier verifier;
+    error = LocalSwitchVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
+    ASSERT_EQ(error, Error::Ok);
+
+    std::vector<std::shared_ptr<SwitchEvidence>> empty_evidence;
+    EvidencePolicy evidence_policy{};
+    ClaimsCollection claims;
+    error = verifier.verify_evidence(empty_evidence, evidence_policy, nullptr, claims);
+    EXPECT_EQ(error, Error::BadArgument);
+}

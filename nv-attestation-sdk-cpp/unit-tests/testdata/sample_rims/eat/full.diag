@@ -1,0 +1,16 @@
+/ OCP EAT claims-set (happy path). Keys are in CDDL-declaration order:
+  mandatory group (10, 263, 265, 273) first, then optionals (iss, ueid),
+  then the `* int => any` catch-all. The zcbor 0.9.1 generated decoder
+  matches map members positionally, so this order -- not canonical
+  bytewise order -- is what the decoder accepts. /
+{
+  / nonce / 10: h'0011223344556677',
+  / dbgstat = DisabledPermanently / 263: 3,
+  / eat_profile: OID 1.3.6.1.4.1.42623.1.3 / 265: h'2b0601040182cc7f0103',
+  / measurements: one CoEv entry; body is a tagged-concise-evidence (#6.571) /
+  273: [
+    [ 10571, h'd9023ba100a1008182a100a2016a5465737456656e646f720269546573744d6f64656c81a101a102818201582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' ]
+  ],
+  / iss / 1: "https://ocp.example/attestation",
+  / ueid / 256: h'01deadbeefcafef00dba'
+}

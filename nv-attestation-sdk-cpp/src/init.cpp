@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "spdlog/spdlog.h"
+#include <curl/curl.h>
 #include <libxml/tree.h>
 #include <libxml/xmlmemory.h>
 #include <libxml/parser.h>
@@ -49,6 +50,22 @@ Error handle_init_logger(const std::shared_ptr<SdkOptions>& options) {
         set_logger(std::make_shared<SpdLogLogger>(LogLevel::DEBUG));
     }
     return Error::Ok;
+}
+
+Error handle_init_curl() {
+    // The first curl_easy_init() performs lazy global init, which is only
+    // lock-guarded on libcurl >= 7.84 built with atomics. Doing it here
+    // (already single-threaded) makes the guarantee unconditional.
+    const CURLcode err = curl_global_init(CURL_GLOBAL_ALL);
+    if (err != CURLE_OK) {
+        LOG_ERROR("Failed to initialize libcurl: " << curl_easy_strerror(err));
+        return Error::CurlInitFailed;
+    }
+    return Error::Ok;
+}
+
+void handle_shutdown_curl() {
+    curl_global_cleanup();
 }
 
 Error handle_init_xmlsec() {
@@ -130,6 +147,12 @@ Error init(const std::shared_ptr<SdkOptions>& sdk_options) {
             return err;
         }
 
+        // Initialize curl before xmlsec: curl_global_init also initialises OpenSSL.
+        err = handle_init_curl();
+        if (err != Error::Ok) {
+            return err;
+        }
+
         err = handle_init_xmlsec();
         if (err != Error::Ok) {
             return err;
@@ -146,6 +169,8 @@ void shutdown() {
     }
     // TODO: threadsafe way to make sure only one shutdown is run
     handle_shutdown_xmlsec();
+    // After xmlsec: xmlsec's shutdown still uses OpenSSL; defer curl cleanup until after.
+    handle_shutdown_curl();
     handle_shutdown_nvml();
     handle_shutdown_nscq();
     handle_delete_sdk_options();

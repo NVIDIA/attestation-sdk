@@ -1,0 +1,29 @@
+; RFC 9052: COSE_Sign1 structure
+; RFC 9360: X.509 certificate headers (x5chain, x5t)
+
+COSE_Sign1 = [
+    protected : empty_or_serialized_map,
+    unprotected : header_map,
+    payload : bstr / nil,
+    signature : bstr
+]
+
+COSE_Sign1_Tagged = #6.18(COSE_Sign1)
+
+empty_or_serialized_map = serialized_header_map / empty_header_map
+serialized_header_map = bstr .cbor header_map
+empty_header_map = bstr .size 0
+
+header_map = {
+    ? alg: 1 => int / tstr,
+    ? content_type: 3 => int / tstr,
+    ? custom_8: 8 => any,
+    ? x5chain: 33 => COSE_X509,
+    ? x5t: 34 => COSE_CertHash,
+    * int => any
+}
+
+COSE_X509 = COSE_X509_single / COSE_X509_chain
+COSE_X509_single = bstr
+COSE_X509_chain = [ 2* bstr ]
+COSE_CertHash = [ hashAlg: int, hashValue: bstr ]

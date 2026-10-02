@@ -1,0 +1,16 @@
+{
+  "claims": [
+    {
+      "values": {
+        "svn": {
+          "kind": "exact",
+          "value": 153
+        },
+        "version": {
+          "value": "3.14"
+        }
+      }
+    }
+  ],
+  "environment": {}
+}

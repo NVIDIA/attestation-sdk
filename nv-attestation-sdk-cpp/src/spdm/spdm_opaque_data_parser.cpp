@@ -33,10 +33,11 @@ namespace nvattestation {
 
 //todo: return more specific error codes instead of InternalError
 
-ParsedOpaqueFieldData::ParsedOpaqueFieldData() : m_type(0) {
+ParsedOpaqueFieldData::ParsedOpaqueFieldData() {
 }
 
-ParsedOpaqueFieldData::ParsedOpaqueFieldData(uint16_t type, const std::vector<uint8_t>& data) : m_data(data), m_type(type) {
+ParsedOpaqueFieldData::ParsedOpaqueFieldData(uint16_t type, const std::vector<uint8_t>& data)
+    : m_data(data), m_type(type) {
 }
 
 Error ParsedOpaqueFieldData::get_data(const std::vector<uint8_t>*& out_data) const {
@@ -48,9 +49,23 @@ uint16_t ParsedOpaqueFieldData::get_type() const {
     return m_type;
 }
 
-Error ParsedOpaqueFieldData::create(const std::vector<uint8_t>& data, uint16_t type, ParsedOpaqueFieldData& out_field) {
-    out_field.m_data = data;
-    out_field.m_type = type;
+uint16_t ParsedOpaqueFieldData::get_value_type() const {
+    return m_value_type;
+}
+
+Error ParsedOpaqueFieldData::create(const std::vector<uint8_t>& data, uint16_t type,
+                                    ParsedOpaqueFieldData& out_field) {
+    out_field.m_data       = data;
+    out_field.m_type       = type;
+    out_field.m_value_type = 0;
+    return Error::Ok;
+}
+
+Error ParsedOpaqueFieldData::create(const std::vector<uint8_t>& data, uint16_t type,
+                                    uint16_t value_type, ParsedOpaqueFieldData& out_field) {
+    out_field.m_data       = data;
+    out_field.m_type       = type;
+    out_field.m_value_type = value_type;
     return Error::Ok;
 }
 
@@ -66,53 +81,107 @@ Error OpaqueDataParser::get_all_fields(const std::vector<ParsedOpaqueFieldData>*
     return Error::Ok;
 }
 
-Error OpaqueDataParser::parse(const std::vector<uint8_t>& raw_data) { // NOLINT(readability-function-cognitive-complexity)
-    size_t current_offset = 0;
+OpaqueDataFormatVersion OpaqueDataParser::get_format_version() const {
+    return m_format_version;
+}
 
-    while (current_offset < raw_data.size()) {
-        // DataType (2 bytes)
-        if (!can_read_buffer(raw_data, current_offset, OpaqueFieldSizes::DATA_TYPE_SIZE, "DataType")) {
+bool OpaqueDataParser::has_nvdaod_header(const std::vector<uint8_t>& raw_data) {
+    if (raw_data.size() < OpaqueFieldSizes::HEADER_SIZE) {
+        return false;
+    }
+    for (size_t idx = 0; idx < OPAQUE_DATA_MAGIC.size(); ++idx) {
+        if (raw_data[idx] != OPAQUE_DATA_MAGIC[idx]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Error OpaqueDataParser::parse(const std::vector<uint8_t>& raw_data) {
+    m_fields.clear();
+    m_format_version = OpaqueDataFormatVersion{};
+
+    if (has_nvdaod_header(raw_data)) {
+        uint16_t profile = 0;
+        if (!read_little_endian(raw_data, OpaqueFieldSizes::HEADER_PROFILE_OFFSET,
+                                OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE, profile)) {
+            LOG_ERROR("Failed to read opaque data header profile");
             return Error::InternalError;
         }
-        uint16_t data_type_val_raw = 0;
-        if (!read_little_endian(raw_data, current_offset, OpaqueFieldSizes::DATA_TYPE_SIZE, data_type_val_raw)) {
-             LOG_ERROR("Failed to read Opaque DataType.");
-             return Error::InternalError;
+        if (profile != OPAQUE_DATA_REQUIRED_PROFILE) {
+            LOG_ERROR("Unsupported opaque data profile: " << profile);
+            return Error::BadArgument;
         }
-        current_offset += OpaqueFieldSizes::DATA_TYPE_SIZE;
 
-        // DataSize (2 bytes)
-        if (!can_read_buffer(raw_data, current_offset, OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE, "DataSize")) { 
+        // Major/minor are recorded but not gated here: the header major converges with the
+        // legacy format's version field into a single bound check in GpuOpaqueDataParser::create.
+        m_format_version.major = raw_data[OpaqueFieldSizes::HEADER_MAJOR_OFFSET];
+        m_format_version.minor = raw_data[OpaqueFieldSizes::HEADER_MINOR_OFFSET];
+        m_format_version.has_header = true;
+        return parse_tlv_entries(raw_data, OpaqueFieldSizes::HEADER_SIZE, true);
+    }
+    return parse_tlv_entries(raw_data, 0U, false);
+}
+
+Error OpaqueDataParser::parse_tlv_entries(const std::vector<uint8_t>& raw_data, // NOLINT(readability-function-cognitive-complexity)
+                                           size_t start_offset, bool has_value_type) {
+    size_t offset = start_offset;
+    while (offset < raw_data.size()) {
+        if (!can_read_buffer(raw_data, offset, OpaqueFieldSizes::DATA_TYPE_SIZE, "DataType")) {
+            return Error::InternalError;
+        }
+        uint16_t type = 0;
+        if (!read_little_endian(raw_data, offset, OpaqueFieldSizes::DATA_TYPE_SIZE, type)) {
+            LOG_ERROR("Failed to read Opaque DataType.");
+            return Error::InternalError;
+        }
+        offset += OpaqueFieldSizes::DATA_TYPE_SIZE;
+
+        uint16_t value_type = 0;
+        if (has_value_type) {
+            if (!can_read_buffer(raw_data, offset, OpaqueFieldSizes::DATA_VALUE_TYPE_SIZE, "DataValueType")) {
+                return Error::InternalError;
+            }
+            if (!read_little_endian(raw_data, offset, OpaqueFieldSizes::DATA_VALUE_TYPE_SIZE, value_type)) {
+                return Error::InternalError;
+            }
+            offset += OpaqueFieldSizes::DATA_VALUE_TYPE_SIZE;
+        }
+
+        if (!can_read_buffer(raw_data, offset, OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE, "DataSize")) {
             return Error::InternalError;
         }
         uint16_t data_size = 0;
-        if (!read_little_endian(raw_data, current_offset, OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE, data_size)) {
-            LOG_ERROR("Failed to read Opaque DataSize for type " << to_hex_string(data_type_val_raw));
+        if (!read_little_endian(raw_data, offset, OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE, data_size)) {
+            LOG_ERROR("Failed to read Opaque DataSize for type " << to_hex_string(type));
             return Error::InternalError;
         }
-        current_offset += OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE;
+        offset += OpaqueFieldSizes::DATA_SIZE_FIELD_SIZE;
 
-        // Data (variable length: data_size)
         std::vector<uint8_t> value_bytes;
-        if (!checked_assign(value_bytes, raw_data, current_offset, data_size, "Data")) { 
+        if (!checked_assign(value_bytes, raw_data, offset, data_size, "Data")) {
             return Error::InternalError;
         }
-        current_offset += data_size;
+        offset += data_size;
 
-        ParsedOpaqueFieldData field_data;
-        Error error = ParsedOpaqueFieldData::create(value_bytes, data_type_val_raw, field_data);
-        if (error != Error::Ok) {
-            return error;
+        ParsedOpaqueFieldData field;
+        Error err = ParsedOpaqueFieldData::create(value_bytes, type, value_type, field);
+        if (err != Error::Ok) {
+            return err;
         }
-        m_fields.push_back(field_data);
-
+        m_fields.push_back(field);
     }
-    if (current_offset != raw_data.size()) {
-        LOG_ERROR("OpaqueData has " << (raw_data.size() - current_offset) << " trailing bytes after parsing.");
+
+    if (offset != raw_data.size()) {
+        LOG_ERROR("OpaqueData has " << (raw_data.size() - offset) << " trailing bytes");
         return Error::InternalError;
     }
-
     return Error::Ok;
+}
+
+Error OpaqueDataParser::parse_as_legacy_for_test(const std::vector<uint8_t>& raw_data) {
+    OpaqueDataParser tmp;
+    return tmp.parse_tlv_entries(raw_data, 0U, false);
 }
 
 std::ostream& operator<<(std::ostream& os, const OpaqueDataParser& parser) { // NOLINT(readability-function-cognitive-complexity)

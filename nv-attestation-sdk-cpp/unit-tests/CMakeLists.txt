@@ -44,12 +44,26 @@ if(NOT DEFINED regorus_SOURCE_DIR)
         regorus
         GIT_REPOSITORY https://github.com/microsoft/regorus.git
         GIT_TAG regorus-v0.4.0
+        GIT_SHALLOW TRUE
     )
     FetchContent_Populate(regorus)
 endif()
 
 add_executable(nv-attestation-unit-tests
     main.cpp
+    test_ear_mapper.cpp
+    test_corim_parse.cpp
+    test_corim_verify.cpp
+    test_coev_parse.cpp
+    test_coev_to_ect.cpp
+    test_eat_to_ect.cpp
+    test_corim_store.cpp
+    test_cmw.cpp
+    test_evidence_handler.cpp
+    test_local_corim_verifier.cpp
+    test_capi_corim_verifier.cpp
+    local_https_test_server.cpp
+    test_eat.cpp
     rim_test.cpp
     rego_engine/regorus_rego_engine_test.cpp
     attestation_test.cpp
@@ -60,6 +74,7 @@ add_executable(nv-attestation-unit-tests
     error_test.cpp
     gpu/evidence_test.cpp
     gpu/verifier_test.cpp
+    gpu/blackwell_fsp_test.cpp
     test_utils.cpp
     utils_test.cpp
     debug_test.cpp
@@ -70,17 +85,26 @@ add_executable(nv-attestation-unit-tests
     switch/verifier_test.cpp
     switch_test_utils.cpp
     nv_http_test.cpp
+    nv_jwt_test.cpp
     claims_test.cpp
+    verify_eat_test.cpp
+    verify_ear_test.cpp
     nv_cache_test.cpp
-) 
+    dice_tcb_info_test.cpp
+    test_dice_tcb_info_to_ect.cpp
+    test_nv_ocsp.cpp
+)
 
-target_include_directories(nv-attestation-unit-tests PRIVATE 
+target_include_directories(nv-attestation-unit-tests PRIVATE
     nv-attestation
     ${regorus_SOURCE_DIR}/bindings/ffi
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_compile_options(nv-attestation-unit-tests PRIVATE -Wno-unused)
+target_compile_definitions(nv-attestation-unit-tests PRIVATE
+    NVAT_REPOSITORY_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../.."
+)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(nv-attestation-unit-tests PRIVATE -Wno-c++17-attribute-extensions)
 endif()
@@ -89,7 +113,7 @@ if (SANITIZER)
     target_link_options(nv-attestation-unit-tests PRIVATE -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
 endif()
 
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.12.0 GIT_SHALLOW TRUE EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(json)
 
 # Fetch spdlog and fmt for header access only (nvat has them statically linked)
@@ -97,11 +121,13 @@ FetchContent_Declare(
     fmt
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
     GIT_TAG 10.2.1
+    GIT_SHALLOW TRUE
 )
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.14.1
+    GIT_SHALLOW TRUE
 )
 
 # Just populate to get source directories for headers (don't add to build)
@@ -118,11 +144,11 @@ endif()
 find_package(jwt-cpp QUIET)
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    # the unit tests can be built as part of the sdk (in which case it will 
-    # link against the build tree) or it can be built standalone in which 
+    # the unit tests can be built as part of the sdk (in which case it will
+    # link against the build tree) or it can be built standalone in which
     # case it will link against the installed version by manually locating lib+header.
     # if running as standalone, we need to fetch jwt-cpp
-    
+
     # ideally, in both the cases, we should be able to fetch content jwt-cpp
     # but in the sdk build jwt-cpp is handled differently from other dependencies
     # because of that,
@@ -138,20 +164,21 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     jwt-cpp
     GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
     GIT_TAG v0.7.1  # Use the latest stable version
+    GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
     )
 
-    # the fetch content for jwt-cpp is being handled differently because 
+    # the fetch content for jwt-cpp is being handled differently because
     # it's headers were getting installed even when using EXCLUDE_FROM_ALL
     # presumably, its because jwt-cpp is not respecting all of CMAKE's rules
-    # this way prevents the headers being installed when the sdk is installed 
-    # the headers must not be installed because we want to just link to this 
+    # this way prevents the headers being installed when the sdk is installed
+    # the headers must not be installed because we want to just link to this
     # statically. there is no need to add unnecessary libraries to target machines.
     FetchContent_Populate(jwt-cpp)
     add_library(own-jwt-cpp INTERFACE)
     target_include_directories(own-jwt-cpp
         INTERFACE ${jwt-cpp_SOURCE_DIR}/include)
-    # jwt-cpp is advertized as a c++11 library. but it somehow uses c++17 features, 
+    # jwt-cpp is advertized as a c++11 library. but it somehow uses c++17 features,
     # but it should work with c++14 also. so disable this warning.
     target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
 endif()
@@ -168,7 +195,7 @@ target_link_libraries(nv-attestation-unit-tests PRIVATE
     xmlsec::xmlsec
     xmlsec::xmlsec-openssl
     # link regarless of whether we are building as part of the sdk or standalone
-    # if built as part of the sdk, the cmake in sdk will have 
+    # if built as part of the sdk, the cmake in sdk will have
     # made this available.
     own-jwt-cpp
 )
@@ -176,8 +203,10 @@ target_link_libraries(nv-attestation-unit-tests PRIVATE
 # spdlog/fmt headers needed for compilation (nvat has them statically linked, no need to link again)
 target_include_directories(nv-attestation-unit-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
+    ${GENERATED_DIR}
 )
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -197,6 +226,21 @@ endif()
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata
         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+# Materialise unit-test fixtures (certs, .diag->.cbor, signed CoRIM) before the
+# test binary runs. Always runs; the underlying script is idempotent. Also
+# re-syncs the .diag source-of-truth so post-configure edits aren't masked by
+# the configure-time file(COPY) above.
+add_custom_target(prepare-test-data-for-unit-tests ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/testdata/sample_rims
+        ${CMAKE_CURRENT_BINARY_DIR}/testdata/sample_rims
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/prepare-test-data.sh
+        ${CMAKE_CURRENT_BINARY_DIR}/testdata
+    COMMENT "Preparing unit-test fixtures"
+    VERBATIM
+)
+add_dependencies(nv-attestation-unit-tests prepare-test-data-for-unit-tests)
 
 include(GoogleTest)
 

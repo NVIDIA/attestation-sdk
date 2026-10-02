@@ -1,0 +1,23 @@
+[
+  {
+    "claims": [
+      {
+        "values": {
+          "digests": [
+            "sha-256;qrvM3e7/ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJk="
+          ],
+          "name": "test_firmware",
+          "version": {
+            "value": "1.0.0"
+          }
+        }
+      }
+    ],
+    "environment": {
+      "class": {
+        "model": "TestFirmware",
+        "vendor": "TestVendor"
+      }
+    }
+  }
+]

@@ -20,7 +20,6 @@
 
 //third party
 #include "gtest/gtest.h"
-#include "gmock/gmock.h"
 
 //this sdk
 #include "nv_attestation/error.h"
@@ -28,7 +27,7 @@
 using namespace nvattestation;
 
 class ErrorTest : public ::testing::Test {
-    
+
 };
 
 TEST_F(ErrorTest, ErrorEnumValuesAreUnique) {

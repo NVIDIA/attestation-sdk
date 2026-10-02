@@ -41,6 +41,7 @@ namespace nvattestation {
         HTTP_STATUS_BAD_REQUEST = 400,
         HTTP_STATUS_UNAUTHORIZED = 401,
         HTTP_STATUS_FORBIDDEN = 403,
+        HTTP_STATUS_TOO_MANY_REQUESTS = 429,
         HTTP_STATUS_UNKNOWN = 0,
     };
 
@@ -84,6 +85,10 @@ namespace nvattestation {
             long connection_timeout_ms;
             /** Overall request timeout, in milliseconds. */
             long request_timeout_ms;
+            /** Path to a CA certificate bundle file (PEM format). Maps to CURLOPT_CAINFO. */
+            std::string tls_ca_cert;
+            /** Path to a directory of CA certificates (OpenSSL c_rehash format). Maps to CURLOPT_CAPATH. */
+            std::string tls_ca_path;
 
             HttpOptions() :
                 max_retry_count(NVAT_HTTP_DEFAULT_RETRY_COUNT),
@@ -104,6 +109,8 @@ namespace nvattestation {
             void set_max_backoff_ms(long max_backoff_ms) { this->max_backoff_ms = std::max(0L, max_backoff_ms); }
             void set_connection_timeout_ms(long connection_timeout_ms) { this->connection_timeout_ms = std::max(0L, connection_timeout_ms); }
             void set_request_timeout_ms(long request_timeout_ms) { this->request_timeout_ms = std::max(0L, request_timeout_ms); }
+            void set_tls_ca_cert(const std::string& tls_ca_cert) { this->tls_ca_cert = tls_ca_cert; }
+            void set_tls_ca_path(const std::string& tls_ca_path) { this->tls_ca_path = tls_ca_path; }
     };
 
     class NvRequest {
@@ -124,7 +131,7 @@ namespace nvattestation {
         public: 
             static Error create(NvHttpClient& out_client, std::string service_key, HttpOptions options = HttpOptions());
 
-            Error do_request_as_string(const NvRequest& request, long& out_status, std::string& out_response) const;
+            Error do_request_as_string(const NvRequest& request, long& out_status, std::string& out_response, std::string* out_content_type = nullptr) const;
             template<typename T>
             Error do_request_as_json_struct(const NvRequest& request, long& out_status, T& out_response);
 

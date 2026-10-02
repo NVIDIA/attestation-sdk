@@ -1,0 +1,42 @@
+{
+  "ects": [
+    {
+      "claims": [
+        {
+          "values": {
+            "version": {
+              "value": "1.0"
+            }
+          }
+        }
+      ],
+      "environment": {
+        "class": {
+          "layer": 1,
+          "model": "GSP",
+          "vendor": "NVIDIA"
+        }
+      }
+    },
+    {
+      "claims": [
+        {
+          "values": {
+            "svn": {
+              "kind": "exact",
+              "value": 66
+            }
+          }
+        }
+      ],
+      "environment": {
+        "class": {
+          "layer": 2,
+          "model": "FSP",
+          "vendor": "NVIDIA"
+        }
+      }
+    }
+  ],
+  "rim_locators": []
+}

@@ -24,7 +24,10 @@
 #include "gmock/gmock.h"
 
 #include "nv_attestation/claims.h"
+#include "nv_attestation/gpu/claims.h"
 #include "nv_attestation/gpu/verify.h"
+#include "nv_attestation/gpu/spdm/gpu_opaque_data_parser.hpp"
+#include "nv_attestation/spdm/spdm_opaque_data_parser.hpp"
 #include "nv_attestation/utils.h"
 #include "nv_attestation/nv_x509.h"
 #include "nv_attestation/rim.h"
@@ -48,7 +51,7 @@ class GpuVerifierTest : public ::testing::Test {
 
 TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
-    Error error = NvRemoteRimStoreImpl::init_from_env(*rim_store, "https://rim.attestation.nvidia.com", g_env->service_key, HttpOptions());
+    Error error = NvRemoteRimStoreImpl::init_from_env(*rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     auto ocsp_client = std::make_shared<NvHttpOcspClient>();
     error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
@@ -73,8 +76,8 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
     EXPECT_EQ(claims.size(), 1);
 
-    const SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
-    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
+    const SerializableGpuClaimsV4* claims_v3 = dynamic_cast<SerializableGpuClaimsV4*>(claims[0].get());
+    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV4 claims";
     ASSERT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
     ASSERT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     ASSERT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
@@ -102,7 +105,8 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
     ASSERT_EQ(claims.size(), 1);
 
-    SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
+    SerializableGpuClaimsV4* claims_v3 = dynamic_cast<SerializableGpuClaimsV4*>(claims[0].get());
+    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV4 claims";
     EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
     EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
@@ -245,8 +249,8 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithDriverMeasurementsMismatch) {
     ASSERT_EQ(error, Error::Ok) << "Verification should succeed but mark measurements as mismatched, got: " << to_string(error);
     EXPECT_EQ(claims.size(), 1);
 
-    const SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
-    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
+    const SerializableGpuClaimsV4* claims_v3 = dynamic_cast<SerializableGpuClaimsV4*>(claims[0].get());
+    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV4 claims";
 
     // Verify that measurements are marked as not matching
     EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Failure);
@@ -325,14 +329,37 @@ TEST_F(GpuVerifierTest, VerifyGpuEvidenceWithBlackwell) {
     ASSERT_EQ(error, Error::Ok) << "Could not verify evidence: " << to_string(error);
     EXPECT_EQ(claims.size(), 1);
 
-    const SerializableGpuClaimsV3* claims_v3 = dynamic_cast<SerializableGpuClaimsV3*>(claims[0].get());
-    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV3 claims";
+    const SerializableGpuClaimsV4* claims_v3 = dynamic_cast<SerializableGpuClaimsV4*>(claims[0].get());
+    ASSERT_NE(claims_v3, nullptr) << "Expected SerializableGpuClaimsV4 claims";
     EXPECT_EQ(claims_v3->m_hwmodel, "GB100 A01 GSP BROM");
     EXPECT_EQ(claims_v3->m_ueid, "474146966256510137525212816567191319424869109849");
     EXPECT_EQ(claims_v3->m_oem_id, "5703");
     EXPECT_EQ(claims_v3->m_driver_version, mock_data.driver_version);
     EXPECT_EQ(claims_v3->m_vbios_version, mock_data.vbios_version);
     EXPECT_EQ(claims_v3->m_measurements_matching, SerializableMeasresClaim::Success);
+}
+
+TEST_F(GpuVerifierTest, RejectsRubinEvidence) {
+    auto mock_rim_store = std::make_shared<MockNvRemoteRimStore>();
+    EXPECT_CALL(*mock_rim_store, get_rim(_, _)).Times(0);
+
+    auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+
+    LocalGpuVerifier verifier;
+    error = LocalGpuVerifier::create(verifier, mock_rim_store, ocsp_client, DetachedEATOptions());
+    ASSERT_EQ(error, Error::Ok);
+
+    auto rubin_evidence = std::make_shared<GpuEvidence>();
+    rubin_evidence->set_gpu_architecture(GpuArchitecture::Rubin);
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list{rubin_evidence};
+
+    EvidencePolicy evidence_policy{};
+    ClaimsCollection claims;
+    error = verifier.verify_evidence(evidence_list, evidence_policy, nullptr, claims);
+    EXPECT_EQ(error, Error::GpuArchitectureNotSupported);
+    EXPECT_TRUE(claims.empty());
 }
 
 class GpuLocalVerifierTestCApi : public ::testing::Test {
@@ -729,4 +756,311 @@ TEST_F(GpuLocalVerifierTestCApi, DISABLED_VerifyGpuModeClaimRPPolicy) {
     ASSERT_EQ(nvat_apply_relying_party_policy(policy, claims), NVAT_RC_OK);
     nvat_relying_party_policy_free(&policy);
     nvat_claims_collection_free(&claims);
+}
+
+TEST_F(GpuVerifierTest, EmptyEvidenceReturnsBadArgument) {
+    auto rim_store = std::make_shared<MockNvRemoteRimStore>();
+    auto ocsp_client = std::make_shared<NvHttpOcspClient>();
+    Error error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.example.com", "", HttpOptions());
+    ASSERT_EQ(error, Error::Ok);
+    LocalGpuVerifier verifier;
+    error = LocalGpuVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
+    ASSERT_EQ(error, Error::Ok);
+
+    std::vector<std::shared_ptr<GpuEvidence>> empty_evidence;
+    EvidencePolicy evidence_policy{};
+    ClaimsCollection claims;
+    error = verifier.verify_evidence(empty_evidence, evidence_policy, nullptr, claims);
+    EXPECT_EQ(error, Error::BadArgument);
+}
+
+// ---------------------------------------------------------------------------
+// OpaqueDataComparison unit tests
+// ---------------------------------------------------------------------------
+
+static std::vector<ParsedOpaqueFieldData> make_fields_with_min_svn(uint16_t svn) {
+    std::vector<uint8_t> svn_bytes = {
+        static_cast<uint8_t>(svn & 0xFFU),
+        static_cast<uint8_t>(svn >> 8U)
+    };
+    ParsedOpaqueFieldData field;
+    ParsedOpaqueFieldData::create(svn_bytes, 37U, 0x87U, field);
+    return {field};
+}
+
+static OpaqueRimRecords make_min_svn_rim_records(uint64_t floor, bool include_in_result) {
+    OpaqueRimRecord rec;
+    rec.type_id           = 37U;
+    rec.name              = "FSP_UCODE_MIN_SVN";
+    rec.min_svn           = floor;
+    rec.include_in_result = include_in_result;
+    OpaqueRimRecords records;
+    records.add_record(rec);
+    return records;
+}
+
+TEST(OpaqueComparisonTest, MinSvnMatchEmitsAttesterClaim) {
+    auto fields = make_fields_with_min_svn(5U);
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create(fields, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, true);
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_TRUE(claims.m_mismatched_opaque_records == nullptr ||
+                claims.m_mismatched_opaque_records->empty());
+    ASSERT_EQ(claims.m_attester_claims.count("FSP_UCODE_MIN_SVN"), 1U);
+    EXPECT_EQ(claims.m_attester_claims.at("FSP_UCODE_MIN_SVN"), 5U);
+}
+
+TEST(OpaqueComparisonTest, UnregisteredTypeIdWithMinSvnValueTypeStillCompares) {
+    // A new firmware field with no GpuOpaqueDataType enum entry yet must still compare
+    // correctly as long as it carries the MIN_SVN value_type tag (0x87); see
+    // GpuOpaqueDataParser::create, which retains fields by raw id rather than dropping them.
+    std::vector<uint8_t> svn_bytes = {0x05, 0x00};  // 5
+    ParsedOpaqueFieldData field;
+    ASSERT_EQ(ParsedOpaqueFieldData::create(svn_bytes, 40U, 0x87U, field), Error::Ok);
+
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create({field}, ver, opaque), Error::Ok);
+
+    OpaqueRimRecord rec;
+    rec.type_id           = 40U;
+    rec.name              = "FUTURE_MIN_SVN_FIELD";
+    rec.min_svn           = 5U;
+    rec.include_in_result = true;
+    OpaqueRimRecords rim_records;
+    rim_records.add_record(rec);
+
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_TRUE(claims.m_mismatched_opaque_records == nullptr ||
+                claims.m_mismatched_opaque_records->empty());
+    ASSERT_EQ(claims.m_attester_claims.count("FUTURE_MIN_SVN_FIELD"), 1U);
+    EXPECT_EQ(claims.m_attester_claims.at("FUTURE_MIN_SVN_FIELD"), 5U);
+}
+
+TEST(OpaqueComparisonTest, TypeIdZeroCompares) {
+    // type_id 0 (RIM index == OPAQUE_DATA_RIM_INDEX_BASE exactly) is not reserved/excluded --
+    // confirm it's treated as an ordinary, comparable field, not specially dropped anywhere.
+    std::vector<uint8_t> svn_bytes = {0x05, 0x00};  // 5
+    ParsedOpaqueFieldData field;
+    ASSERT_EQ(ParsedOpaqueFieldData::create(svn_bytes, 0U, 0x87U, field), Error::Ok);
+
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create({field}, ver, opaque), Error::Ok);
+
+    OpaqueRimRecord rec;
+    rec.type_id           = 0U;
+    rec.name              = "TYPE_ID_ZERO_MIN_SVN";
+    rec.min_svn           = 5U;
+    rec.include_in_result = true;
+    OpaqueRimRecords rim_records;
+    rim_records.add_record(rec);
+
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_TRUE(claims.m_mismatched_opaque_records == nullptr ||
+                claims.m_mismatched_opaque_records->empty());
+    ASSERT_EQ(claims.m_attester_claims.count("TYPE_ID_ZERO_MIN_SVN"), 1U);
+    EXPECT_EQ(claims.m_attester_claims.at("TYPE_ID_ZERO_MIN_SVN"), 5U);
+}
+
+TEST(OpaqueComparisonTest, MinSvnBelowFloorCreatesMismatch) {
+    auto fields = make_fields_with_min_svn(3U);
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create(fields, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, true);
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    ASSERT_NE(claims.m_mismatched_opaque_records, nullptr);
+    ASSERT_EQ(claims.m_mismatched_opaque_records->size(), 1U);
+    const auto& mm = (*claims.m_mismatched_opaque_records)[0];
+    EXPECT_EQ(mm.opaque_data_id,  37U);
+    EXPECT_EQ(mm.name,            "FSP_UCODE_MIN_SVN");
+    EXPECT_EQ(mm.golden_value,    5U);
+    ASSERT_NE(mm.runtime_value, nullptr);
+    EXPECT_EQ(*mm.runtime_value,  3U);
+
+    EXPECT_EQ(claims.m_attester_claims.count("FSP_UCODE_MIN_SVN"), 1U);
+}
+
+TEST(OpaqueComparisonTest, MinSvnEqualToFloorIsNotMismatch) {
+    auto fields = make_fields_with_min_svn(5U);
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create(fields, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, false);
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_TRUE(claims.m_mismatched_opaque_records == nullptr ||
+                claims.m_mismatched_opaque_records->empty());
+}
+
+TEST(OpaqueComparisonTest, MismatchFlipsMeasresToFailureEvenWhenSpdmMeasurementsMatched) {
+    auto fields = make_fields_with_min_svn(3U);
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create(fields, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, true);
+    SerializableGpuClaimsV4 claims;
+    claims.m_measurements_matching = SerializableMeasresClaim::Success;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_EQ(claims.m_measurements_matching, SerializableMeasresClaim::Failure);
+}
+
+TEST(OpaqueComparisonTest, MatchLeavesMeasresUntouched) {
+    auto fields = make_fields_with_min_svn(5U);
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create(fields, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, true);
+    SerializableGpuClaimsV4 claims;
+    claims.m_measurements_matching = SerializableMeasresClaim::Success;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    EXPECT_EQ(claims.m_measurements_matching, SerializableMeasresClaim::Success);
+}
+
+TEST(OpaqueComparisonTest, WrongValueTypeCreatesMismatchEvenWhenValueWouldPass) {
+    std::vector<uint8_t> svn_bytes = {0x05, 0x00};  // 5, would satisfy a floor of 5
+    ParsedOpaqueFieldData field;
+    ParsedOpaqueFieldData::create(svn_bytes, 37U, 0x86U, field);  // wrong rmDataValueType (not minSvn's 0x87)
+    OpaqueDataFormatVersion ver{0, 2, true};
+    GpuOpaqueDataParser opaque;
+    ASSERT_EQ(GpuOpaqueDataParser::create({field}, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, true);
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    ASSERT_NE(claims.m_mismatched_opaque_records, nullptr);
+    ASSERT_EQ(claims.m_mismatched_opaque_records->size(), 1U);
+    EXPECT_EQ((*claims.m_mismatched_opaque_records)[0].runtime_value, nullptr);
+    EXPECT_EQ(claims.m_attester_claims.count("FSP_UCODE_MIN_SVN"), 0U);
+}
+
+TEST(OpaqueComparisonTest, MissingMinSvnInEvidenceCreatesMismatch) {
+    GpuOpaqueDataParser opaque;
+    OpaqueDataFormatVersion ver{};
+    ASSERT_EQ(GpuOpaqueDataParser::create({}, ver, opaque), Error::Ok);
+
+    auto rim_records = make_min_svn_rim_records(5U, false);
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, rim_records, claims);
+
+    ASSERT_NE(claims.m_mismatched_opaque_records, nullptr);
+    ASSERT_EQ(claims.m_mismatched_opaque_records->size(), 1U);
+    EXPECT_EQ((*claims.m_mismatched_opaque_records)[0].runtime_value, nullptr);
+
+    EXPECT_EQ(claims.m_attester_claims.count("FSP_UCODE_MIN_SVN"), 0U);
+}
+
+TEST(OpaqueComparisonTest, NoRimRecordsIsNoop) {
+    GpuOpaqueDataParser opaque;
+    OpaqueDataFormatVersion ver{};
+    ASSERT_EQ(GpuOpaqueDataParser::create({}, ver, opaque), Error::Ok);
+
+    OpaqueRimRecords empty_records;
+    SerializableGpuClaimsV4 claims;
+    LocalGpuVerifier::compare_opaque_data(opaque, empty_records, claims);
+
+    EXPECT_TRUE(claims.m_mismatched_opaque_records == nullptr ||
+                claims.m_mismatched_opaque_records->empty());
+    EXPECT_TRUE(claims.m_attester_claims.empty());
+}
+
+TEST(OpaqueRecordsConflictTest, DistinctTypeIdAndNameIsOk) {
+    OpaqueRimRecord driver_rec;
+    driver_rec.type_id = 37U;
+    driver_rec.name    = "FSP_UCODE_MIN_SVN";
+    OpaqueRimRecords driver_records;
+    driver_records.add_record(driver_rec);
+
+    OpaqueRimRecord vbios_rec;
+    vbios_rec.type_id = 40U;
+    vbios_rec.name    = "OTHER_MIN_SVN";
+    OpaqueRimRecords vbios_records;
+    vbios_records.add_record(vbios_rec);
+
+    EXPECT_EQ(LocalGpuVerifier::check_opaque_records_conflict(driver_records, vbios_records), Error::Ok);
+}
+
+TEST(OpaqueRecordsConflictTest, SameTypeIdConflicts) {
+    OpaqueRimRecord driver_rec;
+    driver_rec.type_id = 37U;
+    driver_rec.name    = "FSP_UCODE_MIN_SVN";
+    OpaqueRimRecords driver_records;
+    driver_records.add_record(driver_rec);
+
+    OpaqueRimRecord vbios_rec;
+    vbios_rec.type_id = 37U;
+    vbios_rec.name    = "OTHER_MIN_SVN";
+    OpaqueRimRecords vbios_records;
+    vbios_records.add_record(vbios_rec);
+
+    EXPECT_EQ(LocalGpuVerifier::check_opaque_records_conflict(driver_records, vbios_records), Error::RimMeasurementConflict);
+}
+
+TEST(OpaqueRecordsConflictTest, SameNameDifferentTypeIdConflicts) {
+    // distinct type_id alone isn't sufficient: m_attester_claims is keyed by name, so a name
+    // collision would silently overwrite one record's claim with the other's
+    OpaqueRimRecord driver_rec;
+    driver_rec.type_id = 37U;
+    driver_rec.name    = "FSP_UCODE_MIN_SVN";
+    OpaqueRimRecords driver_records;
+    driver_records.add_record(driver_rec);
+
+    OpaqueRimRecord vbios_rec;
+    vbios_rec.type_id = 40U;
+    vbios_rec.name    = "FSP_UCODE_MIN_SVN";
+    OpaqueRimRecords vbios_records;
+    vbios_records.add_record(vbios_rec);
+
+    EXPECT_EQ(LocalGpuVerifier::check_opaque_records_conflict(driver_records, vbios_records), Error::RimMeasurementConflict);
+}
+
+TEST(OpaqueComparisonTest, ClaimsVersionIs4_0) {
+    SerializableGpuClaimsV4 claims;
+    std::string ver;
+    ASSERT_EQ(claims.get_version(ver), Error::Ok);
+    EXPECT_EQ(ver, "4.0");
+}
+
+TEST(OpaqueComparisonTest, JsonRoundTripPreservesAttesterClaimsAndMismatchedOpaqueRecords) {
+    SerializableGpuClaimsV4 original;
+    original.m_attester_claims["FSP_UCODE_MIN_SVN"] = 7U;
+
+    SerializableOpaqueDataMismatch mm;
+    mm.opaque_data_id = 37U;
+    mm.name           = "FSP_UCODE_MIN_SVN";
+    mm.golden_value   = 10U;
+    mm.runtime_type   = std::make_shared<std::string>("MIN_SVN");
+    mm.runtime_value  = std::make_shared<uint64_t>(7U);
+    original.m_mismatched_opaque_records =
+        std::make_shared<std::vector<SerializableOpaqueDataMismatch>>(
+            std::vector<SerializableOpaqueDataMismatch>{mm});
+
+    std::string json_str;
+    ASSERT_EQ(original.serialize_json(json_str), Error::Ok);
+
+    nlohmann::json parsed = nlohmann::json::parse(json_str);
+    SerializableGpuClaimsV4 roundtripped;
+    from_json(parsed, roundtripped);
+
+    EXPECT_EQ(original, roundtripped);
 }

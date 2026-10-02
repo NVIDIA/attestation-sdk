@@ -5,8 +5,8 @@
 set -euo pipefail
 
 # Public dependencies
-BUILD_DEPS="cmake git pkg-config clang clang-tidy lld curl wget"
-COMPILE_DEPS="libxml2-dev"
+BUILD_DEPS="cmake git pkg-config clang clang-tidy lld llvm curl wget"
+COMPILE_DEPS="libxml2-dev zlib1g-dev"
 
 echo "--- Installing starter dependencies ---"
 apt-get update && apt-get install -y $BUILD_DEPS
@@ -52,6 +52,15 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust-install.sh \
     && chmod +x rust-install.sh \
     && ./rust-install.sh -y \
     || exit 1
+export PATH="$HOME/.cargo/bin:$PATH"
 
-echo "--- Installing golang ---"
-apt-get -y install golang-go
+echo "--- Installing cbor-diag ---"
+# Version pin lives here (single source of truth); nv-attestation-sdk-cpp/Makefile reads
+# it from this file. Keep self-contained — the CI image build only COPYs this script in,
+# not the SDK tree (see ci/dockerfiles/build-env/Dockerfile).
+cargo install cbor-diag-cli --version 0.1.8 --locked
+
+echo "--- Installing Python deps (venv) ---"
+apt-get -y install python3-venv
+# Delegate venv layout + pinning to scripts/setup-venv.sh (single source of truth).
+bash "$(dirname "$0")/../nv-attestation-sdk-cpp/scripts/setup-venv.sh"

@@ -91,6 +91,14 @@ GpuParsedFieldType GpuParsedOpaqueFieldData::get_type() const {
     return m_active_type;
 }
 
+uint16_t GpuParsedOpaqueFieldData::get_value_type() const {
+    return m_value_type;
+}
+
+void GpuParsedOpaqueFieldData::set_value_type(uint16_t value_type) {
+    m_value_type = value_type;
+}
+
 Error GpuParsedOpaqueFieldData::create(const std::vector<uint8_t>& data, GpuParsedOpaqueFieldData& out_field) {
     out_field.m_byte_data = data;
     out_field.m_active_type = GpuParsedFieldType::BYTE_VECTOR;
@@ -200,37 +208,57 @@ Error GpuOpaqueDataParser::parse_opaque_data_version(const std::vector<uint8_t>&
     return Error::Ok;
 }
 
-Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaque_fields, GpuOpaqueDataParser& out_parser) {
+Error GpuOpaqueDataParser::create(
+    const std::vector<ParsedOpaqueFieldData>& opaque_fields,
+    const OpaqueDataFormatVersion& format_version,
+    GpuOpaqueDataParser& out_parser)
+{
     out_parser.m_fields.clear();
+
+    // Header presence/parsing is already resolved by the shared OpaqueDataParser before this
+    // point; this only picks which already-parsed source the version comes from. The new
+    // (NVDAOD) format's header major field IS the opaque data version; a legacy-style
+    // OPAQUE_DATA_VERSION entry, if a producer still emits one alongside the header, is ignored.
+    // The legacy (no-header) format has no version field of its own, so it comes from that entry
+    // instead. Either way, exactly one resulting MAJOR version is checked below.
     uint64_t opaque_data_version = 0;
-    for (const auto& field : opaque_fields) {
-        if (field.get_type() != static_cast<uint16_t>(GpuOpaqueDataType::OPAQUE_DATA_VERSION)) {
-           continue;
+    if (format_version.has_header) {
+        opaque_data_version = format_version.major;
+        LOG_DEBUG("GPU opaque data header version: " << opaque_data_version);
+    } else {
+        for (const auto& field : opaque_fields) {
+            if (field.get_type() != static_cast<uint16_t>(GpuOpaqueDataType::OPAQUE_DATA_VERSION)) {
+                continue;
+            }
+            const std::vector<uint8_t>* data = nullptr;
+            Error err = field.get_data(data);
+            if (err != Error::Ok) {
+                return err;
+            }
+            err = parse_opaque_data_version(*data, opaque_data_version);
+            if (err != Error::Ok) {
+                return err;
+            }
         }
-        const std::vector<uint8_t>* data = nullptr;
-        Error err = field.get_data(data);
-        if (err != Error::Ok) {
-            return err;
-        }
-        err = parse_opaque_data_version(*data, opaque_data_version);
-        if (err != Error::Ok) {
-            return err;
-        }
+        LOG_DEBUG("GPU opaque data legacy version: " << opaque_data_version);
     }
 
-    LOG_DEBUG("GPU opaque data version: " << opaque_data_version);
     if (opaque_data_version > MAX_OPAQUE_DATA_VERSION) {
-        LOG_ERROR("GPU opaque data version " << opaque_data_version << " is greater than supported version " << MAX_OPAQUE_DATA_VERSION);
+        LOG_ERROR("Opaque data version " << opaque_data_version
+                  << " exceeds max supported " << MAX_OPAQUE_DATA_VERSION);
         return Error::GpuFwNotSupported;
     }
     out_parser.m_opaque_data_version = opaque_data_version;
 
     for (const auto& field : opaque_fields) {
-        if (!is_valid_gpu_opaque_data_type(field.get_type())) {
-            LOG_ERROR("Invalid GPU opaque data type: " << field.get_type());
-            return Error::BadArgument;
-        }
         GpuOpaqueDataType type = static_cast<GpuOpaqueDataType>(field.get_type());
+        // Types absent from the map are still stored (as raw bytes, below) rather than dropped:
+        // MIN_SVN-style comparison keys on type_id + value_type, not on the type being named here,
+        // so a new SVN field can be recognized without an SDK release as long as the major version holds.
+        if (get_gpu_opaque_field_type(type) == GpuParsedFieldType::UNKNOWN) {
+            LOG_DEBUG("Unrecognized GPU opaque data type " << field.get_type()
+                      << " (value_type=0x" << to_hex_string(field.get_value_type()) << "), storing as raw bytes");
+        }
 
         const std::vector<uint8_t>* data = nullptr;
         Error error = field.get_data(data);
@@ -249,8 +277,7 @@ Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaq
             if (error != Error::Ok) {
                 return error;
             }
-        }
-        else if (type == GpuOpaqueDataType::SWITCH_PDI) {
+        } else if (type == GpuOpaqueDataType::SWITCH_PDI) {
             std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>> switch_pdis;
             error = parse_switch_pdis_internal(*data, switch_pdis);
             if (error != Error::Ok) {
@@ -267,22 +294,27 @@ Error GpuOpaqueDataParser::create(const std::vector<ParsedOpaqueFieldData>& opaq
             }
         }
 
-        out_parser.m_fields[type] = parsed_field;
+        parsed_field.set_value_type(field.get_value_type());
+        out_parser.m_fields[field.get_type()] = parsed_field;
     }
     return Error::Ok;
 }
 
-Error GpuOpaqueDataParser::get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const {
-    auto it = m_fields.find(type);
+Error GpuOpaqueDataParser::get_field(uint16_t type_id, const GpuParsedOpaqueFieldData*& out_field) const {
+    auto it = m_fields.find(type_id);
     if (it == m_fields.end()) {
-        LOG_DEBUG("GpuOpaqueDataParser::get_field: Field not found: " << to_string(type));
+        LOG_DEBUG("GpuOpaqueDataParser::get_field: Field not found: 0x" << to_hex_string(type_id));
         return Error::SpdmFieldNotFound;
     }
     out_field = &it->second;
     return Error::Ok;
 }
 
-const std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData>& GpuOpaqueDataParser::get_all_fields() const {
+Error GpuOpaqueDataParser::get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const {
+    return get_field(static_cast<uint16_t>(type), out_field);
+}
+
+const std::map<uint16_t, GpuParsedOpaqueFieldData>& GpuOpaqueDataParser::get_all_fields() const {
     return m_fields;
 }
 
@@ -293,9 +325,11 @@ uint64_t GpuOpaqueDataParser::get_opaque_data_version() const {
 std::ostream& operator<<(std::ostream& os, const GpuOpaqueDataParser& parser) {
     os << "--- Parsed GPU Opaque Data ---";
     for (const auto& pair : parser.get_all_fields()) {
-        const auto& type = pair.first;
+        const auto& type_id = pair.first;
         const auto& field = pair.second;
-        os << "\n" << to_string(type) << " (" << to_string(field.get_type()) << "): ";
+        os << "\n" << to_string(static_cast<GpuOpaqueDataType>(type_id)) << " (id=0x" << to_hex_string(type_id)
+           << ", " << to_string(field.get_type())
+           << ", value_type=0x" << to_hex_string(field.get_value_type()) << "): ";
 
         switch (field.get_type()) {
             case GpuParsedFieldType::BYTE_VECTOR: {

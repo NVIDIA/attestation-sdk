@@ -80,6 +80,15 @@ enum class LogLevel {
             get_logger()->log(LogLevel::ERROR, stream.str(), __FILE__, __FUNCTION__, __LINE__); \
         } \
     } while (false)
+// Dynamic-level variant: pass a LogLevel variable to select the level at runtime.
+#define LOG_AT_LEVEL(lvl, message) \
+    do { \
+        if (get_logger()->should_log((lvl), __FILE__, __FUNCTION__, __LINE__)) { \
+            std::stringstream stream; \
+            stream << message; \
+            get_logger()->log((lvl), stream.str(), __FILE__, __FUNCTION__, __LINE__); \
+        } \
+    } while (false)
 
 // NOLINTEND(bugprone-macro-parentheses)
 

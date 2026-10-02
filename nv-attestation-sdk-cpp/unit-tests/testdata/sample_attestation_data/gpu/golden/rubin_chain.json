@@ -1,0 +1,41 @@
+[
+  {
+    "claims": [
+      {
+        "values": {
+          "digests": [
+            "sha-384;6qKIGBOftdZ+TRtchuRbolcXatMJ2QW573+zBxaRm9rohiTt198Ob2ceZI42wiz1"
+          ],
+          "flags": {
+            "configured": false,
+            "debug": false,
+            "immutable": true,
+            "integrity_protected": true,
+            "recovery": false,
+            "replay_protected": true,
+            "runtime_meas": true,
+            "secure": false,
+            "tcb": true
+          },
+          "raw_value": "AA==",
+          "svn": {
+            "kind": "exact",
+            "value": 1
+          },
+          "version": {
+            "value": "01"
+          }
+        }
+      }
+    ],
+    "environment": {
+      "class": {
+        "class_id": "bytes:AA==",
+        "index": 0,
+        "layer": 0,
+        "model": "GR100 A01 GSP",
+        "vendor": "NVIDIA"
+      }
+    }
+  }
+]

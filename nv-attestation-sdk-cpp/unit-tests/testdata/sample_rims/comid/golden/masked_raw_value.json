@@ -1,0 +1,20 @@
+{
+  "reference_triples": [
+    {
+      "environment": {
+        "class": {
+          "vendor": "NVIDIA"
+        }
+      },
+      "measurements": [
+        {
+          "values": {
+            "raw_value": "AQIDBA==",
+            "raw_value_mask": "//8AAA=="
+          }
+        }
+      ]
+    }
+  ],
+  "tag_id": "test-comid-masked-raw-value"
+}

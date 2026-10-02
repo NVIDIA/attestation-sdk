@@ -1,0 +1,67 @@
+{
+  "id": "uuid:00000000-0000-4000-8000-000000000004",
+  "tags": [
+    {
+      "reference_triples": [
+        {
+          "environment": {
+            "class": {
+              "class_id": "oid:2.999.1",
+              "vendor": "TestVendor"
+            }
+          },
+          "measurements": [
+            {
+              "key": 42,
+              "values": {
+                "svn": {
+                  "kind": "min",
+                  "value": 5
+                }
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "class_id": "bytes:DEADBEEF",
+              "model": "TestModel",
+              "vendor": "TestVendor"
+            }
+          },
+          "measurements": [
+            {
+              "key": "oid:2.999.2",
+              "values": {
+                "digests": [
+                  "sha-256;zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw="
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "class_id": "oid:2.999.1",
+              "vendor": "TestVendor"
+            }
+          },
+          "measurements": [
+            {
+              "key": 99,
+              "values": {
+                "svn": {
+                  "kind": "exact",
+                  "value": 1
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "tag_id": "uuid:00000000-0000-4000-8000-000000000003"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 1.2.2)
+project(nv-attestation VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
@@ -11,8 +11,14 @@ set(CMAKE_COMPILE_WARNING_AS_ERROR ON CACHE STRING
 option(BUILD_SHARED_LIBS "Default to shared libraries instead of static libraries" ON)
 option(BUILD_EXAMPLES "Whether to build executables in examples folder" OFF)
 option(BUILD_TESTING "Whether to build unit-tests" OFF)
+option(BUILD_FUZZ_TESTS "Build fuzz tests (requires clang with libFuzzer)" OFF)
 option(SANITIZER "Select a sanitizer [thread|address|undefined|leak|OFF]" OFF)
 option(ENABLE_SCCACHE "Enable sccache" OFF)
+option(ENABLE_COVERAGE "Enable LLVM source-based code coverage instrumentation" OFF)
+if(ENABLE_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+endif()
 
 if (ENABLE_SCCACHE)
     find_program(SCCACHE sccache REQUIRED)
@@ -41,7 +47,8 @@ FetchContent_Declare(
     Corrosion
     GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
     # Use a tag that has a fix for https://github.com/corrosion-rs/corrosion/issues/590
-    GIT_TAG 6be991bb34c348dfb8344be22f3606288ea5c7fd
+    GIT_TAG v0.6.1
+    GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(Corrosion)
@@ -50,6 +57,7 @@ FetchContent_Declare(
   regorus
   GIT_REPOSITORY https://github.com/microsoft/regorus.git
   GIT_TAG regorus-v0.4.0
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(regorus)
 
@@ -72,6 +80,7 @@ FetchContent_Declare(
   jwt-cpp
   GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
   GIT_TAG v0.7.1
+  GIT_SHALLOW TRUE
   EXCLUDE_FROM_ALL
 )
 
@@ -89,8 +98,142 @@ target_include_directories(own-jwt-cpp
 # but it should work with c++14 also. so disable this warning.
 target_compile_options(own-jwt-cpp INTERFACE -Wno-c++17-extensions)
 
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa EXCLUDE_FROM_ALL)
+FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.12.0 GIT_SHALLOW TRUE EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(json)
+
+FetchContent_Declare(
+  zcbor
+  GIT_REPOSITORY https://github.com/NordicSemiconductor/zcbor.git
+  GIT_TAG bd28ef9fc2abe154cb420c232910a1a9f8258114
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(zcbor)
+
+add_library(zcbor_lib STATIC
+  ${zcbor_SOURCE_DIR}/src/zcbor_decode.c
+  ${zcbor_SOURCE_DIR}/src/zcbor_encode.c
+  ${zcbor_SOURCE_DIR}/src/zcbor_common.c
+  ${zcbor_SOURCE_DIR}/src/zcbor_print.c
+)
+target_include_directories(zcbor_lib PUBLIC ${zcbor_SOURCE_DIR}/include)
+set_target_properties(zcbor_lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ZCBOR_MAP_SMART_SEARCH changes the layout of zcbor_state_t, so the runtime and
+# the generated decoders must agree. nvat links zcbor via TARGET_FILE, which does
+# not propagate usage requirements, so both targets read this list.
+# RFC 9052 §9 requires definite-length encoding for Sig_structure.
+set(ZCBOR_ABI_DEFINITIONS ZCBOR_CANONICAL ZCBOR_MAP_SMART_SEARCH)
+target_compile_definitions(zcbor_lib PUBLIC ${ZCBOR_ABI_DEFINITIONS})
+
+# Override zcbor's logging to use our spdlog bridge
+target_compile_definitions(zcbor_lib PRIVATE ZCBOR_PRINT_FUNC=nvat_zcbor_log)
+
+target_compile_options(zcbor_lib PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/include/zcbor_logger.h)
+
+# ZCBOR_VERBOSE only in Debug-without-sanitizer; trace macros do unchecked OOB reads.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (NOT SANITIZER OR SANITIZER STREQUAL "OFF"))
+  target_compile_definitions(zcbor_lib PRIVATE ZCBOR_VERBOSE)
+endif()
+
+# Pre-generated zcbor decoder sources are committed under generated/ to remove the
+# Python/zcbor-CLI build dependency.  Set REGENERATE_ZCBOR=ON to re-run codegen
+# from the CDDL sources (requires the zcbor venv; see requirements-dev.txt).
+option(REGENERATE_ZCBOR "Regenerate zcbor decoder sources from CDDL files (requires zcbor CLI)" OFF)
+
+if(REGENERATE_ZCBOR)
+    # Ensure the venv exists at configure time so find_program() below picks
+    # up the pinned zcbor CLI rather than failing on a missing binary.
+    execute_process(
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/setup-venv.sh
+        RESULT_VARIABLE _setup_venv_rc
+    )
+    if(NOT _setup_venv_rc EQUAL 0)
+        message(FATAL_ERROR "scripts/setup-venv.sh failed (exit ${_setup_venv_rc}); cannot enable REGENERATE_ZCBOR")
+    endif()
+    list(PREPEND CMAKE_PROGRAM_PATH "${CMAKE_CURRENT_SOURCE_DIR}/venv/bin")
+endif()
+
+set(CDDL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/cddl)
+set(GENERATED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/generated)
+set(LICENSE_HEADER ${CDDL_DIR}/license_header.txt)
+
+if(REGENERATE_ZCBOR)
+    find_program(ZCBOR_EXE zcbor REQUIRED HINTS ENV PATH)
+    message(STATUS "REGENERATE_ZCBOR=ON: regenerating zcbor decoders via ${ZCBOR_EXE}")
+    file(REMOVE_RECURSE ${GENERATED_DIR})
+    file(MAKE_DIRECTORY ${GENERATED_DIR})
+else()
+    message(STATUS "REGENERATE_ZCBOR=OFF: using committed generated sources in generated/")
+endif()
+
+file(GLOB CDDL_FILES "${CDDL_DIR}/*.cddl")
+
+foreach(cddl_file ${CDDL_FILES})
+    get_filename_component(cddl_name ${cddl_file} NAME_WE)
+
+    # coev.cddl and eat.cddl are co-generated with corim.cddl in a single
+    # zcbor invocation (see the corim branch below) so all parsers share one
+    # type pack and avoid ODR conflicts on the generated struct types. They do
+    # not produce their own *_decode files.
+    if(cddl_name STREQUAL "coev" OR cddl_name STREQUAL "eat")
+        continue()
+    endif()
+
+    set(gen_c ${GENERATED_DIR}/${cddl_name}_decode.c)
+    set(gen_h ${GENERATED_DIR}/${cddl_name}_decode.h)
+    set(gen_types_h ${GENERATED_DIR}/${cddl_name}_decode_types.h)
+
+    if(REGENERATE_ZCBOR)
+        if(cddl_name STREQUAL "cose")
+            set(entry_types "COSE_Sign1_Tagged")
+            set(zcbor_cddl_args "-c" "${cddl_file}")
+        elseif(cddl_name STREQUAL "corim")
+            # Combined CoRIM + CoEV codegen. coev.cddl references CoRIM types
+            # (environment-map, measurement-map, corim-locator-map, ...) and
+            # vice versa (CoEV's spdm-indirect-map is declared in corim.cddl
+            # so measurement-values-map can carry it). zcbor unions the two
+            # vocabularies into one shared type pack.
+            set(entry_types "corim" "tagged-unsigned-corim-map" "concise-mid-tag"
+                            "tagged-spdm-toc" "concise-evidence" "eat-claims-map")
+            set(zcbor_cddl_args "-c" "${cddl_file}" "-c" "${CDDL_DIR}/coev.cddl"
+                                "-c" "${CDDL_DIR}/eat.cddl")
+        else()
+            set(entry_types "${cddl_name}")
+            set(zcbor_cddl_args "-c" "${cddl_file}")
+        endif()
+
+        add_custom_command(
+            OUTPUT ${gen_c} ${gen_h} ${gen_types_h}
+            COMMAND ${ZCBOR_EXE} code
+                --decode
+                --default-max-qty 10
+                --file-header ${LICENSE_HEADER}
+                --unordered-maps
+                ${zcbor_cddl_args}
+                -t ${entry_types}
+                --oc ${gen_c}
+                --oh ${gen_h}
+            DEPENDS ${cddl_file} ${LICENSE_HEADER} ${CDDL_DIR}/corim.cddl ${CDDL_DIR}/coev.cddl ${CDDL_DIR}/eat.cddl
+            COMMENT "Generating ${cddl_name} decoder with zcbor (entry types: ${entry_types})"
+        )
+    endif()
+
+    list(APPEND GENERATED_SOURCES ${gen_c})
+    list(APPEND GENERATED_HEADERS ${gen_h} ${gen_types_h})
+endforeach()
+
+
+set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/include/zcbor_logger.h;-Wno-type-limits"
+)
+
+if(NOT REGENERATE_ZCBOR)
+    # Generated sources are committed; track CDDL files so CMake recompiles if
+    # they diverge.  Actual regeneration requires -DREGENERATE_ZCBOR=ON.
+    set_source_files_properties(${GENERATED_SOURCES} PROPERTIES
+        OBJECT_DEPENDS "${CDDL_FILES};${LICENSE_HEADER}"
+    )
+endif()
 
 # Build fmt and spdlog as static libraries with PIC (needed for linking into shared libs)
 # Save current settings
@@ -107,6 +250,7 @@ FetchContent_Declare(
   fmt
   GIT_REPOSITORY https://github.com/fmtlib/fmt.git
   GIT_TAG 10.2.1
+  GIT_SHALLOW TRUE
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(fmt)
@@ -119,6 +263,7 @@ FetchContent_Declare(
   spdlog
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG v1.14.1
+  GIT_SHALLOW TRUE
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(spdlog)
@@ -126,6 +271,11 @@ FetchContent_MakeAvailable(spdlog)
 # Restore original settings
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
+
+find_package(ZLIB REQUIRED)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/nvat_parallelism.cmake)
+nvat_resolve_build_jobs(NVAT_BUILD_JOBS)
 
 option(USE_SYSTEM_DEPS "Use system-installed OpenSSL, curl, and xmlsec instead of building from source" OFF)
 
@@ -175,15 +325,21 @@ if(USE_SYSTEM_DEPS)
 else()
   # Build dependencies from source (production builds, RHEL8 compat)
 
-  set(_EP_CC "${CMAKE_C_COMPILER}")
+  # The ExternalProjects build via their own Configure/make, so they don't pick up
+  # CMAKE_*_COMPILER_LAUNCHER; route them through sccache by prefixing CC instead.
+  if(ENABLE_SCCACHE)
+    set(_EP_CC "${SCCACHE} ${CMAKE_C_COMPILER}")
+  else()
+    set(_EP_CC "${CMAKE_C_COMPILER}")
+  endif()
   set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
 
   # Build OpenSSL statically — RHEL8 ships 1.1.1 but the code needs 3.x APIs
   set(OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/openssl-install")
 
   ExternalProject_Add(openssl_external
-    URL https://github.com/openssl/openssl/releases/download/openssl-3.6.1/openssl-3.6.1.tar.gz
-    URL_HASH SHA256=b1bfedcd5b289ff22aee87c9d600f515767ebf45f77168cb6d64f231f518a82e
+    URL https://github.com/openssl/openssl/releases/download/openssl-3.6.4/openssl-3.6.4.tar.gz
+    URL_HASH SHA256=9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef
     CONFIGURE_COMMAND <SOURCE_DIR>/Configure
       "CC=${_EP_CC}"
       "CFLAGS=${_EP_CFLAGS}"
@@ -197,7 +353,7 @@ else()
       no-legacy     # Disable legacy provider (MD2, RC4, DES, etc.)
       no-engine     # Disable deprecated ENGINE API — unused with static linking
       no-dtls       # Disable DTLS — SDK uses TLS only, not UDP-based DTLS
-    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
     INSTALL_COMMAND make install_sw install_ssldirs
     BUILD_IN_SOURCE 1
   )
@@ -219,11 +375,42 @@ else()
     INTERFACE_LINK_LIBRARIES "OpenSSL::Crypto"
   )
 
-  # Build xmlsec 1.2.39 statically (depends on OpenSSL 3)
+  # Build libxml2 statically — avoids DT_VERNEED/DT_VERDEF mismatch on Ubuntu 26.04+
+  set(LIBXML2_INSTALL_DIR "${CMAKE_BINARY_DIR}/libxml2-install")
+
+  ExternalProject_Add(libxml2_external
+    URL https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz
+    URL_HASH SHA256=98087fd181d9070724f3fbc65c7377db03038eb92bd882374daff44940138821
+    CONFIGURE_COMMAND <SOURCE_DIR>/configure
+      --prefix=${LIBXML2_INSTALL_DIR}
+      --disable-shared
+      --enable-static
+      --without-python
+      --without-lzma
+      --with-zlib
+      "CC=${_EP_CC}"
+      "CFLAGS=${_EP_CFLAGS}"
+    BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
+    INSTALL_COMMAND make install
+    BUILD_IN_SOURCE 1
+  )
+
+  set(LIBXML2_INCLUDE_DIR "${LIBXML2_INSTALL_DIR}/include/libxml2")
+  file(MAKE_DIRECTORY "${LIBXML2_INCLUDE_DIR}")
+
+  add_library(LibXml2::LibXml2 STATIC IMPORTED)
+  set_target_properties(LibXml2::LibXml2 PROPERTIES
+    IMPORTED_LOCATION "${LIBXML2_INSTALL_DIR}/lib/libxml2.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${LIBXML2_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "ZLIB::ZLIB"
+  )
+  add_dependencies(LibXml2::LibXml2 libxml2_external)
+
+  # Build xmlsec 1.2.39 statically (depends on OpenSSL 3 and libxml2)
   set(XMLSEC_INSTALL_DIR "${CMAKE_BINARY_DIR}/xmlsec-install")
 
   ExternalProject_Add(xmlsec_external
-    DEPENDS openssl_external
+    DEPENDS openssl_external libxml2_external
     URL https://github.com/lsh123/xmlsec/releases/download/xmlsec-1_2_39/xmlsec1-1.2.39.tar.gz
     URL_HASH SHA256=15f2f55ea5968e578fcd24b3b427e553876c86c147dc7f03923e98fc2768a1fa
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
@@ -232,6 +419,7 @@ else()
       --enable-static
       --disable-crypto-dl
       --with-openssl=${OPENSSL_INSTALL_DIR}
+      --with-libxml=${LIBXML2_INSTALL_DIR}
       --without-gnutls
       --without-nss
       --without-gcrypt
@@ -240,8 +428,8 @@ else()
       --disable-apps
       "CC=${_EP_CC}"
       "CFLAGS=${_EP_CFLAGS}"
-      "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
-    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+      "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig:${LIBXML2_INSTALL_DIR}/lib/pkgconfig"
+    BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
     INSTALL_COMMAND make install
     BUILD_IN_SOURCE 1
   )
@@ -253,8 +441,8 @@ else()
 
   ExternalProject_Add(curl_external
     DEPENDS openssl_external
-    URL https://github.com/curl/curl/releases/download/curl-7_88_1/curl-7.88.1.tar.gz
-    URL_HASH SHA256=cdb38b72e36bc5d33d5b8810f8018ece1baa29a8f215b4495e495ded82bbf3c7
+    URL https://github.com/curl/curl/releases/download/curl-8_22_0/curl-8.22.0.tar.gz
+    URL_HASH SHA256=d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
       --prefix=${CURL_INSTALL_DIR}
       --with-openssl=${OPENSSL_INSTALL_DIR}
@@ -271,7 +459,7 @@ else()
       "CC=${_EP_CC}"
       "CFLAGS=${_EP_CFLAGS}"
       "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
-    BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+    BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
     INSTALL_COMMAND make install
     BUILD_IN_SOURCE 1
   )
@@ -286,12 +474,9 @@ else()
     INTERFACE_LINK_LIBRARIES "OpenSSL::SSL;OpenSSL::Crypto;z;pthread"
   )
 
-  find_package(LibXml2 REQUIRED)
   find_package(xmlsec REQUIRED)
 
 endif() # USE_SYSTEM_DEPS
-
-find_package(ZLIB REQUIRED)
 
 add_compile_options(-Wall -Wextra -Wpedantic -pedantic)
 if (CMAKE_VERSION VERSION_LESS 3.24.0 AND CMAKE_COMPILE_WARNING_AS_ERROR)
@@ -306,9 +491,13 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR (SANITIZER AND NOT SANITIZER STREQUAL "O
   add_compile_options(-g3 -O0 -fno-omit-frame-pointer)
 endif()
 
-# Make __FILE__ relative to source directory for logging
+# Make __FILE__ relative to source directory for cleaner log output.
+# Uses -fmacro-prefix-map (not -ffile-prefix-map) so that only preprocessor
+# macros (__FILE__, __builtin_FILE()) are remapped. Debug info and coverage
+# mapping paths are left intact — required for llvm-cov / SonarQube.
+# Ref: https://clang.llvm.org/docs/ClangCommandLineReference.html
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}/src/=)
+    add_compile_options(-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/src/=)
 endif()
 
 configure_file("include/nvat.h.in" "include/nvat.h")
@@ -318,7 +507,22 @@ add_library(nvat
   src/attestation.cpp
   src/claims.cpp
   src/claims_evaluator.cpp
+  src/cmw.cpp
+  src/corim.cpp
+  src/corim_evidence/coev.cpp
+  src/corim_evidence/coev_to_ect.cpp
+  src/corim_evidence/eat_to_ect.cpp
+  src/corim_evidence/corim_store.cpp
+  src/corim_evidence/eat.cpp
+  src/corim_evidence/eat_cwt.cpp
+  src/corim_evidence/evidence_handler.cpp
+  src/corim_verify.cpp
+  src/ear_mapper.cpp
+  src/corim_evidence/dice_tcb_info_to_ect.cpp
+  src/cose.cpp
+  ${GENERATED_SOURCES}
   src/gpu/evidence.cpp
+  src/gpu/blackwell_fsp.cpp
   src/gpu/claims.cpp
   src/gpu/nvml_client.cpp
   src/gpu/corelib_client.cpp
@@ -344,6 +548,8 @@ add_library(nvat
   src/nv_ocsp.cpp
   src/utils.cpp
   src/nv_cache.cpp
+  src/dice_tcb_info.cpp
+  src/zcbor_logger.cpp
 )
 
 set(NV_ATTESTATION_SOVERSION ${PROJECT_VERSION_MAJOR})
@@ -360,9 +566,22 @@ target_include_directories(nvat
     src
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     ${regorus_SOURCE_DIR}/bindings/ffi
-    # spdlog and fmt include dirs (linked statically via TARGET_FILE below)
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
+    ${zcbor_SOURCE_DIR}/include
+    ${GENERATED_DIR}
+)
+
+# Apply zcbor logger override to generated decoder sources
+target_compile_definitions(nvat PRIVATE ZCBOR_PRINT_FUNC=nvat_zcbor_log ${ZCBOR_ABI_DEFINITIONS})
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (NOT SANITIZER OR SANITIZER STREQUAL "OFF"))
+  target_compile_definitions(nvat PRIVATE ZCBOR_VERBOSE)
+endif()
+
+# Suppress anonymous-struct warnings from generated zcbor headers.
+set_source_files_properties(src/corim.cpp src/cose.cpp src/corim_evidence/coev.cpp src/corim_evidence/eat.cpp src/corim_evidence/eat_cwt.cpp src/corim_verify.cpp PROPERTIES COMPILE_OPTIONS
+    "$<$<CXX_COMPILER_ID:GNU>:-Wno-pedantic>;$<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-gnu-anonymous-struct;-Wno-nested-anon-types>"
 )
 
 if (SANITIZER)
@@ -380,6 +599,11 @@ if (BUILD_TESTING)
   message("-- Building with tests")
   enable_testing()
   add_subdirectory(unit-tests)
+endif()
+
+if (BUILD_FUZZ_TESTS)
+  message("-- Building fuzz tests")
+  add_subdirectory(fuzz-tests)
 endif()
 
 #todo: how to handle cases where client links against the same
@@ -405,13 +629,14 @@ target_link_libraries(nvat
     # a target dependency that CMake would try to export
     $<TARGET_FILE:spdlog>
     $<TARGET_FILE:fmt>
+    $<TARGET_FILE:zcbor_lib>
     own-jwt-cpp
     nlohmann_json::nlohmann_json
     regorus_ffi
 )
 
 # Ensure dependencies are built before nvat
-add_dependencies(nvat regorus_ffi spdlog fmt curl_external xmlsec_external openssl_external)
+add_dependencies(nvat regorus_ffi spdlog fmt curl_external xmlsec_external openssl_external zcbor_lib)
 
 # todo (p0): remove cmake configuration helpers
 install(TARGETS nvat

@@ -16,8 +16,72 @@
  */
 
 #include "test_utils.h"
+
+#include <cstdlib>
+#include <iostream>
+#include <sstream>
+
 #include "nv_attestation/gpu/claims.h"
 #include "nv_attestation/claims.h"
+
+namespace {
+
+std::string render_value(const nlohmann::json& v) {
+    if (v.is_object()) {
+        return "<object with " + std::to_string(v.size()) + " field(s)>";
+    }
+    if (v.is_array()) {
+        return "<array of " + std::to_string(v.size()) + ">";
+    }
+    return v.dump();
+}
+
+std::string format_diff(const nlohmann::json& patch, const nlohmann::json& expected) {
+    std::ostringstream out;
+    out << patch.size() << " mismatch(es) between actual and golden:\n";
+    for (const auto& op : patch) {
+        const std::string kind = op.at("op").get<std::string>();
+        const std::string path = op.at("path").get<std::string>();
+        const std::string display_path = path.empty() ? "<root>" : path;
+        if (kind == "replace") {
+            auto exp = expected.at(nlohmann::json::json_pointer(path));
+            out << "  changed value at " << display_path << "\n"
+                << "      golden: " << render_value(exp) << "\n"
+                << "      actual: " << render_value(op.at("value")) << "\n";
+        } else if (kind == "add") {
+            out << "  actual has extra field at " << display_path
+                << " = " << render_value(op.at("value")) << "\n";
+        } else if (kind == "remove") {
+            auto exp = expected.at(nlohmann::json::json_pointer(path));
+            out << "  actual is missing field at " << display_path
+                << " (golden had: " << render_value(exp) << ")\n";
+        } else {
+            out << "  " << kind << " at " << display_path << "\n";
+        }
+    }
+    return out.str();
+}
+
+} // namespace
+
+void compare_to_golden(const nlohmann::json& actual, const std::string& golden_path) {
+    if (std::getenv("REGEN_GOLDENS") != nullptr) {
+        std::ofstream out(golden_path);
+        ASSERT_TRUE(out.is_open()) << "Cannot open golden for write: " << golden_path;
+        out << actual.dump(2) << "\n";
+        std::cerr << "REGEN: wrote " << golden_path << std::endl;
+        return;
+    }
+    std::ifstream in(golden_path);
+    ASSERT_TRUE(in.is_open())
+        << "Missing golden: " << golden_path << " (run with REGEN_GOLDENS=1)";
+    nlohmann::json expected;
+    in >> expected;
+    auto patch = nlohmann::json::diff(expected, actual);
+    EXPECT_TRUE(patch.empty())
+        << "Golden mismatch for '" << golden_path << "':\n"
+        << format_diff(patch, expected);
+}
 
 // Default constructor implementation with Hopper GPU data
 MockGpuEvidenceData::MockGpuEvidenceData()
@@ -99,6 +163,21 @@ MockGpuEvidenceData MockGpuEvidenceData::create_blackwell_scenario() {
         "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb",
         "testdata/sample_attestation_data/gpu/blackwellAttestationReport.txt",
         "testdata/sample_attestation_data/gpu/blackwellCertChain.txt"
+    );
+}
+
+MockGpuEvidenceData MockGpuEvidenceData::create_rubin_scenario() {
+    // Placeholder vbios/driver/nonce — overwrite when real Rubin fixtures land in
+    // testdata/sample_attestation_data/gpu/rubin*.txt.
+    return MockGpuEvidenceData(
+        GpuArchitecture::Rubin,
+        11111,
+        "GPU-11111111-2222-3333-4444-555555555555",
+        "00.00.00.00.00",
+        "0.00",
+        "931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb",
+        "testdata/sample_attestation_data/gpu/rubinAttestationReport.txt",
+        "testdata/sample_attestation_data/gpu/rubinCertChain.txt"
     );
 }
 

@@ -1,0 +1,17 @@
+/ evidence-triples (key 0) is present, but its only evidence-triple-record /
+/ omits the mandatory measurement-map list, leaving a 1-element array.      /
+/ zcbor backtracks the whole member and the `* int => any` extension entry  /
+/ swallows key 0, so ev-triples-map decodes as if it were empty. The parser /
+/ must report a malformed member rather than an absent one.                 /
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+        }
+        / mandatory [ 1*50 measurement-map ] omitted here /
+      ]
+    ]
+  }
+})
