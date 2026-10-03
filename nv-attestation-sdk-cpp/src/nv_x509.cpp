@@ -307,6 +307,12 @@ Error X509CertChain::verify_signature_pkcs11(
 }
 
 Error X509CertChain::verify() const {
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    return verify(verified_path);
+}
+
+Error X509CertChain::verify(std::vector<nv_unique_ptr<X509>>& out_verified_path) const {
+    out_verified_path.clear();
     // ref: https://docs.openssl.org/3.0/man1/openssl-verification-options/#certification-path-building
     // verification involves setting up the untrusted certs, the trust anchor, and then calling X509_verify_cert
     // with the target cert to be verified. the function will build a chain of certs from the target cert
@@ -365,7 +371,38 @@ Error X509CertChain::verify() const {
                 << X509_verify_cert_error_string(err));
         return Error::CertChainVerificationFailure;
     } 
-    
+
+    // OpenSSL builds its own path from the untrusted pool and ignores
+    // certificates it does not need. Revocation coverage must follow the
+    // path that was verified, so the presented chain has to be exactly that
+    // path: same length, same order, byte-identical certificates.
+    STACK_OF(X509)* verified_chain = X509_STORE_CTX_get0_chain(ctx.get());
+    if (verified_chain == nullptr) {
+        LOG_ERROR("Certificate chain verification returned no verified path");
+        return Error::CertChainVerificationFailure;
+    }
+    int verified_count = sk_X509_num(verified_chain);
+    if (verified_count < 0 || static_cast<size_t>(verified_count) != m_certs.size()) {
+        LOG_ERROR("Presented certificate chain does not equal the verified path: presented "
+                << m_certs.size() << " certificates, verified " << verified_count);
+        return Error::CertChainVerificationFailure;
+    }
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    verified_path.reserve(m_certs.size());
+    for (int i = 0; i < verified_count; i++) {
+        X509* verified_cert = sk_X509_value(verified_chain, i);
+        if (verified_cert == nullptr || m_certs[i] == nullptr || X509_cmp(verified_cert, m_certs[i].get()) != 0) {
+            LOG_ERROR("Presented certificate chain does not equal the verified path at index " << i);
+            return Error::CertChainVerificationFailure;
+        }
+        // The verified stack is owned by ctx; keep our own reference.
+        if (X509_up_ref(verified_cert) != 1) {
+            LOG_ERROR("Unable to retain verified certificate: " << get_openssl_error());
+            return Error::InternalError;
+        }
+        verified_path.emplace_back(verified_cert);
+    }
+    out_verified_path = std::move(verified_path);
     return Error::Ok;
 }
 
@@ -445,13 +482,14 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
         out_cert_chain_claims.status = CertChainStatus::VALID;
     }
 
-    error = verify();
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    error = verify(verified_path);
     if (error != Error::Ok) {
         return error;
     }
 
     OCSPClaims ocsp_claims;
-    error = generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
+    error = generate_ocsp_claims_for_path(verified_path, ocsp_client, ocsp_claims);
     if (error != Error::Ok) {
         return error;
     }
@@ -462,7 +500,18 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
 }
 
 
-Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const { // NOLINT(readability-function-cognitive-complexity)
+Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const {
+    (void)ocsp_verify_options;
+    // Coverage always comes from the verified path, whoever the caller is.
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    Error error = verify(verified_path);
+    if (error != Error::Ok) {
+        return error;
+    }
+    return generate_ocsp_claims_for_path(verified_path, ocsp_client, out_ocsp_claims);
+}
+
+Error X509CertChain::generate_ocsp_claims_for_path(const std::vector<nv_unique_ptr<X509>>& verified_path, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const { // NOLINT(readability-function-cognitive-complexity)
     LOG_DEBUG("Generating OCSP claims");
 
     // Use the member trust store
@@ -489,21 +538,21 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
     // Loop from the certificate just before the root, down to the start_indx.
     // The subject_idx refers to the certificate being checked for revocation.
     // The issuer_idx refers to the issuer of subject_idx's certificate.
-    for(int subject_idx = (int)m_certs.size() - 2; subject_idx >= start_indx; --subject_idx) {
-        LOG_DEBUG("Processing cert: subject_idx" << subject_idx << ". " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+    for(int subject_idx = (int)verified_path.size() - 2; subject_idx >= start_indx; --subject_idx) {
+        LOG_DEBUG("Processing cert: subject_idx" << subject_idx << ". " << get_cert_subject_issuer_str(verified_path[subject_idx].get()));
         int issuer_idx = subject_idx + 1;
 
         // The intermediate_certs stack for OCSP_basic_verify is ocsp_verify_intermediates,
         // which is built incrementally across iterations.
 
         NvOcspResponse ocsp_resp;
-        Error error = ocsp_client.get_ocsp_response(m_certs[subject_idx], m_certs[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
+        Error error = ocsp_client.get_ocsp_response(verified_path[subject_idx], verified_path[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
         if (error != Error::Ok) {
             return error;
         }
 
         if (!ocsp_resp.response_valid) {
-            LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+            LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(verified_path[subject_idx].get()));
         }
         // response is invalid if its invalid for any cert in the chain
         if (!claims_initialized) {
@@ -519,10 +568,10 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
             out_ocsp_claims.nonce_matches = out_ocsp_claims.nonce_matches && ocsp_resp.nonce_matches;
         }
         if (!ocsp_resp.nonce_matches) {
-            LOG_WARN("OCSP nonce mismatch for cert: " << subject_idx << ": " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+            LOG_WARN("OCSP nonce mismatch for cert: " << subject_idx << ": " << get_cert_subject_issuer_str(verified_path[subject_idx].get()));
         }
 
-        LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
+        LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(verified_path[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
         OCSPStatus mapped_status = OCSPStatus::UNDEFINED;
         switch(ocsp_resp.status) {
             case V_OCSP_CERTSTATUS_REVOKED:
@@ -551,6 +600,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
             }
         }
 
+
         LOG_DEBUG("Generating expiration time claim");
         // The OCSP response expiration time is for this specific response.
         // We should take the minimum expiration time of all OCSP responses in the chain.
@@ -559,9 +609,9 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
         }
         
         // Prepare intermediates for the next iteration (which will process subject_idx-1).
-        // The current m_certs[subject_idx] becomes an intermediate for the next subject.
-        // sk_X509_insert does not increment ref count, which is fine as m_certs owns X509.
-        if (sk_X509_insert(ocsp_verify_intermediates.get(), m_certs[subject_idx].get(), 0) <= 0) {
+        // The current verified_path[subject_idx] becomes an intermediate for the next subject.
+        // sk_X509_insert does not increment ref count, which is fine as verified_path owns X509.
+        if (sk_X509_insert(ocsp_verify_intermediates.get(), verified_path[subject_idx].get(), 0) <= 0) {
             LOG_ERROR("Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
             return Error::InternalError;
         }
