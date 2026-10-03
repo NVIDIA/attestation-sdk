@@ -72,6 +72,7 @@ add_executable(nv-attestation-unit-tests
     nv_http_test.cpp
     claims_test.cpp
     nv_cache_test.cpp
+    verified_path_test.cpp
 ) 
 
 target_include_directories(nv-attestation-unit-tests PRIVATE 

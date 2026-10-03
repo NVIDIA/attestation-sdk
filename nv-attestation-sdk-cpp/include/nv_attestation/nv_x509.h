@@ -157,6 +157,7 @@ class X509CertChain{
         static const size_t m_fwid_hash_length = 48;
         // Private constructor
         static Error get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_data, unsigned int length, std::vector<uint8_t>& out_fwid);
+        Error generate_ocsp_claims_for_path(const std::vector<nv_unique_ptr<X509>>& verified_path, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const;
 
     public:
         static const std::string kFwidOid;
@@ -171,6 +172,15 @@ class X509CertChain{
         Error push_back(const std::string &cert_string);
         
         Error verify() const;
+        /**
+         * @brief Verifies the chain and returns the path OpenSSL verified.
+         *
+         * The presented certificates must equal the verified path
+         * exactly, in order, with no extra, missing or duplicate entries.
+         * Revocation coverage is derived from this path, never from the
+         * order in which certificates were presented.
+         */
+        Error verify(std::vector<nv_unique_ptr<X509>>& out_verified_path) const;
         Error generate_cert_chain_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, CertChainClaims& out_cert_chain_claims) const;
         Error generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const;
         

@@ -240,10 +240,22 @@ TEST_F(X509CertChainVerifyTest, ExpiredCertificatePassesVerification) {
     
     error = cert_chain.push_back(m_leaf_cert_expired_pem_str);
     ASSERT_EQ(error, Error::Ok) << "push_back failed for expired leaf cert: " << to_string(error);
-    ASSERT_EQ(cert_chain.size(), 1);
+    // The presented chain must be the whole verified path, root included.
+    error = cert_chain.push_back(m_root_cert_pem_str);
+    ASSERT_EQ(error, Error::Ok) << "push_back failed for root cert: " << to_string(error);
+    ASSERT_EQ(cert_chain.size(), 2);
 
     error = cert_chain.verify();
     EXPECT_EQ(error, Error::Ok) << "Expired certificate should pass verification when time checks are disabled.";
+}
+
+TEST_F(X509CertChainVerifyTest, ChainWithoutItsRootIsNotTheVerifiedPath) {
+    X509CertChain cert_chain;
+    Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, m_root_cert_pem_str, cert_chain);
+    ASSERT_EQ(error, Error::Ok);
+    ASSERT_EQ(cert_chain.push_back(m_leaf_cert_expired_pem_str), Error::Ok);
+
+    EXPECT_EQ(cert_chain.verify(), Error::CertChainVerificationFailure);
 }
 
 TEST_F(X509CertChainVerifyTest, MinExpirationTime) {
