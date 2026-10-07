@@ -20,7 +20,10 @@ RUN case "$TARGETARCH" in \
     esac
 
 COPY dev/install-deps.sh .
+COPY nv-attestation-sdk-cpp/scripts/setup-venv.sh nv-attestation-sdk-cpp/scripts/setup-venv.sh
+COPY nv-attestation-sdk-cpp/requirements-dev.txt nv-attestation-sdk-cpp/requirements-dev.txt
 RUN  ./install-deps.sh && rm install-deps.sh
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN apt-get install -y vim strace
 

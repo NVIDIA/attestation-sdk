@@ -23,29 +23,35 @@
 use crate::*;
 use std::sync::LazyLock;
 
-// Global SDK client - initialized once and kept alive for all tests
-static SDK_CLIENT: LazyLock<NvatSdk> = LazyLock::new(|| {
+// Initialize the process-global SDK once and keep it alive for all tests.
+static SDK_INIT: LazyLock<()> = LazyLock::new(|| {
     // Initialize env_logger for tests (only once)
     let _ = env_logger::builder().is_test(true).try_init();
 
-    #[cfg(feature = "logging")]
-    {
-        let mut opts = SdkOptions::new().expect("Failed to create SDK options for tests");
-        let logger = Logger::new().expect("Failed to create logger for tests");
-        opts.set_logger(logger);
-        NvatSdk::init(opts).expect("Failed to initialize SDK for tests")
-    }
-    #[cfg(not(feature = "logging"))]
-    {
-        let opts = SdkOptions::new().expect("Failed to create SDK options for tests");
-        NvatSdk::init(opts).expect("Failed to initialize SDK for tests")
-    }
+    let sdk = {
+        #[cfg(feature = "logging")]
+        {
+            let mut opts = SdkOptions::new().expect("Failed to create SDK options for tests");
+            let logger = Logger::new().expect("Failed to create logger for tests");
+            opts.set_logger(logger);
+            NvatSdk::init(opts).expect("Failed to initialize SDK for tests")
+        }
+        #[cfg(not(feature = "logging"))]
+        {
+            let opts = SdkOptions::new().expect("Failed to create SDK options for tests");
+            NvatSdk::init(opts).expect("Failed to initialize SDK for tests")
+        }
+    };
+
+    // The SDK is a process-global C lifecycle guard and is intentionally not
+    // Send/Sync. Keep it initialized for the whole test process.
+    std::mem::forget(sdk);
 });
 
 /// Initialize the SDK for tests. This is called once per test process.
 fn init_sdk() {
     // Force initialization of the lazy static
-    let _ = &*SDK_CLIENT;
+    let _ = &*SDK_INIT;
 }
 
 // ========================================================================
@@ -292,6 +298,23 @@ fn test_http_options_with_zero_values() {
     drop(opts);
 }
 
+#[test]
+fn test_http_options_tls_paths_reject_nul_bytes() {
+    init_sdk();
+    let mut opts = HttpOptions::default_options().unwrap();
+
+    let cert_err = opts.set_tls_ca_cert("bad\0cert").unwrap_err();
+    assert_eq!(cert_err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    let path_err = opts.set_tls_ca_path("bad\0path").unwrap_err();
+    assert_eq!(path_err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    match HttpOptions::builder().tls_ca_cert("bad\0cert").build() {
+        Ok(_) => panic!("builder should reject TLS CA cert paths with NUL bytes"),
+        Err(err) => assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16),
+    }
+}
+
 // ========================================================================
 // Logger Tests
 // ========================================================================
@@ -315,6 +338,17 @@ fn test_sdk_version() {
     assert!(!version.is_empty(), "SDK version should not be empty");
     // Version format is typically "X.Y.Z"
     assert!(version.contains('.'), "Version should contain dots");
+}
+
+#[test]
+fn test_sdk_rejects_second_lifecycle_guard() {
+    init_sdk();
+    let opts = SdkOptions::new().expect("SDK options creation should succeed");
+
+    match NvatSdk::init(opts) {
+        Ok(_) => panic!("SDK should reject a second live lifecycle guard"),
+        Err(err) => assert_eq!(err.code, NVAT_RC_INTERNAL_ERROR as u16),
+    }
 }
 
 // ========================================================================
@@ -653,6 +687,78 @@ fn test_evidence_policy_creation() {
     init_sdk();
     let policy = EvidencePolicy::default_policy();
     assert!(policy.is_ok(), "Evidence policy creation should succeed");
+}
+
+// Base64 body of a throwaway P-384 key used only by the tests below. Stored
+// without the PEM header/footer and wrapped at runtime by `test_p384_key_pem`
+// so no private-key literal lives in the source tree.
+const TEST_P384_KEY_BODY: &str =
+    "MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDCgCOkdAShYu3QRWN/H\n\
+2tCQrB8sREDoFBG9QEOal566e3VtSA7/Kn1+TlsYU6i05wShZANiAAQSXta7ognb\n\
+8ZGSEdjB2Lq004CO3Yw9t2x9odMoDTsqrrIZQa4OJUqA9Cx0GVswjoMIfWzVWgBl\n\
+Bgj60rBgi5Ldpj+8xioIMZsKnnk/EvBp3ZgzdnGLudhYmmG0gvDiMXk=";
+
+fn test_p384_key_pem() -> String {
+    format!("-----BEGIN PRIVATE KEY-----\n{TEST_P384_KEY_BODY}\n-----END PRIVATE KEY-----\n")
+}
+
+#[test]
+fn test_detached_eat_options_creation() {
+    init_sdk();
+    let options =
+        DetachedEatOptions::new(&test_p384_key_pem(), "https://nras.example.com", "test-kid");
+    assert!(
+        options.is_ok(),
+        "Detached EAT options creation should succeed"
+    );
+}
+
+#[test]
+fn test_set_detached_eat_options_on_context() {
+    init_sdk();
+    let options =
+        DetachedEatOptions::new(&test_p384_key_pem(), "https://nras.example.com", "test-kid")
+            .unwrap();
+    let mut ctx = AttestationContext::new().unwrap();
+    assert!(
+        ctx.set_detached_eat_options(options).is_ok(),
+        "Setting detached EAT options on the context should succeed"
+    );
+}
+
+#[test]
+fn test_local_verifier_with_signing_options() {
+    init_sdk();
+    let http = HttpOptions::default_options().unwrap();
+    let rim = RimStore::create_remote(None, None, Some(&http)).unwrap();
+    let ocsp = OcspClient::create_default(None, None, Some(&http)).unwrap();
+    let options =
+        DetachedEatOptions::new(&test_p384_key_pem(), "https://nras.example.com", "test-kid")
+            .unwrap();
+    assert!(
+        GpuLocalVerifier::new_with_signing(&rim, &ocsp, options.clone()).is_ok(),
+        "GPU verifier with signing options should construct"
+    );
+    assert!(
+        SwitchLocalVerifier::new_with_signing(&rim, &ocsp, options).is_ok(),
+        "Switch verifier with signing options should construct"
+    );
+}
+
+#[test]
+fn test_builder_with_detached_eat_options() {
+    init_sdk();
+    let options =
+        DetachedEatOptions::new(&test_p384_key_pem(), "https://nras.example.com", "test-kid")
+            .unwrap();
+    let ctx = AttestationContext::builder()
+        .device_type(DeviceType::Gpu)
+        .detached_eat_options(options)
+        .build();
+    assert!(
+        ctx.is_ok(),
+        "Building a context with detached EAT options should succeed"
+    );
 }
 
 #[test]
@@ -1098,6 +1204,110 @@ fn test_evidence_policy_builder_debug() {
 }
 
 // ========================================================================
+// verify_attestation_result / RelyingPartyPolicy Tests
+// ========================================================================
+
+#[test]
+fn test_verify_attestation_result_rejects_empty_url() {
+    init_sdk();
+    let err = verify_attestation_result("{}", "").unwrap_err();
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+// The optional service_key threads through to the FFI without panicking; an
+// empty URL still short-circuits to BAD_ARGUMENT before any network call.
+#[test]
+fn test_verify_attestation_result_with_options_rejects_empty_url() {
+    init_sdk();
+    let mut jwt_options = JwtValidationOptions::default_options().unwrap();
+    jwt_options.set_clock_skew_leeway_seconds(300);
+    let err = verify_attestation_result_with_options(
+        "{}",
+        "",
+        Some("test-service-key"),
+        None,
+        None,
+        Some(&jwt_options),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_verify_ear_rejects_empty_verifier_url() {
+    init_sdk();
+    let error = verify_ear("header.payload.signature", "")
+        .expect_err("an empty verifier URL must be rejected");
+    assert_eq!(error.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_verify_ear_with_options_rejects_empty_verifier_url() {
+    init_sdk();
+    let mut jwt_options = JwtValidationOptions::default_options().unwrap();
+    jwt_options.set_clock_skew_leeway_seconds(300);
+
+    let error = verify_ear_with_options(
+        "header.payload.signature",
+        "",
+        Some("test-service-key"),
+        None,
+        None,
+        Some(&jwt_options),
+    )
+    .expect_err("an empty verifier URL must be rejected");
+    assert_eq!(error.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_relying_party_policy_from_rego() {
+    init_sdk();
+    let policy = RelyingPartyPolicy::from_rego("package policy\ndefault nv_match := false\n");
+    assert!(policy.is_ok(), "policy creation should succeed");
+}
+
+#[test]
+fn test_relying_party_policy_accepts_matching_ear_json() {
+    init_sdk();
+    let policy = RelyingPartyPolicy::from_rego(
+        "package policy\ndefault nv_match := false\nnv_match { input.ear_status == \"affirming\" }\n",
+    )
+    .expect("policy creation should succeed");
+
+    assert!(policy
+        .apply_to_ear_json(r#"{"ear_status":"affirming"}"#)
+        .is_ok());
+}
+
+#[test]
+fn test_relying_party_policy_rejects_nonmatching_ear_json() {
+    init_sdk();
+    let policy = RelyingPartyPolicy::from_rego(
+        "package policy\ndefault nv_match := false\nnv_match { input.ear_status == \"affirming\" }\n",
+    )
+    .expect("policy creation should succeed");
+
+    let error = policy
+        .apply_to_ear_json(r#"{"ear_status":"contraindicated"}"#)
+        .expect_err("policy should reject a nonmatching EAR");
+    assert_eq!(error.code, NVAT_RC_RP_POLICY_MISMATCH as u16);
+}
+
+#[test]
+fn test_relying_party_policy_rejects_invalid_ear_json() {
+    init_sdk();
+    let policy = RelyingPartyPolicy::from_rego("package policy\ndefault nv_match := true\n")
+        .expect("policy creation should succeed");
+
+    for ear_json in ["not-json", "[]", "{\"ear_status\":\"affirming\"}\0suffix"] {
+        let error = policy
+            .apply_to_ear_json(ear_json)
+            .expect_err("invalid EAR JSON should be rejected");
+        assert_eq!(error.code, NVAT_RC_BAD_ARGUMENT as u16);
+    }
+}
+
+// ========================================================================
 // Sanitizer Negative / Positive Tests
 // ========================================================================
 // Positive test: no leak, should PASS with sanitizer (confirms no false positives).
@@ -1167,4 +1377,818 @@ fn test_intentional_memory_leak_c_sdk() {
     std::mem::forget(opts); // Leak it - LSan should detect the C malloc
 
     println!("Intentionally leaked C SDK HttpOptions object");
+}
+
+// ---------------------------------------------------------------------------
+// AttestationResult verdict handling
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_result_from_ffi_overall_result_false_is_ok() {
+    // A negative verdict must surface as Ok so the caller can relay the
+    // SDK-signed token, rather than discarding it as an error.
+    let result = AttestationResult::from_ffi(
+        NVAT_RC_OVERALL_RESULT_FALSE as u16,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    )
+    .expect("OVERALL_RESULT_FALSE should be returned as Ok");
+
+    assert_eq!(result.result_code, NVAT_RC_OVERALL_RESULT_FALSE as u16);
+    assert!(!result.is_success(), "a false verdict is not a success");
+    assert!(result.detached_eat.is_none());
+    assert!(result.claims.is_none());
+}
+
+#[test]
+fn test_result_from_ffi_rp_policy_mismatch_is_ok() {
+    let result = AttestationResult::from_ffi(
+        NVAT_RC_RP_POLICY_MISMATCH as u16,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    )
+    .expect("RP_POLICY_MISMATCH should be returned as Ok");
+
+    assert_eq!(result.result_code, NVAT_RC_RP_POLICY_MISMATCH as u16);
+    assert!(!result.is_success());
+}
+
+#[test]
+fn test_result_from_ffi_ok_is_success() {
+    let result = AttestationResult::from_ffi(
+        NVAT_RC_OK as u16,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    )
+    .expect("OK should be returned as Ok");
+
+    assert!(result.is_success());
+    assert_eq!(result.result_code, NVAT_RC_OK as u16);
+}
+
+#[test]
+fn test_result_from_ffi_genuine_error_is_err() {
+    // A real error code must still propagate as Err and not fabricate a result.
+    match AttestationResult::from_ffi(
+        NVAT_RC_BAD_ARGUMENT as u16,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    ) {
+        Err(e) => assert_eq!(e.code, NVAT_RC_BAD_ARGUMENT as u16),
+        Ok(_) => panic!("a genuine error code must be returned as Err"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cached RIM store / OCSP client construction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ocsp_client_options_default_to_sha256() {
+    assert_eq!(
+        OcspClientOptions::default().cert_id_hash_algorithm,
+        OcspCertIdHashAlgorithm::Sha256
+    );
+}
+
+#[test]
+fn ocsp_clients_accept_every_cert_id_hash() {
+    init_sdk();
+    for algorithm in [
+        OcspCertIdHashAlgorithm::Sha1,
+        OcspCertIdHashAlgorithm::Sha256,
+        OcspCertIdHashAlgorithm::Sha384,
+    ] {
+        let options = OcspClientOptions {
+            cert_id_hash_algorithm: algorithm,
+        };
+        assert!(OcspClient::create_default_with_options(None, None, None, options).is_ok());
+        assert!(OcspClient::create_aia(AiaOptions {
+            client_options: Some(options),
+            ..Default::default()
+        })
+        .is_ok());
+    }
+}
+
+#[test]
+fn test_rim_store_create_cached() {
+    init_sdk();
+    let inner = RimStore::create_remote(None, None, None).expect("remote RIM store");
+    let cached = RimStore::create_cached(inner, 1024 * 1024, 3600);
+    assert!(cached.is_ok(), "cached RIM store creation should succeed");
+}
+
+#[test]
+fn test_ocsp_client_create_cached() {
+    init_sdk();
+    let inner = OcspClient::create_default(None, None, None).expect("default OCSP client");
+    let cached = OcspClient::create_cached(inner, 1024 * 1024, 3600);
+    assert!(cached.is_ok(), "cached OCSP client creation should succeed");
+}
+
+#[test]
+fn test_verifiers_accept_cached_store_and_client() {
+    init_sdk();
+    let rim = RimStore::create_remote(None, None, None).expect("remote RIM store");
+    let rim = RimStore::create_cached(rim, 1024 * 1024, 3600).expect("cached RIM store");
+    let ocsp = OcspClient::create_default(None, None, None).expect("default OCSP client");
+    let ocsp = OcspClient::create_cached(ocsp, 1024 * 1024, 3600).expect("cached OCSP client");
+
+    assert!(
+        GpuLocalVerifier::new(&rim, &ocsp).is_ok(),
+        "GPU verifier should accept cached store and client"
+    );
+    assert!(
+        SwitchLocalVerifier::new(&rim, &ocsp).is_ok(),
+        "switch verifier should accept cached store and client"
+    );
+}
+
+#[test]
+fn claims_collection_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<ClaimsCollection>();
+}
+
+// ---------------------------------------------------------------------------
+// Cross-thread collection move (the fan-out pattern)
+// ---------------------------------------------------------------------------
+
+/// RIM store and OCSP endpoints for the recorded-evidence tests, taken from
+/// `NVAT_TEST_RIM_STORE_URL` and `NVAT_TEST_OCSP_URL` so that no deployment
+/// specific host is written into the source tree. Returns `(rim, ocsp)`, or
+/// `None` when either is unset, in which case the caller skips.
+fn recorded_evidence_endpoints() -> Option<(String, String)> {
+    let rim = std::env::var("NVAT_TEST_RIM_STORE_URL").ok()?;
+    let ocsp = std::env::var("NVAT_TEST_OCSP_URL").ok()?;
+    Some((rim, ocsp))
+}
+
+/// Counts the elements of a top-level JSON array without a JSON dependency:
+/// objects opened at nesting depth 1, string contents ignored.
+fn json_array_len(json: &str) -> usize {
+    let (mut depth, mut count) = (0usize, 0usize);
+    let (mut in_string, mut escaped) = (false, false);
+    for c in json.chars() {
+        if in_string {
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '[' | '{' => {
+                if depth == 1 && c == '{' {
+                    count += 1;
+                }
+                depth += 1;
+            }
+            ']' | '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+/// Verifies recorded GPU evidence twice on this thread, then MOVES both claims
+/// collections to a second thread, where they merge with `extend`, serialize,
+/// assemble a detached EAT, and drop. This is the exact ownership flow a
+/// multi-device fan-out uses, and it runs the real C SDK operations on a
+/// non-origin thread.
+///
+/// Mirrors GpuHighLevelApiLocalVerify in the C++ unit suite: same recorded
+/// evidence and nonce (unit-tests/include/test_utils.h), against the RIM and
+/// OCSP endpoints the environment supplies, so it needs the network
+/// reachability that suite already requires in CI. Skips when the fixture or
+/// either endpoint is absent. common-test-data ships no P-384 test key, so the
+/// EAT assembles with default options (the SDK's unsigned alg-none path);
+/// apart from the final ES384 signature the assembly code path is the same.
+#[test]
+fn claims_collection_moves_across_threads_for_merge_and_eat() {
+    init_sdk();
+
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../common-test-data/serialized_test_evidence/hopper_evidence.json"
+    );
+    if !std::path::Path::new(fixture).exists() {
+        eprintln!("skipping: evidence fixture not found at {fixture}");
+        return;
+    }
+    let Some((rim_store_url, ocsp_url)) = recorded_evidence_endpoints() else {
+        eprintln!("skipping: NVAT_TEST_RIM_STORE_URL or NVAT_TEST_OCSP_URL is unset");
+        return;
+    };
+
+    let verify = || {
+        let nonce =
+            Nonce::from_hex("e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576")
+                .expect("recorded-evidence nonce");
+        let ctx = AttestationContext::builder()
+            .device_type(DeviceType::Gpu)
+            .verifier_type(VerifierType::Local)
+            .gpu_evidence_from_json_file(fixture)
+            .ocsp_url(ocsp_url.as_str())
+            .rim_store_url(rim_store_url.as_str())
+            .build()
+            .expect("attestation context");
+        ctx.attest_device(Some(&nonce))
+            .expect("verify recorded evidence")
+    };
+
+    let mut first = verify().claims.take().expect("first claims collection");
+    let second = verify().claims.take().expect("second claims collection");
+    let expected = json_array_len(&first.to_json().expect("serialize first"))
+        + json_array_len(&second.to_json().expect("serialize second"));
+
+    let merged_len = std::thread::spawn(move || {
+        first.extend(&second).expect("extend on the second thread");
+        let merged = first.to_json().expect("serialize merged collection");
+        let options =
+            DetachedEatOptions::new("", "NVAT-TEST", "test-kid").expect("detached EAT options");
+        first
+            .detached_eat_es384(&options)
+            .expect("assemble detached EAT on the second thread");
+        json_array_len(&merged)
+        // first and second drop here, on the non-origin thread
+    })
+    .join()
+    .expect("cross-thread merge panicked");
+
+    assert_eq!(
+        merged_len, expected,
+        "merged collection must carry every claim from both parts"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Shared verify-path handles (the shared-verifier pattern)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn verify_path_handles_are_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<EvidencePolicy>();
+    assert_send_sync::<OcspClient>();
+    assert_send_sync::<RimStore>();
+    assert_send_sync::<GpuLocalVerifier>();
+    assert_send_sync::<SwitchLocalVerifier>();
+    assert_send_sync::<DetachedEatOptions>();
+}
+
+/// Builds one verifier over one cached RIM store and one cached OCSP client on
+/// this thread, then verifies the same recorded evidence on four threads at
+/// once through a single shared `&GpuLocalVerifier`. Evidence stays per thread,
+/// which is the request-scoped half of the contract; the verifier, policy,
+/// store and client are the shared half.
+///
+/// The first verification populates the caches and the rest race against them,
+/// so this exercises the concurrent cache access the `Sync` impls permit.
+///
+/// Uses the same recorded evidence and nonce as GpuHighLevelApiLocalVerify in
+/// the C++ unit suite, against the RIM and OCSP endpoints the environment
+/// supplies, so it needs the network reachability that suite already requires
+/// in CI. Skips when the fixture or either endpoint is absent.
+#[test]
+fn one_verifier_and_cache_serve_concurrent_verifications() {
+    use std::sync::Arc;
+
+    init_sdk();
+
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../common-test-data/serialized_test_evidence/hopper_evidence.json"
+    );
+    if !std::path::Path::new(fixture).exists() {
+        eprintln!("skipping: evidence fixture not found at {fixture}");
+        return;
+    }
+    let Some((rim_store_url, ocsp_url)) = recorded_evidence_endpoints() else {
+        eprintln!("skipping: NVAT_TEST_RIM_STORE_URL or NVAT_TEST_OCSP_URL is unset");
+        return;
+    };
+
+    const THREADS: usize = 4;
+    const CACHE_BYTES: u64 = 8 * 1024 * 1024;
+    const CACHE_TTL_SECONDS: i64 = 3600;
+
+    let rim = RimStore::create_remote(Some(rim_store_url.as_str()), None, None)
+        .expect("remote RIM store");
+    let rim =
+        RimStore::create_cached(rim, CACHE_BYTES, CACHE_TTL_SECONDS).expect("cached RIM store");
+    let ocsp = OcspClient::create_default(Some(ocsp_url.as_str()), None, None)
+        .expect("default OCSP client");
+    let ocsp = OcspClient::create_cached(ocsp, CACHE_BYTES, CACHE_TTL_SECONDS)
+        .expect("cached OCSP client");
+
+    let verifier = Arc::new(GpuLocalVerifier::new(&rim, &ocsp).expect("shared GPU verifier"));
+    let policy = Arc::new(EvidencePolicy::default_policy().expect("default evidence policy"));
+
+    let claim_counts: Vec<usize> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let verifier = Arc::clone(&verifier);
+                let policy = Arc::clone(&policy);
+                scope.spawn(move || {
+                    let nonce = Nonce::from_hex(
+                        "e97b23a1718095a0e9e35edca810768c70a6a5a389b705e753b197912bc11576",
+                    )
+                    .expect("recorded-evidence nonce");
+                    let evidence = GpuEvidenceSource::from_json_file(fixture)
+                        .expect("evidence source")
+                        .collect(&nonce)
+                        .expect("evidence collection");
+
+                    let result = verifier
+                        .verify(&evidence, &policy)
+                        .expect("verify over the shared verifier");
+                    assert!(
+                        result.is_success(),
+                        "shared verifier returned verdict code {}",
+                        result.result_code
+                    );
+                    let claims = result.claims.expect("claims on a successful verdict");
+                    json_array_len(&claims.to_json().expect("serialize claims"))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("verification thread panicked"))
+            .collect()
+    });
+
+    assert!(
+        claim_counts.iter().all(|&n| n > 0 && n == claim_counts[0]),
+        "every thread should produce the same claims from the same evidence, got {claim_counts:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CoRIM verifier
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_corim_store_create_and_configure() {
+    init_sdk();
+    assert!(CorimStore::new(None, None).is_ok());
+
+    let http_options = HttpOptions::default_options().expect("default http options");
+    let mut store = CorimStore::new(Some("test-service-key"), Some(&http_options))
+        .expect("CoRIM store with a service key");
+
+    assert!(store
+        .add_allowed_url_prefix("https://rim.attestation.nvidia.com/")
+        .is_ok());
+    assert!(store
+        .add_url_rewrite("https://rim.attestation.nvidia.com/", "file:///tmp/rims/")
+        .is_ok());
+    assert!(store.enable_in_memory_cache(1024 * 1024, 3600).is_ok());
+    // A zero TTL is legal - entries expire immediately.
+    assert!(store.enable_in_memory_cache(1024, 0).is_ok());
+}
+
+#[test]
+fn test_corim_store_rejects_bad_cache_settings() {
+    init_sdk();
+    let mut store = CorimStore::new(None, None).expect("CoRIM store");
+
+    let err = store
+        .enable_in_memory_cache(0, 3600)
+        .expect_err("a zero-byte cache must be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    let err = store
+        .enable_in_memory_cache(1024, -1)
+        .expect_err("a negative TTL must be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_corim_store_rejects_interior_nul() {
+    init_sdk();
+    let mut store = CorimStore::new(None, None).expect("CoRIM store");
+
+    let err = store
+        .add_allowed_url_prefix("https://ex\0ample/")
+        .expect_err("a prefix containing a NUL byte must be rejected, not truncated");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_local_corim_verifier_create_and_configure() {
+    init_sdk();
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+
+    assert!(verifier.set_verify_rim_signature(false).is_ok());
+    assert!(verifier.set_verify_revocation(false).is_ok());
+    // 0xa0 is an empty CBOR map.
+    assert!(verifier.set_backup_spdm_coev(&[0xa0]).is_ok());
+    assert!(verifier
+        .add_backup_rim_locator("https://rim.attestation.nvidia.com/v1/rim/id")
+        .is_ok());
+    assert!(verifier
+        .set_default_hash_algorithms(&[HashAlgorithm::Sha384, HashAlgorithm::Sha512])
+        .is_ok());
+    // An empty slice is the documented way to turn digest output off.
+    assert!(verifier.set_default_hash_algorithms(&[]).is_ok());
+
+    let err = verifier
+        .set_backup_spdm_coev(&[])
+        .expect_err("an empty CoEV must be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_local_corim_verifier_rejects_bad_input() {
+    init_sdk();
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+
+    let err = verifier
+        .verify_cmw(&[], CmwFormat::Json, None)
+        .expect_err("empty CMW input should be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    assert!(
+        verifier
+            .verify_cmw(b"not json at all", CmwFormat::Json, None)
+            .is_err(),
+        "unparseable CMW input should be an error"
+    );
+
+    let err = verifier
+        .verify_cmw(&[0x00], CmwFormat::Cbor, None)
+        .expect_err("CBOR is not implemented yet");
+    assert_eq!(err.code, NVAT_RC_FEATURE_NOT_ENABLED as u16);
+
+    let err = verifier
+        .add_backup_rim_locator("")
+        .expect_err("empty locator should be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+}
+
+#[test]
+fn test_cmw_collection_from_spdm_transcript() {
+    init_sdk();
+    let nonce = Nonce::generate(32).expect("nonce");
+
+    let err = CmwCollection::from_spdm_transcript("device_0", &[], b"pem", Some(&nonce))
+        .expect_err("empty transcript should be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    let err = CmwCollection::from_spdm_transcript("device_0", b"spdm", &[], Some(&nonce))
+        .expect_err("empty certificate chain should be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+
+    let cmw = CmwCollection::from_spdm_transcript("device_0", b"spdm-bytes", b"pem-bytes", None)
+        .expect("CMW collection from SPDM transcript");
+
+    let json = cmw.serialize(CmwFormat::Json).expect("serialize as JSON");
+    assert!(
+        json.contains("device_0"),
+        "serialized CMW should carry the evidence label, got {json}"
+    );
+
+    let err = cmw
+        .serialize(CmwFormat::Cbor)
+        .expect_err("CBOR serialization is not implemented yet");
+    assert_eq!(err.code, NVAT_RC_FEATURE_NOT_ENABLED as u16);
+}
+
+#[test]
+fn corim_verifier_is_send_and_sync() {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    assert_send::<LocalCorimVerifier>();
+    assert_sync::<LocalCorimVerifier>();
+    assert_send::<CorimStore>();
+    assert_send::<CmwCollection>();
+}
+
+// ---------------------------------------------------------------------------
+// CoRIM verification over a recorded CMW fixture
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_verify_cmw_fixture_returns_ear() {
+    init_sdk();
+
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../nv-attestation-sdk-cpp/unit-tests/testdata",
+        "/sample_attestation_data/blackwell_evidence.cmw.json"
+    );
+    let Ok(cmw) = std::fs::read(fixture) else {
+        eprintln!("skipping: CMW fixture not present at {fixture}");
+        return;
+    };
+
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+    verifier
+        .set_verify_revocation(false)
+        .expect("disable revocation");
+
+    let ear = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .expect("verify fixture");
+
+    assert!(
+        ear.json.contains("\"ear_status\"") && ear.json.contains("\"submods\""),
+        "the EAR should carry a status and per-device submods, got {}",
+        ear.json
+    );
+    assert!(
+        ear.json.contains("\"signature_verified\""),
+        "each submod should report evidence findings, got {}",
+        ear.json
+    );
+
+    // With no signing options the JWT is unsigned
+    let parts: Vec<&str> = ear.jwt.split('.').collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "an EAR JWT has three parts, got {}",
+        ear.jwt
+    );
+    assert!(
+        parts[2].is_empty(),
+        "an unsigned EAR should have an empty signature, got {}",
+        ear.jwt
+    );
+
+    // The digest algorithms default to SHA-256 and are reported in the EAR.
+    assert!(
+        ear.json.contains("\"sha-256\""),
+        "digests should default to SHA-256, got {}",
+        ear.json
+    );
+
+    // The digests should now report SHA-512, not the SHA-256 default.
+    verifier
+        .set_default_hash_algorithms(&[HashAlgorithm::Sha512])
+        .expect("select SHA-512");
+    let ear = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .expect("verify fixture");
+    assert!(
+        ear.json.contains("\"sha-512\"") && !ear.json.contains("\"sha-256\""),
+        "the selected digest algorithm should be used, got {}",
+        ear.json
+    );
+
+    // An empty slice turns digest output off entirely.
+    verifier
+        .set_default_hash_algorithms(&[])
+        .expect("disable digests");
+    let ear = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .expect("verify fixture");
+    assert!(
+        !ear.json.contains("\"ear_nvidia_inputs\""),
+        "an empty algorithm list should omit digests entirely, got {}",
+        ear.json
+    );
+}
+
+/// The signed path: the JWT carries an ES384 signature.
+#[test]
+fn test_verify_cmw_fixture_signs_the_ear() {
+    init_sdk();
+
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../nv-attestation-sdk-cpp/unit-tests/testdata",
+        "/sample_attestation_data/blackwell_evidence.cmw.json"
+    );
+    let Ok(cmw) = std::fs::read(fixture) else {
+        eprintln!("skipping: CMW fixture not present at {fixture}");
+        return;
+    };
+
+    let signing_options = EarSigningOptions::new(
+        &test_p384_key_pem(),
+        "https://verifier.example.com",
+        "test-kid",
+    )
+    .expect("EAR signing options");
+
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+    verifier
+        .set_verify_revocation(false)
+        .expect("disable revocation");
+
+    let ear = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, Some(&signing_options))
+        .expect("verify fixture");
+
+    let parts: Vec<&str> = ear.jwt.split('.').collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "an EAR JWT has three parts, got {}",
+        ear.jwt
+    );
+    assert!(
+        !parts[2].is_empty(),
+        "a signed EAR should carry a signature, got {}",
+        ear.jwt
+    );
+    assert!(
+        ear.json.contains("\"ear_status\""),
+        "signing should still yield the JSON form, got {}",
+        ear.json
+    );
+
+    // Options are accepted with an empty private key, and silently produce an
+    // unsigned EAR.
+    let unsigned_options = EarSigningOptions::new("", "https://verifier.example.com", "test-kid")
+        .expect("options with an empty key are accepted");
+    let unsigned = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, Some(&unsigned_options))
+        .expect("verify fixture");
+    assert!(
+        unsigned.jwt.ends_with('.'),
+        "an empty key should yield an unsigned EAR, got {}",
+        unsigned.jwt
+    );
+}
+
+const RUBIN_VBIOS_URL: &str = "https://rim.attestation.nvidia.com/v1/rim/GR100_081D_9900230000";
+const RUBIN_DRIVER_URL: &str =
+    "https://rim.attestation.nvidia.com/v1/rim/NV_GPU_DRIVER_GR100_620.54";
+
+fn rubin_example_corim(name: &str) -> std::path::PathBuf {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../nv-attestation-sdk-cpp");
+    let generated = root
+        .join("build/unit-tests/testdata/sample_rims/corim")
+        .join(name);
+    if generated.is_file() {
+        return generated;
+    }
+    let source = root
+        .join("unit-tests/testdata/sample_rims/corim")
+        .join(name);
+    assert!(
+        source.is_file(),
+        "missing {name}: build the C++ unit-test fixtures or run `make -C nv-attestation-sdk-cpp prepare-test-data`"
+    );
+    source
+}
+
+fn rubin_cmw() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../nv-attestation-sdk-cpp/unit-tests/testdata",
+        "/sample_attestation_data/rubin_evidence.cmw.json"
+    ))
+    .expect("read Rubin CMW fixture")
+}
+
+fn rubin_store(vbios: &std::path::Path, driver: &std::path::Path) -> CorimStore {
+    let mut store = CorimStore::new(None, None).expect("CoRIM store");
+    store
+        .add_url_rewrite(RUBIN_VBIOS_URL, &format!("file://{}", vbios.display()))
+        .expect("rewrite VBIOS locator");
+    store
+        .add_url_rewrite(RUBIN_DRIVER_URL, &format!("file://{}", driver.display()))
+        .expect("rewrite driver locator");
+    store
+}
+
+fn rubin_verifier(store: CorimStore) -> LocalCorimVerifier {
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+    verifier
+        .set_verify_rim_signature(false)
+        .expect("accept unsigned example CoRIMs");
+    verifier
+        .set_verify_revocation(false)
+        .expect("keep fixture test independent of OCSP");
+    verifier
+}
+
+fn assert_rubin_appraisal(ear: &EarResult) {
+    let result: serde_json::Value = serde_json::from_str(&ear.json).expect("parse EAR JSON");
+    assert_eq!(result["ear_status"], "affirming", "{result}");
+    let submods = result["submods"].as_object().expect("EAR submods");
+    assert_eq!(submods.len(), 1, "{result}");
+    let gpu = &submods["gpu_0"];
+    assert_eq!(gpu["ear_status"], "affirming", "{result}");
+    assert_eq!(
+        gpu["ear_verifier_claims"]["ear_nvidia_evidence"]["signature_verified"], true,
+        "{result}"
+    );
+    let rims = gpu["ear_verifier_claims"]["ear_nvidia_rims"]
+        .as_array()
+        .expect("GPU CoRIM results");
+    assert_eq!(rims.len(), 2, "{result}");
+    assert_eq!(rims[0]["id"], "example-rubin-vbios-GR100_081D_9900230000");
+    assert_eq!(rims[1]["id"], "example-rubin-driver-GR100_620.54");
+}
+
+/// The evidence's two locators must reach distinct local example CoRIMs and
+/// produce an affirming appraisal, not merely report a successful fetch.
+#[test]
+fn test_corim_store_rewrite_redirects_rim_fetch() {
+    init_sdk();
+    let store = rubin_store(
+        &rubin_example_corim("rubin_vbios_example.cbor"),
+        &rubin_example_corim("rubin_driver_example.cbor"),
+    );
+    let ear = rubin_verifier(store)
+        .verify_cmw(&rubin_cmw(), CmwFormat::Json, None)
+        .expect("verify Rubin fixture");
+    assert_rubin_appraisal(&ear);
+}
+
+/// Once both backing files disappear, a second affirming appraisal must use
+/// the in-memory CoRIM cache rather than falling back to a remote fetch.
+#[test]
+fn test_corim_store_in_memory_cache_serves_second_fetch() {
+    init_sdk();
+    let cmw = rubin_cmw();
+    let dir = std::env::temp_dir().join(format!("nvat-rust-cache-{}", std::process::id()));
+    std::fs::create_dir(&dir).expect("create cache fixture directory");
+    let vbios = dir.join("rubin_vbios_example.cbor");
+    let driver = dir.join("rubin_driver_example.cbor");
+    std::fs::copy(rubin_example_corim("rubin_vbios_example.cbor"), &vbios)
+        .expect("copy VBIOS CoRIM");
+    std::fs::copy(rubin_example_corim("rubin_driver_example.cbor"), &driver)
+        .expect("copy driver CoRIM");
+
+    let mut store = rubin_store(&vbios, &driver);
+    store
+        .enable_in_memory_cache(1024 * 1024, 3600)
+        .expect("enable the CoRIM cache");
+    let verifier = rubin_verifier(store);
+    let first = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .expect("first verification populates the cache");
+    assert_rubin_appraisal(&first);
+
+    std::fs::remove_dir_all(&dir).expect("remove both backing files");
+    let second = verifier
+        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .expect("second verification uses the cache");
+    assert_rubin_appraisal(&second);
+}
+
+// ---------------------------------------------------------------------------
+// AIA OCSP client (the client the CoRIM verifier expects)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_ocsp_client_create_aia() {
+    init_sdk();
+    assert!(OcspClient::create_aia(AiaOptions::default()).is_ok());
+
+    let http_options = HttpOptions::default_options().expect("default http options");
+    assert!(OcspClient::create_aia(AiaOptions {
+        base_url: Some("http://ocsp.attestation.nvidia.com"),
+        service_key: Some("test-service-key"),
+        http_options: Some(&http_options),
+        client_options: None,
+        rewrites: &[
+            UrlRewrite {
+                pattern: "http://ocsp.example.com/",
+                replacement: "http://ocsp.internal.example/",
+            },
+            UrlRewrite {
+                pattern: "http://ocsp2.example.com/",
+                replacement: "http://ocsp.internal.example/",
+            },
+        ],
+    })
+    .is_ok());
+
+    match OcspClient::create_aia(AiaOptions {
+        rewrites: &[UrlRewrite {
+            pattern: "http://ocsp.example.com/",
+            replacement: "bad\0replacement",
+        }],
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("a rewrite containing a NUL byte must be rejected"),
+        Err(err) => assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16),
+    }
+}
+
+#[test]
+fn test_corim_verifier_accepts_aia_and_cached_ocsp_client() {
+    init_sdk();
+    let ocsp = OcspClient::create_aia(AiaOptions::default()).expect("AIA OCSP client");
+    let ocsp = OcspClient::create_cached(ocsp, 1024 * 1024, 3600).expect("cached OCSP client");
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+
+    assert!(LocalCorimVerifier::new(store, Some(&ocsp)).is_ok());
 }

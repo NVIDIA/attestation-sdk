@@ -1,0 +1,15 @@
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestDirectAndIndirect" }
+        },
+        [
+          { / mval / 1: { / digests / 2: [ [1, h'1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff'] ] } },
+          { / mval / 1: { / spdm-indirect / 12: { / index / 0: [49] } } }
+        ]
+      ]
+    ]
+  }
+})

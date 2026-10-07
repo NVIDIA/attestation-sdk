@@ -1,0 +1,17 @@
+{
+    1: {0: "test-comid-entity-roles"},
+    2: [
+        {0: "Vendor A", 1: 32_0("https://vendora.example/registry"), 2: [0]},
+        {0: "Vendor B", 2: [1, 2]},
+    ],
+    4: {
+        0: [
+            [
+                {0: {1: "NVIDIA"}},
+                [
+                    {1: {4: 563_1([h'01020304', h'ffff0000'])}},
+                ],
+            ],
+        ],
+    },
+}

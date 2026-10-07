@@ -1,0 +1,57 @@
+{
+  "bootcount": 7,
+  "bootseed": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  "cti": "cafecafecafecafe",
+  "dbgstat": 1,
+  "eat_profile": {
+    "kind": "oid",
+    "value": "1.3.6.1.4.1.42623.1.3"
+  },
+  "hwmodel": "1122334455",
+  "iss": "https://ocp.example/attestation",
+  "measurements": [
+    {
+      "content-type": "application/ce+cbor",
+      "evidence": {
+        "ev_triples": {
+          "evidence_triples": [
+            {
+              "environment": {
+                "class": {
+                  "model": "TestModel",
+                  "vendor": "TestVendor"
+                }
+              },
+              "measurements": [
+                {
+                  "values": {
+                    "digests": [
+                      "sha-256;ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJmqu8zd7v8="
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "eat_nonce": "0011223344556677",
+  "rim_locators": [
+    {
+      "uris": [
+        "https://rim.example/single.corim"
+      ]
+    },
+    {
+      "uris": [
+        "https://rim.example/primary.corim",
+        "https://rim.example/mirror.corim"
+      ]
+    }
+  ],
+  "sueid": "02beadfeedcafef00dba",
+  "ueid": "01deadbeefcafef00dba",
+  "uptime": 123456
+}

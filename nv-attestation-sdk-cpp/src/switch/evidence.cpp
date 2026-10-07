@@ -139,7 +139,11 @@ Error SwitchEvidence::collection_to_json(const std::vector<std::shared_ptr<Switc
 }
 
 Error SwitchEvidence::collection_from_json(const std::string& json_string, std::vector<std::shared_ptr<SwitchEvidence>>& out_collection) {
-    return deserialize_from_json(json_string, out_collection);
+    Error err = deserialize_from_json(json_string, out_collection);
+    if (err != Error::Ok) {
+        return Error::EvidenceMalformed;
+    }
+    return Error::Ok;
 }
 
 std::string SwitchEvidence::get_hex_nonce() const {
@@ -342,7 +346,7 @@ Error SwitchEvidence::AttestationReport::generate_attestation_report_claims(cons
         return error;
     }
 
-    error = m_attestation_cert_chain.get_ueid(out_attestation_report_claims.m_ueid);
+    error = m_attestation_cert_chain.get_end_entity_serial(out_attestation_report_claims.m_ueid);
     if (error != Error::Ok) {
         return error;
     }

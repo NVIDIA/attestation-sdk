@@ -114,6 +114,52 @@ TEST_F(GpuEvidenceTest, BlackwellCorrectGpuEvidenceClaims) {
     ASSERT_EQ(claims.m_attestation_report_claims.m_hwmodel, "GB100 A01 GSP BROM");
 }
 
+TEST(GpuArchitectureTest, RubinStringRoundTrip) {
+    EXPECT_EQ(to_string(GpuArchitecture::Rubin), "RUBIN");
+
+    GpuArchitecture parsed = GpuArchitecture::Unknown;
+    from_string("RUBIN", parsed);
+    EXPECT_EQ(parsed, GpuArchitecture::Rubin);
+
+    parsed = GpuArchitecture::Unknown;
+    from_string("rubin", parsed);
+    EXPECT_EQ(parsed, GpuArchitecture::Rubin);
+}
+
+TEST(GpuArchitectureTest, RubinArchitectureDataMatchesBlackwell) {
+    GpuArchitectureData rubin_data;
+    Error rubin_err = GpuArchitectureData::create(GpuArchitecture::Rubin, rubin_data);
+    ASSERT_EQ(rubin_err, Error::Ok);
+
+    GpuArchitectureData blackwell_data;
+    Error blackwell_err = GpuArchitectureData::create(GpuArchitecture::Blackwell, blackwell_data);
+    ASSERT_EQ(blackwell_err, Error::Ok);
+
+    EXPECT_EQ(rubin_data.get_ar_signature_hash_algorithm(), blackwell_data.get_ar_signature_hash_algorithm());
+    EXPECT_EQ(rubin_data.get_ar_signature_length(), blackwell_data.get_ar_signature_length());
+    EXPECT_EQ(rubin_data.m_fwid_type, blackwell_data.m_fwid_type);
+}
+
+TEST(GpuArchitectureTest, RubinJsonRoundTrip) {
+    GpuEvidence evidence;
+    evidence.set_gpu_architecture(GpuArchitecture::Rubin);
+    evidence.set_nonce(hex_string_to_bytes("931d8dd0add203ac3d8b4fbde75e115278eefcdceac5b87671a748f32364dfcb"));
+    evidence.set_attestation_report({0x01, 0x02, 0x03});
+    evidence.set_attestation_cert_chain("-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n");
+
+    std::vector<std::shared_ptr<GpuEvidence>> collection{std::make_shared<GpuEvidence>(evidence)};
+    std::string json_string;
+    Error error = GpuEvidence::collection_to_json(collection, json_string);
+    ASSERT_EQ(error, Error::Ok);
+    EXPECT_NE(json_string.find("\"RUBIN\""), std::string::npos);
+
+    std::vector<std::shared_ptr<GpuEvidence>> parsed;
+    error = GpuEvidence::collection_from_json(json_string, parsed);
+    ASSERT_EQ(error, Error::Ok);
+    ASSERT_EQ(parsed.size(), 1U);
+    EXPECT_EQ(parsed[0]->get_gpu_architecture(), GpuArchitecture::Rubin);
+}
+
 TEST(GpuEvidenceParserTest, GetOpaqueDataVersion) {
     GpuEvidenceSourceFromJsonFile source;
     Error error = GpuEvidenceSourceFromJsonFile::create("testdata/evidence_hopper_590_12.json", source);
@@ -243,4 +289,17 @@ TEST(GpuEvidenceTestCApi, CanCreateEvidenceSourceFromJsonFile) {
     nvat_gpu_evidence_array_free(&gpu_evidences, length);
     nvat_gpu_evidence_source_free(&gpu_evidence_source);
     nvat_str_free(&serialized_evidence);
+}
+
+TEST(GpuEvidenceJsonTest, MalformedJsonReturnsEvidenceMalformed) {
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
+    Error error = GpuEvidence::collection_from_json("not valid json {{{", evidence_list);
+    EXPECT_EQ(error, Error::EvidenceMalformed);
+}
+
+TEST(GpuEvidenceJsonTest, EmptyJsonArrayReturnsEmptyCollection) {
+    std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
+    Error error = GpuEvidence::collection_from_json("[]", evidence_list);
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_TRUE(evidence_list.empty());
 }

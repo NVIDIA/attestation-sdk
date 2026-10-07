@@ -1,0 +1,100 @@
+{
+  "id": "test-corim-extended",
+  "tags": [
+    {
+      "dependency_triples": [
+        {
+          "domain_id": {
+            "class": {
+              "model": "Platform",
+              "vendor": "Vendor-A"
+            }
+          },
+          "trustees": [
+            {
+              "class": {
+                "model": "Firmware",
+                "vendor": "Vendor-A"
+              }
+            },
+            {
+              "class": {
+                "model": "Bootloader",
+                "vendor": "Vendor-A"
+              }
+            }
+          ]
+        },
+        {
+          "domain_id": {
+            "class": {
+              "vendor": "Vendor-B"
+            }
+          },
+          "trustees": [
+            {
+              "class": {
+                "model": "BaseLayer",
+                "vendor": "Vendor-B"
+              }
+            }
+          ]
+        }
+      ],
+      "reference_triples": [
+        {
+          "environment": {
+            "class": {
+              "vendor": "Vendor-A"
+            }
+          },
+          "measurements": [
+            {
+              "key": "firmware-version",
+              "values": {
+                "int_range": 42
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "model": "Model-X",
+              "vendor": "Vendor-A"
+            }
+          },
+          "measurements": [
+            {
+              "values": {
+                "int_range": {
+                  "max": 10,
+                  "min": 5
+                }
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "vendor": "Vendor-A"
+            }
+          },
+          "measurements": [
+            {
+              "key": "security-level",
+              "values": {
+                "int_range": {
+                  "max": 100,
+                  "min": "-inf"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "tag_id": "test-comid-extended"
+    }
+  ]
+}

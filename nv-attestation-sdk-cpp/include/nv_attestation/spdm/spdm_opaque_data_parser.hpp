@@ -29,52 +29,69 @@
 
 namespace nvattestation {
 
+struct OpaqueDataFormatVersion {
+    uint8_t major      = 0;
+    uint8_t minor      = 0;
+    bool    has_header = false;
+};
 
 class OpaqueFieldSizes {
 public:
-    static constexpr size_t DATA_TYPE_SIZE = 2;
-    static constexpr size_t DATA_SIZE_FIELD_SIZE = 2;
+    static constexpr size_t DATA_TYPE_SIZE            = 2;
+    static constexpr size_t DATA_VALUE_TYPE_SIZE      = 2;
+    static constexpr size_t DATA_SIZE_FIELD_SIZE      = 2;
+    static constexpr size_t HEADER_MAGIC_SIZE         = 6;
+    static constexpr size_t HEADER_SIZE               = 12;
+    static constexpr size_t HEADER_PROFILE_OFFSET     = 6;
+    static constexpr size_t HEADER_MAJOR_OFFSET       = 8;
+    static constexpr size_t HEADER_MINOR_OFFSET       = 9;
 };
 
+static constexpr std::array<uint8_t, OpaqueFieldSizes::HEADER_MAGIC_SIZE> OPAQUE_DATA_MAGIC = {
+    0x4EU, 0x56U, 0x44U, 0x41U, 0x4FU, 0x44U  // NVDAOD
+};
+static constexpr uint16_t OPAQUE_DATA_REQUIRED_PROFILE = 0U;
 
-// Define a type for storing the parsed opaque data fields.
+
 class ParsedOpaqueFieldData {
 public:
     ParsedOpaqueFieldData();
-
-    // Constructor for byte_vector
     ParsedOpaqueFieldData(uint16_t type, const std::vector<uint8_t>& data);
 
-    static Error create(const std::vector<uint8_t>& data, uint16_t type, ParsedOpaqueFieldData& out_field);
-    Error get_data(const std::vector<uint8_t>*& out_data) const;
+    static Error create(const std::vector<uint8_t>& data, uint16_t type,
+                        ParsedOpaqueFieldData& out_field);
+    static Error create(const std::vector<uint8_t>& data, uint16_t type, uint16_t value_type,
+                        ParsedOpaqueFieldData& out_field);
+
+    Error    get_data(const std::vector<uint8_t>*& out_data) const;
     uint16_t get_type() const;
+    uint16_t get_value_type() const;
+
 private:
     std::vector<uint8_t> m_data;
-    uint16_t m_type; // because data type size for opaque field is 2 bytes
+    uint16_t             m_type       = 0;
+    uint16_t             m_value_type = 0;
 };
 
 
 class OpaqueDataParser {
 public:
-    /**
-     * @brief Default constructor creates an empty parser.
-     * Use the create() method to populate with data.
-     */
     OpaqueDataParser();
 
-    /**
-     * @brief Factory method to create and parse opaque data.
-     * @param opaque_raw_data The raw byte vector of the opaque data field.
-     * @param out_parser Reference to OpaqueDataParser to populate.
-     * @return Error::Ok if parsing is successful, appropriate error code otherwise.
-     */
     static Error create(const std::vector<uint8_t>& opaque_raw_data, OpaqueDataParser& out_parser);
     Error get_all_fields(const std::vector<ParsedOpaqueFieldData>*& out_fields) const;
+    OpaqueDataFormatVersion get_format_version() const;
+
+    static Error parse_as_legacy_for_test(const std::vector<uint8_t>& raw_data);
 
 private:
-    // Private constructor, use create() instead.
+    static bool has_nvdaod_header(const std::vector<uint8_t>& raw_data);
     Error parse(const std::vector<uint8_t>& raw_data);
+    Error parse_tlv_entries(const std::vector<uint8_t>& raw_data,
+                            size_t start_offset, bool has_value_type);
+
     std::vector<ParsedOpaqueFieldData> m_fields;
+    OpaqueDataFormatVersion            m_format_version;
 };
 
 // Overload for printing the parsed opaque data (useful for debugging)

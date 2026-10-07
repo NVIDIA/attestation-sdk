@@ -2,9 +2,27 @@
 
 set -e
 
-# Check if certificates already exist (more than just this script in directory)
-file_count=$(ls -1 | wc -l)
-if [ "$file_count" -gt 1 ]; then
+# Skip only if every expected output is present. Naming a specific set
+# (rather than counting files) so adding new artifacts to the script forces
+# regeneration on machines that already had the older subset.
+EXPECTED_OUTPUTS=(
+    root_cert
+    leaf_cert_without_fwid leaf_cert_with_fwid leaf_cert_expired leaf_cert_wrong_signature
+    wrong_root_cert
+    ec_p384_private.pem ec_p384_public.pem
+    valid_signature.sig signed_data.txt
+    cose_signing_root.crt cose_signing_root_key.pem
+    cose_signing_leaf.crt cose_signing_leaf_key.pem
+    eat_jwks_leaf_key.pem eat_jwks_leaf
+    eat_jwks_ca_key.pem eat_jwks_ca eat_jwks_chain_leaf_key.pem eat_jwks_chain_leaf
+    eat_jwks_root eat_jwks_int eat_jwks_int_leaf_key.pem eat_jwks_int_leaf
+    leaf_cert_fsp_cn leaf_cert_gsp_cn
+)
+all_present=1
+for f in "${EXPECTED_OUTPUTS[@]}"; do
+    [[ -f "$f" ]] || { all_present=0; break; }
+done
+if [[ "$all_present" == "1" ]]; then
     echo "Certificates already exist. Skipping generation."
     exit 0
 fi
@@ -27,6 +45,12 @@ WRONG_ROOT_KEY="${CERT_DIR}/wrong_root_key"
 WRONG_ROOT_CERT="${CERT_DIR}/wrong_root_cert"
 SIGNATURE_FILE="${CERT_DIR}/valid_signature.sig"
 DATA_FILE="${CERT_DIR}/signed_data.txt"
+COSE_SIGNING_ROOT_KEY="${CERT_DIR}/cose_signing_root_key.pem"
+COSE_SIGNING_ROOT_CERT="${CERT_DIR}/cose_signing_root.crt"
+COSE_SIGNING_LEAF_KEY="${CERT_DIR}/cose_signing_leaf_key.pem"
+COSE_SIGNING_LEAF_CERT="${CERT_DIR}/cose_signing_leaf.crt"
+EAT_JWKS_KEY="${CERT_DIR}/eat_jwks_leaf_key.pem"
+EAT_JWKS_CERT="${CERT_DIR}/eat_jwks_leaf"
 
 generate_root_cert() {
     echo "Generating Root CA key..."
@@ -245,10 +269,160 @@ generate_es384_keypair() {
     EC_PRIV="${CERT_DIR}/ec_p384_private.pem"
     EC_PUB="${CERT_DIR}/ec_p384_public.pem"
     
-    if [ ! -f "${EC_PRIV}" ] || [ ! -f "${EC_PUB}" ]; then
+    if [[ ! -f "${EC_PRIV}" || ! -f "${EC_PUB}" ]]; then
         openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${EC_PRIV}"
         openssl pkey -in "${EC_PRIV}" -pubout -out "${EC_PUB}"
     fi
+}
+
+generate_eat_jwks_leaf() {
+    echo "Generating EC P-384 EAT/JWKS signing cert + key..."
+    # Self-signed EC P-384 leaf used to sign test EATs (ES384) and to populate a
+    # test JWKS (its DER goes in the x5c entry the SDK reads).
+    openssl ecparam -name secp384r1 -genkey -noout -out "${EAT_JWKS_KEY}"
+    openssl req -new -x509 -key "${EAT_JWKS_KEY}" -out "${EAT_JWKS_CERT}" -days ${DAYS_VALID} \
+        -subj "/CN=nvat-test-eat-signer"
+}
+
+generate_eat_jwks_chain_certs() {
+    echo "Generating EC P-384 EAT/JWKS CA cert + chain leaf cert..."
+    local CA_KEY="${CERT_DIR}/eat_jwks_ca_key.pem"
+    local CA_CERT="${CERT_DIR}/eat_jwks_ca"
+    local CHAIN_LEAF_KEY="${CERT_DIR}/eat_jwks_chain_leaf_key.pem"
+    local CHAIN_LEAF_CERT="${CERT_DIR}/eat_jwks_chain_leaf"
+    local CA_CNF="${CERT_DIR}/eat_jwks_ca.cnf"
+    local CHAIN_LEAF_CSR="${CERT_DIR}/eat_jwks_chain_leaf.csr"
+    local CHAIN_LEAF_CSR_CNF="${CERT_DIR}/eat_jwks_chain_leaf_csr.cnf"
+    local CHAIN_LEAF_SIGN_CNF="${CERT_DIR}/eat_jwks_chain_leaf_sign.cnf"
+
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${CA_KEY}"
+
+    cat > "${CA_CNF}" <<EOF
+[ req ]
+distinguished_name = req_dn
+[ req_dn ]
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+EOF
+
+    openssl req -x509 -new -nodes -key "${CA_KEY}" \
+        -sha384 -days ${DAYS_VALID} -out "${CA_CERT}" \
+        -subj "/CN=nvat-test-eat-jwks-ca" \
+        -extensions v3_ca -config "${CA_CNF}"
+
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${CHAIN_LEAF_KEY}"
+
+    cat > "${CHAIN_LEAF_CSR_CNF}" <<EOF
+[ req ]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[ dn ]
+CN = nvat-test-eat-chain-leaf
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+EOF
+
+    cat > "${CHAIN_LEAF_SIGN_CNF}" <<EOF
+[ v3_leaf ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+EOF
+
+    openssl req -new -key "${CHAIN_LEAF_KEY}" -out "${CHAIN_LEAF_CSR}" \
+        -subj "/CN=nvat-test-eat-chain-leaf" -config "${CHAIN_LEAF_CSR_CNF}"
+    openssl x509 -req -in "${CHAIN_LEAF_CSR}" \
+        -CA "${CA_CERT}" -CAkey "${CA_KEY}" -CAcreateserial \
+        -out "${CHAIN_LEAF_CERT}" -days ${DAYS_VALID} -sha384 \
+        -extfile "${CHAIN_LEAF_SIGN_CNF}" -extensions v3_leaf
+
+    rm -f "${CA_CNF}" "${CHAIN_LEAF_CSR}" "${CHAIN_LEAF_CSR_CNF}" \
+          "${CHAIN_LEAF_SIGN_CNF}" "${CERT_DIR}/eat_jwks_ca.srl"
+}
+
+generate_cose_signing_chain() {
+    echo "Generating ES384 COSE_Sign1 CoRIM signing chain..."
+
+    COSE_ROOT_CNF="${CERT_DIR}/cose_signing_root.cnf"
+    COSE_LEAF_CSR="${CERT_DIR}/cose_signing_leaf.csr"
+    COSE_LEAF_CSR_CNF="${CERT_DIR}/cose_signing_leaf_csr.cnf"
+    COSE_LEAF_SIGN_CNF="${CERT_DIR}/cose_signing_leaf_sign.cnf"
+
+    cat > "${COSE_ROOT_CNF}" <<EOF
+[ req ]
+distinguished_name = req_dn
+[ req_dn ]
+[ v3_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+EOF
+
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${COSE_SIGNING_ROOT_KEY}"
+    openssl req -x509 -new -nodes -key "${COSE_SIGNING_ROOT_KEY}" \
+        -sha384 -days ${DAYS_VALID} -out "${COSE_SIGNING_ROOT_CERT}" \
+        -subj "/CN=TestCoRIMSigningRootCA" \
+        -extensions v3_ca -config "${COSE_ROOT_CNF}"
+
+    cat > "${COSE_LEAF_CSR_CNF}" <<EOF
+[ req ]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[ dn ]
+CN = TestCoRIMSigningLeaf
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+EOF
+
+    cat > "${COSE_LEAF_SIGN_CNF}" <<EOF
+[ v3_leaf ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+EOF
+
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${COSE_SIGNING_LEAF_KEY}"
+    openssl req -new -key "${COSE_SIGNING_LEAF_KEY}" -out "${COSE_LEAF_CSR}" \
+        -subj "/CN=TestCoRIMSigningLeaf" -config "${COSE_LEAF_CSR_CNF}"
+    openssl x509 -req -in "${COSE_LEAF_CSR}" \
+        -CA "${COSE_SIGNING_ROOT_CERT}" -CAkey "${COSE_SIGNING_ROOT_KEY}" -CAcreateserial \
+        -out "${COSE_SIGNING_LEAF_CERT}" -days ${DAYS_VALID} -sha384 \
+        -extfile "${COSE_LEAF_SIGN_CNF}" -extensions v3_leaf
+
+    rm -f "${COSE_ROOT_CNF}" "${COSE_LEAF_CSR}" "${COSE_LEAF_CSR_CNF}" \
+          "${COSE_LEAF_SIGN_CNF}" "${CERT_DIR}/cose_signing_root.srl"
+}
+
+generate_fsp_gsp_responder_leaf_certs() {
+    echo "Generating synthetic FSP/GSP responder-CN leaf certs..."
+    local FSP_KEY="${CERT_DIR}/leaf_key_fsp_cn"
+    local GSP_KEY="${CERT_DIR}/leaf_key_gsp_cn"
+
+    openssl genpkey -algorithm RSA -out "${FSP_KEY}" -pkeyopt rsa_keygen_bits:2048
+    openssl req -x509 -new -nodes -key "${FSP_KEY}" -sha256 -days ${DAYS_VALID} \
+        -out "${CERT_DIR}/leaf_cert_fsp_cn" -subj "/CN=NVIDIA GB100 FSP Responder"
+
+    openssl genpkey -algorithm RSA -out "${GSP_KEY}" -pkeyopt rsa_keygen_bits:2048
+    openssl req -x509 -new -nodes -key "${GSP_KEY}" -sha256 -days ${DAYS_VALID} \
+        -out "${CERT_DIR}/leaf_cert_gsp_cn" -subj "/CN=NVIDIA GB100 GSP Responder"
+
+    rm -f "${FSP_KEY}" "${GSP_KEY}"
 }
 
 create_valid_signature() {
@@ -264,8 +438,109 @@ create_valid_signature() {
     echo "Signed data: ${DATA_FILE}"
 }
 
+generate_eat_jwks_int_chain_certs() {
+    echo "Generating EC P-384 3-level EAT/JWKS chain (root -> intermediate -> leaf)..."
+    local ROOT_KEY="${CERT_DIR}/eat_jwks_root_key.pem"
+    local ROOT_CERT="${CERT_DIR}/eat_jwks_root"
+    local INT_KEY="${CERT_DIR}/eat_jwks_int_key.pem"
+    local INT_CERT="${CERT_DIR}/eat_jwks_int"
+    local INT_LEAF_KEY="${CERT_DIR}/eat_jwks_int_leaf_key.pem"
+    local INT_LEAF_CERT="${CERT_DIR}/eat_jwks_int_leaf"
+    local ROOT_CNF="${CERT_DIR}/eat_jwks_root.cnf"
+    local INT_CNF="${CERT_DIR}/eat_jwks_int.cnf"
+    local INT_CSR="${CERT_DIR}/eat_jwks_int.csr"
+    local INT_SIGN_CNF="${CERT_DIR}/eat_jwks_int_sign.cnf"
+    local INT_LEAF_CSR="${CERT_DIR}/eat_jwks_int_leaf.csr"
+    local INT_LEAF_CSR_CNF="${CERT_DIR}/eat_jwks_int_leaf_csr.cnf"
+    local INT_LEAF_SIGN_CNF="${CERT_DIR}/eat_jwks_int_leaf_sign.cnf"
+
+    # Root CA (self-signed)
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${ROOT_KEY}"
+    cat > "${ROOT_CNF}" <<EOF
+[ req ]
+distinguished_name = req_dn
+[ req_dn ]
+[ v3_root_ca ]
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+EOF
+    openssl req -x509 -new -nodes -key "${ROOT_KEY}" \
+        -sha384 -days ${DAYS_VALID} -out "${ROOT_CERT}" \
+        -subj "/CN=nvat-test-eat-jwks-root" \
+        -extensions v3_root_ca -config "${ROOT_CNF}"
+
+    # Intermediate CA (signed by root, CA:TRUE)
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${INT_KEY}"
+    cat > "${INT_CNF}" <<EOF
+[ req ]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[ dn ]
+CN = nvat-test-eat-jwks-int
+
+[ v3_req ]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+EOF
+    cat > "${INT_SIGN_CNF}" <<EOF
+[ v3_int_ca ]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+EOF
+    openssl req -new -key "${INT_KEY}" -out "${INT_CSR}" \
+        -subj "/CN=nvat-test-eat-jwks-int" -config "${INT_CNF}"
+    openssl x509 -req -in "${INT_CSR}" \
+        -CA "${ROOT_CERT}" -CAkey "${ROOT_KEY}" -CAcreateserial \
+        -out "${INT_CERT}" -days ${DAYS_VALID} -sha384 \
+        -extfile "${INT_SIGN_CNF}" -extensions v3_int_ca
+
+    # Remove root key (no longer needed after intermediate signing)
+    rm -f "${ROOT_KEY}" "${ROOT_CNF}" "${INT_CSR}" "${INT_SIGN_CNF}" \
+          "${CERT_DIR}/eat_jwks_root.srl"
+
+    # Leaf (signed by intermediate)
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out "${INT_LEAF_KEY}"
+    cat > "${INT_LEAF_CSR_CNF}" <<EOF
+[ req ]
+distinguished_name = dn
+req_extensions = v3_req
+prompt = no
+
+[ dn ]
+CN = nvat-test-eat-jwks-int-leaf
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+EOF
+    cat > "${INT_LEAF_SIGN_CNF}" <<EOF
+[ v3_leaf ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+EOF
+    openssl req -new -key "${INT_LEAF_KEY}" -out "${INT_LEAF_CSR}" \
+        -subj "/CN=nvat-test-eat-jwks-int-leaf" -config "${INT_LEAF_CSR_CNF}"
+    openssl x509 -req -in "${INT_LEAF_CSR}" \
+        -CA "${INT_CERT}" -CAkey "${INT_KEY}" -CAcreateserial \
+        -out "${INT_LEAF_CERT}" -days ${DAYS_VALID} -sha384 \
+        -extfile "${INT_LEAF_SIGN_CNF}" -extensions v3_leaf
+
+    rm -f "${INT_CNF}" "${INT_LEAF_CSR}" "${INT_LEAF_CSR_CNF}" \
+          "${INT_LEAF_SIGN_CNF}" "${CERT_DIR}/eat_jwks_int.srl"
+}
+
 # Clean up existing certificate files
-rm -f "${ROOT_CERT}" "${ROOT_KEY}" "${LEAF_KEY}" "${LEAF_CERT_WITHOUT_FWID}" "${LEAF_CERT_WITH_FWID}" "${LEAF_CERT_EXPIRED}" "${LEAF_CERT_WRONG_SIGNATURE}" "${WRONG_ROOT_KEY}" "${WRONG_ROOT_CERT}" "${CERT_DIR}/valid_signature.sig" "${CERT_DIR}/signed_data.txt"
+rm -f "${ROOT_CERT}" "${ROOT_KEY}" "${LEAF_KEY}" "${LEAF_CERT_WITHOUT_FWID}" "${LEAF_CERT_WITH_FWID}" "${LEAF_CERT_EXPIRED}" "${LEAF_CERT_WRONG_SIGNATURE}" "${WRONG_ROOT_KEY}" "${WRONG_ROOT_CERT}" "${CERT_DIR}/valid_signature.sig" "${CERT_DIR}/signed_data.txt" "${COSE_SIGNING_ROOT_KEY}" "${COSE_SIGNING_ROOT_CERT}" "${COSE_SIGNING_LEAF_KEY}" "${COSE_SIGNING_LEAF_CERT}" "${EAT_JWKS_KEY}" "${EAT_JWKS_CERT}" "${CERT_DIR}/eat_jwks_ca_key.pem" "${CERT_DIR}/eat_jwks_ca" "${CERT_DIR}/eat_jwks_chain_leaf_key.pem" "${CERT_DIR}/eat_jwks_chain_leaf" "${CERT_DIR}/eat_jwks_root" "${CERT_DIR}/eat_jwks_root_key.pem" "${CERT_DIR}/eat_jwks_int" "${CERT_DIR}/eat_jwks_int_key.pem" "${CERT_DIR}/eat_jwks_int_leaf" "${CERT_DIR}/eat_jwks_int_leaf_key.pem" "${CERT_DIR}/leaf_cert_fsp_cn" "${CERT_DIR}/leaf_cert_gsp_cn"
 
 # Generate root certificate
 generate_root_cert
@@ -286,6 +561,20 @@ generate_leaf_cert_wrong_signature
 # Generate ES384 keypair
 generate_es384_keypair
 
+# Generate ES384 CoRIM signing chain (used by signed-CoRIM unit + fuzz tests)
+generate_cose_signing_chain
+
+# Generate EC P-384 EAT/JWKS signing cert + key (used by the verify_attestation_result e2e test)
+generate_eat_jwks_leaf
+
+# Generate EC P-384 EAT/JWKS CA + chain leaf (used by the x5c chain validation test)
+generate_eat_jwks_chain_certs
+
+# Generate EC P-384 3-level chain (root -> intermediate -> leaf) for partial-chain test
+generate_eat_jwks_int_chain_certs
+
+generate_fsp_gsp_responder_leaf_certs
+
 # Create valid signature
 create_valid_signature
 
@@ -305,5 +594,15 @@ echo "Leaf Wrong Signature: ${LEAF_CERT_WRONG_SIGNATURE}"
 echo "Wrong Root CA: ${WRONG_ROOT_CERT}"
 echo "ES384 Private Key: ${EC_PRIV}"
 echo "ES384 Public Key: ${EC_PUB}"
+echo "CoRIM Signing Root: ${COSE_SIGNING_ROOT_CERT}"
+echo "CoRIM Signing Leaf: ${COSE_SIGNING_LEAF_CERT}"
+echo "EAT/JWKS Signing Leaf: ${EAT_JWKS_CERT}"
+echo "EAT/JWKS Signing Key: ${EAT_JWKS_KEY}"
+echo "EAT/JWKS Chain CA: ${CERT_DIR}/eat_jwks_ca"
+echo "EAT/JWKS Chain Leaf: ${CERT_DIR}/eat_jwks_chain_leaf"
+echo "EAT/JWKS Int chain root: ${CERT_DIR}/eat_jwks_root"
+echo "EAT/JWKS Int chain intermediate: ${CERT_DIR}/eat_jwks_int"
+echo "EAT/JWKS Int chain leaf: ${CERT_DIR}/eat_jwks_int_leaf"
+echo "EAT/JWKS Int chain leaf key: ${CERT_DIR}/eat_jwks_int_leaf_key.pem"
 echo "Valid Signature: ${CERT_DIR}/valid_signature.sig"
 echo "Signed Data: ${CERT_DIR}/signed_data.txt"

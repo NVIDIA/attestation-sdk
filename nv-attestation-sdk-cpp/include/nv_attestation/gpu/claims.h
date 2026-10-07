@@ -16,6 +16,8 @@
  */
 
 #pragma once
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -30,12 +32,22 @@ namespace nvattestation {
 enum class GpuClaimsVersion  {
     V2,
     V3,
+    V4,
 };
 
 std::string to_string(GpuClaimsVersion version);
 Error gpu_claims_version_from_c(uint8_t value, GpuClaimsVersion& out_version);
 
-class SerializableGpuClaimsV3 : public Claims {
+struct SerializableOpaqueDataMismatch {
+    uint16_t                      opaque_data_id = 0;
+    std::string                   name;
+    std::string                   golden_type    = "MIN_SVN";
+    uint64_t                      golden_value   = 0;
+    std::shared_ptr<std::string>  runtime_type;
+    std::shared_ptr<uint64_t>     runtime_value;
+};
+
+class SerializableGpuClaimsV4 : public Claims {
     public:
         std::string m_nonce;
         std::string m_hwmodel;
@@ -50,10 +62,13 @@ class SerializableGpuClaimsV3 : public Claims {
         // Top-level measurement claims
         SerializableMeasresClaim m_measurements_matching;
         bool m_gpu_arch_match;
-        std::shared_ptr<bool> m_secure_boot; // "true" if m_measurements_matching is "success", else null
-        std::shared_ptr<std::string> m_debug_status; // "disabled" if m_measurements_matching is "success", else null
-        std::shared_ptr<std::vector<SerializableMismatchedMeasurements>> m_mismatched_measurements; // null if m_measurements_matching is "success", else the mismatched measurements
+        std::shared_ptr<bool> m_secure_boot;
+        std::shared_ptr<std::string> m_debug_status;
+        std::shared_ptr<std::vector<SerializableMismatchedMeasurements>> m_mismatched_measurements;
 
+        // Opaque data comparison claims
+        std::shared_ptr<std::vector<SerializableOpaqueDataMismatch>> m_mismatched_opaque_records;
+        std::map<std::string, uint64_t> m_attester_claims;
 
         // Attestation report certificate chain claims
         SerializableCertChainClaims m_ar_cert_chain;
@@ -80,46 +95,24 @@ class SerializableGpuClaimsV3 : public Claims {
         std::string m_mode;
         std::string m_version;
 
+        SerializableGpuClaimsV4();
+        ~SerializableGpuClaimsV4() override = default;
 
-        /**
-         * @brief Constructs a GpuClaims object with default values.
-         *
-         * Initializes all claims to false.
-         */
-        SerializableGpuClaimsV3();
-
-        /**
-         * @brief Destructor
-         */
-        ~SerializableGpuClaimsV3() override = default;
-
-        /**
-         * @brief Serializes the GpuClaims as JSON
-         * @return JSON string with the exact structure matching the Python implementation
-         */
         Error serialize_json(std::string& out_string) const override;
 
         Error get_nonce(std::string& out_nonce) const override;
         Error get_version(std::string& out_version) const override;
         Error get_device_type(std::string& out_device_type) const override;
 
-        /**
-         * @brief Serializes the GpuClaims as CBOR
-         * @return CBOR bytes
-         */
         std::vector<std::uint8_t> to_cbor() const;
-    
+
     protected:
         nlohmann::json to_json_object() const override;
     };
-void from_json(const nlohmann::json& j, SerializableGpuClaimsV3& out_claims);
-void to_json(nlohmann::json& j, const SerializableGpuClaimsV3& claims);
 
-/**
- * @brief Operator== for SerializableGpuClaimsV3
- * @param lhs Left-hand side SerializableGpuClaimsV3 object
- * @param rhs Right-hand side SerializableGpuClaimsV3 object
- * @return true if objects are equal, false otherwise
- */
-bool operator==(const SerializableGpuClaimsV3& lhs, const SerializableGpuClaimsV3& rhs);
+void to_json(nlohmann::json& js, const SerializableOpaqueDataMismatch& mm);
+void from_json(const nlohmann::json& j, SerializableGpuClaimsV4& out_claims);
+void to_json(nlohmann::json& j, const SerializableGpuClaimsV4& claims);
+
+bool operator==(const SerializableGpuClaimsV4& lhs, const SerializableGpuClaimsV4& rhs);
 }

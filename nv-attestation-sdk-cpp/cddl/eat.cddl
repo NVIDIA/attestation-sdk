@@ -1,0 +1,43 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+;
+; EAT (RFC 9711) claims-set — CWT/CBOR serialization. The claim shapes follow
+; the OCP EAT profile, but this grammar is profile-agnostic: it decodes the
+; claims-set map (the COSE_Sign1 payload) without pinning a specific profile.
+; The COSE_Sign1 envelope + tag stack (55799 -> 61 -> 18) is handled separately
+; (cose.cddl decoder + a tag-peel step). References to corim-locator-map
+; resolve through corim.cddl when both files are passed to zcbor with -c.
+
+eat-claims-map = {
+    nonce:        10  => bstr .size (8..64),       ; mandatory
+  ? dbgstat:      263 => dbgstat-type,             ; RFC 9711 (int 0..4); absence means not reported
+    eat-profile:  265 => eat-profile-type-choice,  ; mandatory; URI or OID (RFC 9711 eat_profile)
+    measurements: 273 => measurements-type,        ; mandatory
+  ? iss:          1   => tstr,
+  ? cti:          7   => bstr .size (8..64),
+  ? ueid:         256 => bstr .size (7..33),
+  ? sueid:        257 => bstr .size (7..33),
+  ? oemid:        258 => oemid-type,               ; RFC 9711 oemid
+  ? hwmodel:      259 => bstr .size (1..32),
+  ? uptime:       261 => uint,
+  ? bootcount:    267 => uint,
+  ? bootseed:     268 => bstr .size (32..64),
+  ? rim-locators: -70001 => [ 1*8 corim-locator-map ],  ; from corim.cddl
+  * int           => any,                          ; unknown + private claims, surfaced opaquely
+}
+
+; dbgstat-type and oemid-type are not declared in corim.cddl, so declare them
+; here. dbgstat is the RFC 9711 small-int debug status. oemid is a byte string
+; (IEEE CID/OUI) or an IANA Private Enterprise Number.
+dbgstat-type = 0..4
+oemid-type   = bstr / int
+
+; Untagged per RFC 9711 §7.2.1, unlike CoRIM's tagged profile-type-choice.
+; tstr is the URI, bstr the OID.
+eat-profile-type-choice = tstr / bstr
+
+; measurements-type per OCP: array of [content-format-id, body-bytes].
+; Body stays opaque bstr; parse_concise_evidence handles it at runtime.
+; content-format is a CoAP Content-Format ID (RFC 7252 §12.3).
+measurements-type   = [ 1*8 measurements-format ]
+measurements-format = [ content-format: uint .le 65535, body: bstr ]

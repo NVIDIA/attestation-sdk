@@ -15,6 +15,11 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <cctype>
+
+#include <openssl/x509v3.h>
+
 #include "nv_attestation/nv_ocsp.h"
 #include "nv_attestation/nv_cache.h"
 #include "nv_attestation/utils.h"
@@ -22,8 +27,175 @@
 #include "nv_attestation/error.h"
 #include "internal/debug.hpp"
 
-
 namespace nvattestation {
+
+namespace {
+
+Error digest_for_algorithm(OcspCertIdHashAlgorithm algorithm,
+                           const EVP_MD*& out_digest) {
+    switch (algorithm) {
+        case OcspCertIdHashAlgorithm::Sha1:
+            out_digest = EVP_sha1();
+            return Error::Ok;
+        case OcspCertIdHashAlgorithm::Sha256:
+            return evp_md_for_hash_algorithm(HashAlgorithm::Sha256,
+                                             out_digest);
+        case OcspCertIdHashAlgorithm::Sha384:
+            return evp_md_for_hash_algorithm(HashAlgorithm::Sha384,
+                                             out_digest);
+    }
+    out_digest = nullptr;
+    return Error::BadArgument;
+}
+
+}  // namespace
+
+Error ocsp_cert_id_hash_algorithm_from_name(
+    const std::string& name,
+    OcspCertIdHashAlgorithm& out_algorithm
+) {
+    std::string normalized = name;
+    std::transform(
+        normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::toupper(character));
+        });
+
+    if (normalized == "SHA-1" || normalized == "SHA1") {
+        out_algorithm = OcspCertIdHashAlgorithm::Sha1;
+        return Error::Ok;
+    }
+    if (normalized == "SHA-256" || normalized == "SHA256") {
+        out_algorithm = OcspCertIdHashAlgorithm::Sha256;
+        return Error::Ok;
+    }
+    if (normalized == "SHA-384" || normalized == "SHA384") {
+        out_algorithm = OcspCertIdHashAlgorithm::Sha384;
+        return Error::Ok;
+    }
+
+    return Error::BadArgument;
+}
+
+std::string NvHttpOcspClient::first_ocsp_responder_url(X509* cert) {
+    if (cert == nullptr) {
+        return "";
+    }
+    STACK_OF(OPENSSL_STRING)* urls = X509_get1_ocsp(cert);
+    if (urls == nullptr) {
+        return "";
+    }
+    std::string out;
+    if (sk_OPENSSL_STRING_num(urls) > 0) {
+        const char* first = sk_OPENSSL_STRING_value(urls, 0);
+        if (first != nullptr) {
+            out = first;
+        }
+    }
+    X509_email_free(urls);
+    return out;
+}
+
+std::string NvHttpOcspClient::apply_url_rewrites(
+    const std::vector<std::pair<std::string, std::string>>& rules,
+    const std::string& url)
+{
+    for (const auto& rule : rules) {
+        if (url.size() >= rule.first.size() &&
+            url.compare(0, rule.first.size(), rule.first) == 0) {
+            return rule.second + url.substr(rule.first.size());
+        }
+    }
+    return url;
+}
+
+std::string NvHttpOcspClient::select_request_url(X509* subject_cert) const {
+    if (m_use_cert_aia_responder) {
+        std::string aia_url = first_ocsp_responder_url(subject_cert);
+        if (!aia_url.empty()) {
+            return apply_url_rewrites(m_url_rewrites, aia_url);
+        }
+        return "";
+    }
+    return m_ocsp_default_url;
+}
+
+Error NvHttpOcspClient::add_url_rewrite(std::string pattern,
+                                        std::string replacement) {
+    if (pattern.empty()) {
+        LOG_ERROR("OCSP URL rewrite pattern must not be empty");
+        return Error::BadArgument;
+    }
+    if (replacement.empty()) {
+        LOG_ERROR("OCSP URL rewrite replacement must not be empty");
+        return Error::BadArgument;
+    }
+    m_url_rewrites.emplace_back(std::move(pattern), std::move(replacement));
+    return Error::Ok;
+}
+
+Error NvHttpOcspClient::create_cert_id(
+    OcspCertIdHashAlgorithm algorithm,
+    X509* subject_cert,
+    X509* issuer_cert,
+    nv_unique_ptr<OCSP_CERTID>& out_id
+) {
+    const EVP_MD* digest = nullptr;
+    Error error = digest_for_algorithm(algorithm, digest);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    nv_unique_ptr<OCSP_CERTID> id(
+        OCSP_cert_to_id(digest, subject_cert, issuer_cert));
+    if (!id) {
+        LOG_ERROR("Unable to create OCSP_CERTID: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    out_id = std::move(id);
+    return Error::Ok;
+}
+
+Error NvHttpOcspClient::build_request(
+    X509* subject_cert,
+    X509* issuer_cert,
+    nv_unique_ptr<OCSP_REQUEST>& out_request,
+    nv_unique_ptr<OCSP_CERTID>& out_response_lookup_id
+) const {
+    nv_unique_ptr<OCSP_REQUEST> request(OCSP_REQUEST_new());
+    if (!request) {
+        LOG_ERROR("Unable to create OCSP request: " << get_openssl_error());
+        return Error::InternalError;
+    }
+    if (OCSP_request_add1_nonce(request.get(), nullptr, -1) != 1) {
+        LOG_ERROR("Unable to add nonce to OCSP request");
+        return Error::InternalError;
+    }
+
+    nv_unique_ptr<OCSP_CERTID> response_lookup_id;
+    Error error = create_cert_id(m_options.cert_id_hash_algorithm, subject_cert,
+                                 issuer_cert, response_lookup_id);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    nv_unique_ptr<OCSP_CERTID> request_id(
+        OCSP_CERTID_dup(response_lookup_id.get()));
+    if (!request_id) {
+        LOG_ERROR("Unable to duplicate OCSP_CERTID: " << get_openssl_error());
+        return Error::InternalError;
+    }
+    if (OCSP_request_add0_id(request.get(), request_id.get()) == nullptr) {
+        LOG_ERROR("Unable to add subject to OCSP request");
+        return Error::InternalError;
+    }
+    (void)request_id.release();
+
+    out_request = std::move(request);
+    out_response_lookup_id = std::move(response_lookup_id);
+    return Error::Ok;
+}
 
 Error NvHttpOcspClient::get_ocsp_response_from_raw(
     const std::string& ocsp_response_raw,
@@ -90,33 +262,25 @@ Error NvHttpOcspClient::get_ocsp_response(
     const nv_unique_ptr<X509_STORE>& trust_store,
     NvOcspResponse& out_ocsp_response
 ) {
-    nv_unique_ptr<OCSP_REQUEST> ocsp_req(OCSP_REQUEST_new());
-    if (OCSP_request_add1_nonce(ocsp_req.get(), nullptr, -1) != 1) {
-        LOG_ERROR("Unable to add nonce to ocsp request");
-        return Error::InternalError;
-    }
-    // Create the original Cert ID
-    nv_unique_ptr<OCSP_CERTID> id_orig (OCSP_cert_to_id(EVP_sha1(), subject_cert.get(), issuer_cert.get()));
-    if (!id_orig) {
-            LOG_ERROR("Unable to create OCSP_CERTID: " << get_openssl_error());
-            return Error::InternalError;
-    }
-    // Duplicate the Cert ID for the request
-    // We duplicate the ID because OCSP_request_add0_id takes ownership of the ID
-    // The original ID is used by the caller to get ocsp status of the cert
-    // from the ocsp response
-    OCSP_CERTID *id_for_req = OCSP_CERTID_dup(id_orig.get());
-    if (id_for_req == nullptr) {
-        LOG_ERROR("Unable to duplicate OCSP_CERTID: " << get_openssl_error());
-        return Error::InternalError;
+    const std::string request_url = select_request_url(subject_cert.get());
+    if (request_url.empty()) {
+        if (m_use_cert_aia_responder) {
+            LOG_DEBUG("OCSP: subject cert has no AIA responder URL; skipping "
+                      "revocation check for this cert");
+            out_ocsp_response = NvOcspResponse{};
+            out_ocsp_response.skipped = true;
+            return Error::Ok;
+        }
+        LOG_ERROR("OCSP: no responder URL available for request");
+        return Error::OcspInvalidRequest;
     }
 
-    // Add the duplicated ID to the request (OCSP_request_add0_id takes ownership of id_for_req)
-    if (OCSP_request_add0_id(ocsp_req.get(), id_for_req) == nullptr) {
-            // If adding fails, we need to free the duplicated ID manually
-            OCSP_CERTID_free(id_for_req);
-            LOG_ERROR("Unable to add subject to ocsp request");
-            return Error::InternalError;
+    nv_unique_ptr<OCSP_REQUEST> ocsp_req;
+    nv_unique_ptr<OCSP_CERTID> id_orig;
+    Error error = build_request(subject_cert.get(), issuer_cert.get(), ocsp_req,
+                                id_orig);
+    if (error != Error::Ok) {
+        return error;
     }
 
     // Serialize the OCSP request to a memory BIO
@@ -147,7 +311,7 @@ Error NvHttpOcspClient::get_ocsp_response(
 
     // Create HTTP request
     NvRequest request(
-        m_ocsp_url,
+        request_url,
         NvHttpMethod::HTTP_METHOD_POST,
         {{"Content-Type", "application/ocsp-request"},
         {"Accept", "application/ocsp-response"},
@@ -158,9 +322,9 @@ Error NvHttpOcspClient::get_ocsp_response(
     // Perform HTTP request
     long http_status = 0;
     std::string response_body;
-    Error error = m_http_client.do_request_as_string(request, http_status, response_body);
+    error = m_http_client.do_request_as_string(request, http_status, response_body);
     if (error != Error::Ok) {
-        LOG_ERROR("Failed to perform OCSP check with url: " << m_ocsp_url);
+        LOG_ERROR("Failed to perform OCSP check with url: " << request_url);
         return error;
     }
 
@@ -281,24 +445,47 @@ Error NvHttpOcspClient::get_ocsp_status(
         */
         ASN1_GENERALIZEDTIME *thisupd = nullptr;
         ASN1_GENERALIZEDTIME *nextupd = nullptr;
+        ASN1_GENERALIZEDTIME *revtime = nullptr;
         int reason = -1;
         int status = -1;
         // Use the original Cert ID (managed by id_orig) to find the status
         int result = OCSP_resp_find_status(basic_resp.get(), id.get(), &status, &reason,
-                              nullptr, &thisupd, &nextupd);
+                              &revtime, &thisupd, &nextupd);
         if(result != 1) {
             LOG_DEBUG("OCSP basic response is not present for subject index ");
             return Error::OcspInvalidResponse;
         }
 
+        // A property of the whole BasicOCSPResponse, not this cert's SingleResponse.
+        const ASN1_GENERALIZEDTIME *producedat = OCSP_resp_get0_produced_at(basic_resp.get());
+        if (producedat == nullptr) {
+            LOG_ERROR("OCSP response has no producedAt");
+            return Error::OcspInvalidResponse;
+        }
+        struct tm produced_at_tm{};
+        if (ASN1_TIME_to_tm(producedat, &produced_at_tm) != 1) {
+            LOG_ERROR("Unable to convert producedAt ASN1_TIME to tm: " << get_openssl_error());
+            return Error::InternalError;
+        }
+        out_ocsp_response.producedat = timegm(&produced_at_tm);
+        if (out_ocsp_response.producedat == static_cast<time_t>(-1)) {
+            LOG_ERROR("timegm failed converting producedAt");
+            return Error::InternalError;
+        }
+        LOG_DEBUG("ASN1_TIME_to_tm successful for produced at time: " << out_ocsp_response.producedat);
+
         // note: timegm only works on linux.
         struct tm this_update_tm{};
         if (ASN1_TIME_to_tm((const ASN1_TIME *)thisupd, &this_update_tm) != 1) {
-            LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
+            LOG_ERROR("Unable to convert thisUpdate ASN1_TIME to tm: " << get_openssl_error());
             return Error::InternalError;
         }
 
         time_t this_update_time = timegm(&this_update_tm);
+        if (this_update_time == static_cast<time_t>(-1)) {
+            LOG_ERROR("timegm failed converting thisUpdate");
+            return Error::InternalError;
+        }
         LOG_DEBUG("ASN1_TIME_to_tm successful for this update time: " << this_update_time);
         out_ocsp_response.thisupd = this_update_time;
 
@@ -310,13 +497,31 @@ Error NvHttpOcspClient::get_ocsp_status(
         } else {
             struct tm next_update_tm{};
             if (ASN1_TIME_to_tm((const ASN1_TIME *)nextupd, &next_update_tm) != 1) {
-                LOG_ERROR("Unable to convert ASN1_TIME to tm: " << get_openssl_error());
+                LOG_ERROR("Unable to convert nextUpdate ASN1_TIME to tm: " << get_openssl_error());
                 return Error::InternalError;
             }
 
             time_t next_update_time = timegm(&next_update_tm);
+            if (next_update_time == static_cast<time_t>(-1)) {
+                LOG_ERROR("timegm failed converting nextUpdate");
+                return Error::InternalError;
+            }
             LOG_DEBUG("ASN1_TIME_to_tm successful for next update time: " << next_update_time);
             out_ocsp_response.nextupd = next_update_time;
+        }
+
+        if (revtime != nullptr) {
+            struct tm rev_time_tm{};
+            if (ASN1_TIME_to_tm((const ASN1_TIME *)revtime, &rev_time_tm) != 1) {
+                LOG_ERROR("Unable to convert revocationTime ASN1_TIME to tm: " << get_openssl_error());
+                return Error::InternalError;
+            }
+            out_ocsp_response.revtime = timegm(&rev_time_tm);
+            if (out_ocsp_response.revtime == static_cast<time_t>(-1)) {
+                LOG_ERROR("timegm failed converting revocationTime");
+                return Error::InternalError;
+            }
+            LOG_DEBUG("ASN1_TIME_to_tm successful for revocation time: " << out_ocsp_response.revtime);
         }
 
         out_ocsp_response.status = status;
@@ -330,9 +535,27 @@ Error NvHttpOcspClient::create(
     const std::string& base_url,
     const std::string& service_key,
     const HttpOptions& http_options) {
+    return create(out_client, base_url, service_key, http_options,
+                  OcspClientOptions{});
+}
+
+Error NvHttpOcspClient::create(
+    NvHttpOcspClient& out_client,
+    const std::string& base_url,
+    const std::string& service_key,
+    const HttpOptions& http_options,
+    const OcspClientOptions& options) {
+    const EVP_MD* digest = nullptr;
+    Error error = digest_for_algorithm(options.cert_id_hash_algorithm, digest);
+    if (error != Error::Ok) {
+        LOG_ERROR("Invalid OCSP CertID hash algorithm");
+        return error;
+    }
+
     out_client.m_http_options = http_options;
-    out_client.m_ocsp_url = base_url;
-    Error error = NvHttpClient::create(out_client.m_http_client, service_key, http_options);
+    out_client.m_ocsp_default_url = base_url;
+    out_client.m_options = options;
+    error = NvHttpClient::create(out_client.m_http_client, service_key, http_options);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to create HTTP client for OCSP request");
         return error;
@@ -345,6 +568,27 @@ Error NvHttpOcspClient::init_from_env(
     const char* base_url,
     const std::string& service_key,
     const HttpOptions& http_options) {
+    OcspClientOptions options;
+    const std::string algorithm_name = get_env_or_default(
+        "NVAT_OCSP_CERT_ID_HASH_ALGORITHM", "sha-256");
+    Error error = ocsp_cert_id_hash_algorithm_from_name(
+        algorithm_name, options.cert_id_hash_algorithm);
+    if (error != Error::Ok) {
+        LOG_ERROR("Invalid NVAT_OCSP_CERT_ID_HASH_ALGORITHM value: "
+                  << algorithm_name);
+        return error;
+    }
+
+    return init_from_env(out_client, base_url, service_key, http_options,
+                         options);
+}
+
+Error NvHttpOcspClient::init_from_env(
+    NvHttpOcspClient& out_client,
+    const char* base_url,
+    const std::string& service_key,
+    const HttpOptions& http_options,
+    const OcspClientOptions& options) {
     std::string base_uri_str;
     if (base_url == nullptr || *base_url == '\0') {
         base_uri_str = get_env_or_default("NVAT_OCSP_BASE_URL", DEFAULT_BASE_URL);
@@ -352,7 +596,7 @@ Error NvHttpOcspClient::init_from_env(
         base_uri_str = std::string(base_url);
     }
 
-    return create(out_client, base_uri_str, service_key, http_options);
+    return create(out_client, base_uri_str, service_key, http_options, options);
 }
 
 Error NvHttpOcspCacheClient::create(
@@ -421,10 +665,14 @@ Error NvHttpOcspCacheClient::get_cache_key(
     const nv_unique_ptr<X509>& issuer_cert,
     std::string& out_cache_key
 ) {
-    nv_unique_ptr<OCSP_CERTID> id(OCSP_cert_to_id(EVP_sha1(), subject_cert.get(), issuer_cert.get()));
-    if (!id) {
-        LOG_ERROR("Unable to create OCSP_CERTID: " << get_openssl_error());
-        return Error::InternalError;
+    nv_unique_ptr<OCSP_CERTID> id;
+    // This CertID is only an internal cache key; keep its digest fixed so changing
+    // the inner client's request hash does not fragment the response cache.
+    Error error = NvHttpOcspClient::create_cert_id(
+        OcspCertIdHashAlgorithm::Sha256, subject_cert.get(), issuer_cert.get(),
+        id);
+    if (error != Error::Ok) {
+        return error;
     }
     unsigned char *cert_id_data = nullptr;
     int der_len = i2d_OCSP_CERTID(id.get(), &cert_id_data);

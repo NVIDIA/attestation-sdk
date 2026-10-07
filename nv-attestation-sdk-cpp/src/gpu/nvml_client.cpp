@@ -89,6 +89,7 @@ using nvmlDeviceArchitecture_t = unsigned int;
 constexpr unsigned int NVML_DEVICE_ARCH_AMPERE = 7;
 constexpr unsigned int NVML_DEVICE_ARCH_HOPPER = 9;
 constexpr unsigned int NVML_DEVICE_ARCH_BLACKWELL = 10;
+constexpr unsigned int NVML_DEVICE_ARCH_RUBIN = 13;
 constexpr unsigned int NVML_DEVICE_ARCH_UNKNOWN = 0xffffffff;
 
 using nvmlInit_t = nvmlReturn_t (*)(void);
@@ -403,6 +404,9 @@ Error get_gpu_architecture(nvmlDevice_t device_handle, GpuArchitecture& out_arch
             break;
         case NVML_DEVICE_ARCH_BLACKWELL:
             out_architecture = GpuArchitecture::Blackwell;
+            break;
+        case NVML_DEVICE_ARCH_RUBIN:
+            out_architecture = GpuArchitecture::Rubin;
             break;
         default:
             out_architecture = GpuArchitecture::Unknown;

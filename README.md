@@ -29,6 +29,16 @@ NVAT provides three components for different use cases:
 - **C API**: For integrating attestation into C/C++ applications. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-c/introduction.html)
 - **Rust bindings**: For integrating attestation into Rust applications. [Documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/sdk-rust/introduction.html)
 
+## CoRIM verifier
+
+> **Note:** The CoRIM verifier is experimental. It is the direction for
+> NVIDIA's attestation-verification workflow, but its behavior, interfaces,
+> supported evidence, and EAR output may change.
+
+Alongside the legacy TCG RIM workflow, NVAT provides a CoRIM verifier that
+appraises CMW evidence against CoRIM reference manifests and produces an EAR.
+Start with the [CoRIM documentation](https://docs.nvidia.com/attestation/nv-attestation-sdk-cpp/latest/overview.html#corim-verifier).
+
 ## Quick Start Guide
 
 ### Prerequisites

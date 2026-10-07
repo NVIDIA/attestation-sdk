@@ -117,7 +117,7 @@ namespace nvattestation {
         // will be only in the submod claims. this is because 
         // the submod claims can contain claims from different devices and 
         // the versions of those claims can be different.
-        overall_claims.m_claims_version = "3.0";
+        overall_claims.m_claims_version = "4.0";
         std::vector<uint8_t> overall_jti(JTI_SIZE_BYTES);
         err = generate_nonce(overall_jti);
         if (err != Error::Ok) {
@@ -311,7 +311,7 @@ namespace nvattestation {
         // can be done when refactoring gpu and switch remote verifiers to a single remote verifier
         if (json.contains("x-nvidia-gpu-attestation-report-cert-chain")) {
             LOG_DEBUG("Deserializing submod GPU claims from JSON");
-            auto gpu_claims = std::make_shared<SerializableGpuClaimsV3>();
+            auto gpu_claims = std::make_shared<SerializableGpuClaimsV4>();
             from_json(json, *gpu_claims);
             submod_claims.m_device_claims = std::static_pointer_cast<Claims>(gpu_claims);
         } else if (json.contains("x-nvidia-switch-attestation-report-cert-chain")) {

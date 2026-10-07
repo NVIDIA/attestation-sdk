@@ -1,0 +1,532 @@
+{
+  "evidence": [
+    {
+      "ev_triples": {
+        "evidence_triples": [
+          {
+            "environment": {
+              "class": {
+                "model": "GR100 CC settings - MPT",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "CC MPT settings",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      53
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "CC mode status - MPT",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "CC mpt mode status",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      49
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "FB protection settings",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "FB protection settings",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      48
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "Ucode load settings",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "Ucode load settings",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      50
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "PRI redirection setting",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "PRI redirection settings",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      52
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100 CC TCB Ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "GSP FMC Hash",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      54
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "GSP EFMC Hash",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      45
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "FECS ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      56
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "PMU ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      63
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "SEC2-FMC Hash",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      41
+                    ]
+                  }
+                }
+              },
+              {
+                "key": "SEC2_RTOS ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      40
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100 Compute Ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "GPCCS ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      55
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100 GSP-RM ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "GSP-RM ucode Hash",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      46
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "Nvdec0 ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "Nvdec0 ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      61
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "Nvdec ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "Nvdec ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      60
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "OFA ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "OFA ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      59
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "NVJPG ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "NVJPG ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      58
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "NVENC ucode",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "NVENC ucode",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      57
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100 HW config",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "FSP BootROM patches",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      1
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100CC Fuses",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "CC Fuses",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      4
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100FSP FMC",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "FSP FMC",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      2
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware microcodes (BootComplex reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      5
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware microcodes (FLR reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      11
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware microcodes (NVLink reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      19
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware ROM (BootComplex reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      6
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware ROM (FLR reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      12
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Firmware ROM (NVLink reset domain)",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": " ",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      16
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "environment": {
+              "class": {
+                "model": "GR100Debug State",
+                "vendor": "NVIDIA"
+              }
+            },
+            "measurements": [
+              {
+                "key": "JTAG Unlock Status",
+                "values": {
+                  "spdm_indirect": {
+                    "indexes": [
+                      17
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "rim_locators": [
+    {
+      "uris": [
+        "https://rim.attestation.nvidia.com/v1/rim/NV_GPU_VBIOS_G153_0210_895_9802AF0001.corim"
+      ]
+    },
+    {
+      "uris": [
+        "https://rim.attestation.nvidia.com/v1/rim/NV_GPU_DRIVER_GR100_UNKNOWN.corim"
+      ]
+    }
+  ]
+}

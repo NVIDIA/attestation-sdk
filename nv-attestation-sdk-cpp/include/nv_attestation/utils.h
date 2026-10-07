@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <curl/urlapi.h>
@@ -47,6 +48,20 @@ const size_t MIN_VALID_NONCE_LEN = 32;
  * @param out_content The string to store the file content.
  * @return Error::Ok on success, Error::InternalError on failure.
  */
+inline bool starts_with(const std::string &str, const std::string &prefix) {
+    return str.size() >= prefix.size() &&
+           str.compare(0, prefix.size(), prefix) == 0;
+}
+
+inline bool starts_with(const std::string &str, const char *prefix) {
+    return starts_with(str, std::string(prefix));
+}
+
+inline bool ends_with(const std::string &str, const std::string &suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 inline Error readFileIntoString(const std::string& path, std::string& out_content) {
     std::ifstream ifs(path);
     if (!ifs) {
@@ -70,6 +85,26 @@ inline bool path_is_directory(const std::string& path) {
 inline bool path_exists(const std::string& path) {
     struct stat path_stat;
     return stat(path.c_str(), &path_stat) == 0;
+}
+
+/**
+ * @brief Reads the entire content of a file into a byte vector.
+ * @param path The path to the file to read.
+ * @param out_bytes The vector to store the file content.
+ * @return Error::Ok on success, Error::InternalError on failure.
+ */
+inline Error readFileIntoBytes(const std::string& path, std::vector<uint8_t>& out_bytes) {
+    if (path_is_directory(path)) {
+        LOG_ERROR("Path is a directory, not a file: " << path);
+        return Error::InternalError;
+    }
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) {
+        LOG_ERROR("Could not open file: " << path);
+        return Error::InternalError;
+    }
+    out_bytes.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+    return Error::Ok;
 }
 
 inline std::string path_join(const std::string& path1, const std::string& path2) {
@@ -139,8 +174,9 @@ inline Error encode_base64(const std::vector<uint8_t>& data, std::string& out_en
     //ref: https://docs.openssl.org/3.0/man3/EVP_EncodeInit/
     int len = data.size();
 
-    // Over-allocate - base64 is ~33% larger, so 2x input is definitely enough
-    std::vector<unsigned char> out(len * 2);
+    // EVP_EncodeBlock writes 4*ceil(len/3) base64 chars plus a NUL terminator.
+    // (len * 2) is too small for len in {1, 2, 4}; cover both by sizing precisely.
+    std::vector<unsigned char> out(4 * ((len + 2) / 3) + 1);
 
     int outlen = EVP_EncodeBlock(out.data(), data.data(), len);
     if (outlen < 0) {
@@ -155,6 +191,56 @@ inline Error encode_base64(const std::vector<uint8_t>& data, std::string& out_en
 inline Error encode_base64(const std::string &data, std::string& out_encoded_data) {
     std::vector<uint8_t> data_bytes(data.begin(), data.end());
     return encode_base64(data_bytes, out_encoded_data);
+}
+
+// base64url (RFC 4648 §5, no padding). Translates to/from the standard
+// alphabet and delegates the actual codec to encode_base64/decode_base64.
+inline Error encode_base64url(const std::vector<uint8_t> &input, std::string& out_encoded_data) {
+    std::string standard;
+    Error err = encode_base64(input, standard);
+    if (err != Error::Ok) {
+        return err;
+    }
+    out_encoded_data.clear();
+    out_encoded_data.reserve(standard.size());
+    for (char ch : standard) {
+        if (ch == '+') {
+            out_encoded_data.push_back('-');
+        } else if (ch == '/') {
+            out_encoded_data.push_back('_');
+        } else if (ch != '=') {
+            out_encoded_data.push_back(ch);
+        }
+    }
+    return Error::Ok;
+}
+
+inline Error decode_base64url(const std::string &input, std::vector<uint8_t>& out_decoded_data) {
+    std::string standard;
+    standard.reserve(input.size() + 2);
+    for (char ch : input) {
+        if (ch == '-') {
+            standard.push_back('+');
+        } else if (ch == '_') {
+            standard.push_back('/');
+        } else if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                   (ch >= '0' && ch <= '9')) {
+            standard.push_back(ch);
+        } else {
+            // Rejects '=' (base64url is unpadded) and any non-alphabet byte.
+            LOG_ERROR("base64url payload contains an invalid character");
+            return Error::BadArgument;
+        }
+    }
+    // A length of 1 (mod 4) cannot arise from any byte string.
+    if (standard.size() % 4 == 1) {
+        LOG_ERROR("base64url payload has an invalid length");
+        return Error::BadArgument;
+    }
+    while (standard.size() % 4 != 0) {
+        standard.push_back('=');
+    }
+    return decode_base64(standard, out_decoded_data);
 }
 
 /**
@@ -176,11 +262,15 @@ static std::vector<uint8_t> hex_string_to_bytes(const std::string& hex) {
 /**
  * @brief Converts a vector of bytes to its hexadecimal string representation.
  * @param data The vector of bytes to convert.
+ * @param uppercase If true, use uppercase hex digits (A-F) instead of lowercase.
  * @return A string containing the hexadecimal representation of the input data.
  */
-static std::string to_hex_string(const std::vector<uint8_t>& data) {
+static std::string to_hex_string(const std::vector<uint8_t>& data, bool uppercase = false) {
     std::stringstream ss;
     ss << std::hex << std::setfill('0');
+    if (uppercase) {
+        ss << std::uppercase;
+    }
     for (uint8_t byte : data) {
         ss << std::setw(2) << static_cast<unsigned int>(byte);
     }
@@ -226,6 +316,29 @@ std::string to_hex_string(const std::array<uint8_t, N>& data) {
 }
 
 /**
+ * @brief Formats a 16-byte UUID as the standard 8-4-4-4-12 hex string.
+ * @param data Pointer to exactly 16 bytes of UUID data.
+ * @param len Length of the data buffer (must be 16).
+ * @param out_uuid The formatted UUID string.
+ * @return Error::Ok on success, Error::BadArgument if len != 16.
+ */
+static Error uuid_to_string(const uint8_t* data, size_t len, std::string& out_uuid) {
+    if (len != 16) {
+        LOG_ERROR("Invalid UUID length: " << len << " (expected 16)");
+        return Error::BadArgument;
+    }
+    out_uuid.clear();
+    out_uuid.reserve(36);
+    for (size_t i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            out_uuid += '-';
+        }
+        out_uuid += to_hex_string(data[i]);
+    }
+    return Error::Ok;
+}
+
+/**
  * @brief Converts a timestamp to human readable string
  * @param timestamp The timestamp to convert
  * @param out_formatted_time The output string containing the formatted time
@@ -249,7 +362,7 @@ inline Error format_time(time_t timestamp, std::string& out_formatted_time) {
     }
 
     char buffer[80];
-    size_t result = strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
+    size_t result = strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_info);
     if (result == 0) {
         LOG_ERROR("strftime() failed to format timestamp: " << timestamp);
         return Error::InternalError;
@@ -267,19 +380,32 @@ inline Error remove_null_terminators(std::string& str) {
     return Error::Ok;
 }
 
+inline Error secure_random_bytes(std::vector<uint8_t>& out_bytes) {
+    int result = RAND_bytes(out_bytes.data(), static_cast<int>(out_bytes.size()));
+    if (result != 1) {
+        LOG_ERROR("Failed to generate secure random bytes. OpenSSL error: " << get_openssl_error());
+        return Error::InternalError;
+    }
+    return Error::Ok;
+}
+
 inline Error generate_nonce(std::vector<uint8_t>& out_nonce) {
     size_t num_bytes = out_nonce.size();
     if (num_bytes < MIN_VALID_NONCE_LEN) {
         LOG_ERROR("Requested nonce length " << num_bytes << " is too short. Minimum viable nonce length is " << MIN_VALID_NONCE_LEN << " bytes.");
         return Error::BadArgument;
     }
-    unsigned char* buffer = out_nonce.data();
-    int result = RAND_bytes(buffer, num_bytes);
-    if (result != 1) {
-        LOG_ERROR("Failed to generate a secure random nonce. OpenSSL error: " << get_openssl_error());
-        return Error::InternalError;
+    return secure_random_bytes(out_nonce);
+}
+
+// Random, base64url-encoded token for correlating a single outbound request in logs.
+inline Error generate_request_id(std::string& out_request_id) {
+    std::vector<uint8_t> bytes(16);
+    Error err = secure_random_bytes(bytes);
+    if (err != Error::Ok) {
+        return err;
     }
-    return Error::Ok;
+    return encode_base64url(bytes, out_request_id);
 }
 
 /**
@@ -338,6 +464,19 @@ nlohmann::json serialize_optional_shared_ptr(const T* ptr) {
     return nullptr;
 }
 
+// Diagnostic rendering only. Invalid UTF-8 bytes are dropped instead of
+// throwing; API and wire serialization must continue to use strict dump().
+inline std::string safe_json_dump(const nlohmann::json& value,
+                                  int indent = -1) {
+    return value.dump(indent, ' ', false,
+                      nlohmann::json::error_handler_t::ignore);
+}
+
+template<typename T>
+inline std::string safe_json_dump(const T& value, int indent = -1) {
+    return safe_json_dump(nlohmann::json(value), indent);
+}
+
 template<typename T>
 inline Error serialize_to_json(T& value, std::string& out_string) {
     try {
@@ -375,7 +514,7 @@ inline Error deserialize_from_json_object(const nlohmann::json& json, T& out_val
         out_value = json.get<T>();
         return Error::Ok;
     } catch (const nlohmann::json::exception& e) {
-        LOG_ERROR("Failed to deserialize from JSON: " << std::endl << json.dump() << std::endl << "The exception was: " << e.what());
+        LOG_ERROR("Failed to deserialize from JSON: " << std::endl << safe_json_dump(json) << std::endl << "The exception was: " << e.what());
         return Error::InternalError;
     } catch (...) {
         LOG_ERROR("Unknown error occurred during JSON deserialization");
@@ -478,6 +617,28 @@ bool compare_shared_ptr(const std::shared_ptr<T>& lhs, const std::shared_ptr<T>&
     return *lhs == *rhs;
 }
 
+template<typename T>
+bool compare_unique_ptr(const std::unique_ptr<T>& lhs, const std::unique_ptr<T>& rhs) {
+    if (lhs == nullptr && rhs == nullptr) return true;
+    if (lhs == nullptr || rhs == nullptr) return false;
+    return *lhs == *rhs;
+}
+
+/**
+ * @brief Deserializes an optional JSON field to a unique_ptr<T>
+ * @tparam T The type to deserialize to
+ * @param j The JSON object to read from
+ * @param field_name The name of the field to read
+ * @return unique_ptr<T> containing the value if field exists and is not null, nullptr otherwise
+ */
+template<typename T>
+std::unique_ptr<T> deserialize_optional_unique_ptr(const nlohmann::json& j, const std::string& field_name) {
+    if (j.contains(field_name) && !j.at(field_name).is_null()) {
+        return std::unique_ptr<T>(new T(j.at(field_name).get<T>()));
+    }
+    return nullptr;
+}
+
 inline long long time_since_epoch_ms() {
     auto now = std::chrono::system_clock::now();
     auto duration_since_epoch = now.time_since_epoch();
@@ -530,4 +691,65 @@ bool load_symbol(void* handle, const char* name, T& func_ptr) {
 }
 
 Error compute_sha256_hex(const std::string& data, std::string& out_hex);
+
+enum class HashAlgorithm { Sha256, Sha384, Sha512 };
+
+// Maps a hash algorithm to its OpenSSL digest implementation.
+Error evp_md_for_hash_algorithm(HashAlgorithm alg, const EVP_MD*& out_md);
+
+// Returns the IANA NI algorithm name ("sha-256", "sha-384", "sha-512").
+const char* to_algorithm_name(HashAlgorithm alg);
+
+// Returns the IANA Named Information registry ID (sha-256 = 1, sha-384 = 7,
+// sha-512 = 8), as used by CoRIM/CoEV digest records.
+int32_t to_ni_algorithm_id(HashAlgorithm alg);
+
+// Maps an IANA NI registry ID (1, 7, 8) to the hash algorithm.
+Error hash_algorithm_from_ni_id(int32_t ni_id, HashAlgorithm& out_alg);
+
+// Maps an IANA NI hash name ("sha-256", "sha-384", "sha-512") to the algorithm.
+Error hash_algorithm_from_name(const std::string& name, HashAlgorithm& out_alg);
+
+// Maps a digest length in bytes to the hash algorithm that produces it.
+// Returns Error::BadArgument when the length matches no supported algorithm.
+Error hash_algorithm_from_digest_size(std::size_t size, HashAlgorithm& out_alg);
+
+// Compute a digest of `data` using `alg`. Raw bytes are written to `out_bytes`.
+Error compute_digest(const std::vector<uint8_t>& data,
+                     HashAlgorithm alg,
+                     std::vector<uint8_t>& out_bytes);
+
+/**
+ * @brief Trims trailing slashes and requires an https:// scheme.
+ *
+ * On success writes the normalized URL to @p out_normalized and returns
+ * Error::Ok. Logs and returns Error::BadArgument if the URL does not start
+ * with "https://".
+ *
+ * @param url          The raw URL to validate and normalize.
+ * @param out_normalized Receives the normalized URL on success.
+ */
+Error require_https_and_normalize(const std::string& url, std::string& out_normalized);
+
+/**
+ * @brief Deep-clone the pointee of a raw pointer into a fresh unique_ptr.
+ *        Returns nullptr if @src is null. Useful for copy constructors of
+ *        classes holding `unique_ptr<T>` members whose getter exposes a
+ *        `const T*`.
+ */
+template <typename T>
+inline std::unique_ptr<T> clone_unique(const T* src) {
+    return src ? std::make_unique<T>(*src) : nullptr;
+}
+
+/**
+ * @brief Deep-clone the pointee of a unique_ptr into a fresh unique_ptr.
+ *        Returns nullptr if @src is null. Useful when copying unique_ptr
+ *        members in a copy constructor.
+ */
+template <typename T>
+inline std::unique_ptr<T> clone_unique(const std::unique_ptr<T>& src) {
+    return src ? std::make_unique<T>(*src) : nullptr;
+}
+
 } // namespace nvattestation

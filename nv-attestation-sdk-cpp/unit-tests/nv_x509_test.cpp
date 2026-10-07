@@ -102,6 +102,18 @@ TEST_F(X509CertChainSignatureTest, InvalidSignatureIncorrectSignature) {
     EXPECT_EQ(error, Error::InternalError) << "Signature verification succeeded for an incorrect signature.";
 }
 
+TEST_F(X509CertChainSignatureTest, NullHashAlgorithmRejected) {
+    Error error = m_cert_chain.verify_signature(m_data_to_sign, m_valid_signature, nullptr);
+    EXPECT_EQ(error, Error::InternalError) << "A null digest must not be accepted.";
+}
+
+TEST(X509CertChainSignatureEmptyChainTest, EmptyChainHasNoKeyToVerifyWith) {
+    X509CertChain chain;
+    const std::vector<uint8_t> data{0x01, 0x02};
+    const std::vector<uint8_t> signature{0x03, 0x04};
+    EXPECT_NE(chain.verify_signature(data, signature, EVP_sha256()), Error::Ok);
+}
+
 class X509CertChainFwidTest : public ::testing::Test {
 protected:
     std::string m_root_cert_pem_str;
@@ -274,4 +286,278 @@ TEST_F(X509CertChainVerifyTest, InvalidSignatureFailsVerification) {
 
     error = cert_chain.verify();
     EXPECT_EQ(error, Error::CertChainVerificationFailure) << "Certificate with invalid signature should fail verification.";
+}
+
+// DMTF SubjectAltName otherName (1.3.6.1.4.1.412.274.1) carries
+// "<manufacturer>:<product>:<serial>"; the claim is the final field.
+TEST(X509CertChainDmtfSerialTest, ExtractsSerialFromOtherName) {
+    std::string pem;
+    ASSERT_EQ(readFileIntoString(
+                  "testdata/sample_attestation_data/gpu/rubinCertChain.txt", pem),
+              Error::Ok);
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GPU_DEVICE_IDENTITY, pem, pem, chain),
+              Error::Ok);
+
+    DmtfDeviceInfo info;
+    ASSERT_EQ(chain.get_end_entity_dmtf_device_info(info), Error::Ok);
+    EXPECT_EQ(info.serial, "48B02D1D45D71980");
+    EXPECT_EQ(info.product, "GR100");
+}
+
+TEST(X509CertChainDmtfSerialTest, ExtractsSerialFromBlackwellChain) {
+    std::string pem;
+    ASSERT_EQ(readFileIntoString(
+                  "testdata/sample_attestation_data/gpu/blackwellCertChain.txt", pem),
+              Error::Ok);
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GPU_DEVICE_IDENTITY, pem, pem, chain),
+              Error::Ok);
+
+    DmtfDeviceInfo info;
+    ASSERT_EQ(chain.get_end_entity_dmtf_device_info(info), Error::Ok);
+    EXPECT_EQ(info.serial, "48B02DD4C0CB1539");
+    EXPECT_EQ(info.product, "GB100");
+}
+
+// Not every chain carries the extension; absence is reported, not fatal.
+TEST(X509CertChainDmtfSerialTest, AbsentExtensionReportsCertNotFound) {
+    std::string pem;
+    ASSERT_EQ(readFileIntoString(
+                  "testdata/sample_attestation_data/cpu/veraCertChain.txt", pem),
+              Error::Ok);
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GENERIC, pem, pem, chain),
+              Error::Ok);
+
+    DmtfDeviceInfo info;
+    EXPECT_EQ(chain.get_end_entity_dmtf_device_info(info), Error::CertNotFound);
+}
+
+
+// An empty chain has no end-entity certificate to read the extension from.
+TEST(X509CertChainDmtfSerialTest, EmptyChainReportsCertNotFound) {
+    X509CertChain chain;
+    DmtfDeviceInfo info;
+    EXPECT_EQ(chain.get_end_entity_dmtf_device_info(info), Error::CertNotFound);
+}
+
+// The serial is read per index; the device cert is not always the leaf.
+TEST(X509CertChainSerialTest, ReadsSerialAtIndex) {
+    std::string pem;
+    ASSERT_EQ(readFileIntoString(
+                  "testdata/sample_attestation_data/gpu/blackwellCertChain.txt", pem),
+              Error::Ok);
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GPU_DEVICE_IDENTITY, pem, pem, chain),
+              Error::Ok);
+    ASSERT_GT(chain.size(), 0u);
+
+    std::string leaf_serial;
+    ASSERT_EQ(chain.get_cert_serial(0, leaf_serial), Error::Ok);
+    EXPECT_FALSE(leaf_serial.empty());
+    // Decimal, per BN_bn2dec.
+    EXPECT_EQ(leaf_serial.find_first_not_of("0123456789"), std::string::npos);
+
+    // get_end_entity_serial is index 0 by definition.
+    std::string end_entity_serial;
+    ASSERT_EQ(chain.get_end_entity_serial(end_entity_serial), Error::Ok);
+    EXPECT_EQ(end_entity_serial, leaf_serial);
+}
+
+TEST(X509CertChainSerialTest, IndexOutOfBoundsReportsCertNotFound) {
+    X509CertChain chain;
+    std::string serial;
+    EXPECT_EQ(chain.get_cert_serial(0, serial), Error::CertNotFound);
+    EXPECT_EQ(chain.get_cert_serial(99, serial), Error::CertNotFound);
+}
+
+// akpub is exported from the end-entity key, so an empty chain has none.
+TEST(X509CertChainPublicKeyTest, ExportsEndEntityKeyAsPem) {
+    std::string pem;
+    ASSERT_EQ(readFileIntoString(
+                  "testdata/sample_attestation_data/gpu/blackwellCertChain.txt", pem),
+              Error::Ok);
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GPU_DEVICE_IDENTITY, pem, pem, chain),
+              Error::Ok);
+
+    std::string key_pem;
+    ASSERT_EQ(chain.get_end_entity_public_key_pem(key_pem), Error::Ok);
+    EXPECT_NE(key_pem.find("-----BEGIN PUBLIC KEY-----"), std::string::npos);
+    EXPECT_NE(key_pem.find("-----END PUBLIC KEY-----"), std::string::npos);
+}
+
+TEST(X509CertChainPublicKeyTest, EmptyChainHasNoPublicKey) {
+    X509CertChain chain;
+    std::string key_pem;
+    EXPECT_NE(chain.get_end_entity_public_key_pem(key_pem), Error::Ok);
+    EXPECT_TRUE(key_pem.empty());
+}
+
+// DSP0274 §330 fixes the value at exactly "<manufacturer>:<product>:<serial>",
+// with no colon permitted inside a field.
+TEST(DmtfDeviceInfoSerialTest, SplitsAllThreeFields) {
+    DmtfDeviceInfo info;
+    ASSERT_EQ(parse_dmtf_device_info("NVIDIA:GB100:48B02DD4C0CB1539", info),
+              Error::Ok);
+    EXPECT_EQ(info.manufacturer, "NVIDIA");
+    EXPECT_EQ(info.product, "GB100");
+    EXPECT_EQ(info.serial, "48B02DD4C0CB1539");
+    // The spec's own example.
+    ASSERT_EQ(parse_dmtf_device_info("ACME:WIDGET:0123456789", info), Error::Ok);
+    EXPECT_EQ(info.product, "WIDGET");
+    EXPECT_EQ(info.serial, "0123456789");
+}
+
+TEST(DmtfDeviceInfoSerialTest, RejectsMalformedValues) {
+    const char* const kMalformed[] = {
+        "48B02DD4C0CB1539",               // no separators — was returned whole
+        "NVIDIA:48B02DD4C0CB1539",        // two fields
+        "NVIDIA:GB100:A:48B02DD4C0CB15",  // four fields
+        "NVIDIA:GB100:",                  // empty serial
+        "",                               // empty value
+    };
+    for (const char* value : kMalformed) {
+        DmtfDeviceInfo info;
+        info.serial = "stale";
+        EXPECT_EQ(parse_dmtf_device_info(value, info), Error::BadArgument)
+            << value;
+        EXPECT_EQ(info.serial, "stale") << value;
+    }
+}
+
+TEST(X509CertChainTest, GetSubjectCnReturnsLeafCn) {
+    std::string root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/root_cert", root_pem),
+              Error::Ok);
+    std::string leaf_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/leaf_cert_with_fwid", leaf_pem),
+              Error::Ok);
+
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, root_pem, chain),
+              Error::Ok);
+    ASSERT_EQ(chain.push_back(leaf_pem), Error::Ok);
+
+    std::string cn;
+    Error err = chain.get_subject_cn(0, cn);
+
+    EXPECT_EQ(err, Error::Ok);
+    EXPECT_FALSE(cn.empty());
+}
+
+TEST(X509CertChainTest, GetSubjectCnOutOfRangeIndexFails) {
+    std::string root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/root_cert", root_pem),
+              Error::Ok);
+    std::string leaf_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/leaf_cert_with_fwid", leaf_pem),
+              Error::Ok);
+
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, root_pem, chain),
+              Error::Ok);
+    ASSERT_EQ(chain.push_back(leaf_pem), Error::Ok);
+
+    std::string cn;
+    Error err = chain.get_subject_cn(999, cn);
+
+    EXPECT_EQ(err, Error::CertNotFound);
+}
+
+namespace {
+PerCertStatus good_cert_status() {
+    PerCertStatus status;
+    status.expired = false;
+    status.ocsp = std::make_shared<PerCertStatus::OcspInfo>();
+    status.ocsp->crl_status = OCSPStatus::GOOD;
+    status.ocsp->nonce_matches = true;
+    status.ocsp->response_valid = true;
+    return status;
+}
+
+// chain[0] is always the root (self-signed trust anchor): generate_per_cert_status()
+// returns root-first and never queries OCSP for it. These tests put the cert
+// under test at index 1, with a root placeholder (no ocsp info) at index 0.
+PerCertStatus root_placeholder_status() {
+    PerCertStatus status;
+    status.expired = false;
+    return status;
+}
+
+// Represents a non-root cert whose OCSP check was skipped as not applicable
+// (e.g. the device's attestation-key/"AK" leaf cert has no AIA responder
+// URL, as on real NVIDIA GPU device-identity chains). Must not be required
+// to show a GOOD OCSP status.
+PerCertStatus ak_cert_status() {
+    PerCertStatus status;
+    status.expired = false;
+    status.ocsp = std::make_shared<PerCertStatus::OcspInfo>();
+    status.ocsp->crl_status = OCSPStatus::NOT_CHECKED;
+    return status;
+}
+}  // namespace
+
+TEST(AllCertsTrustedTest, AllGoodPasses) {
+    std::vector<PerCertStatus> chain{root_placeholder_status(), good_cert_status(), good_cert_status()};
+    EXPECT_TRUE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, NotApplicableOcspPasses) {
+    std::vector<PerCertStatus> chain{
+        root_placeholder_status(), good_cert_status(), good_cert_status(), ak_cert_status()};
+    EXPECT_TRUE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, RootOcspNotRequired) {
+    std::vector<PerCertStatus> chain{root_placeholder_status(), good_cert_status()};
+    EXPECT_TRUE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, ExpiredCertFailsEvenWithoutOcsp) {
+    PerCertStatus expired = good_cert_status();
+    expired.expired = true;
+    std::vector<PerCertStatus> chain{root_placeholder_status(), expired};
+    EXPECT_FALSE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, ExpiredRootFails) {
+    PerCertStatus expired_root = root_placeholder_status();
+    expired_root.expired = true;
+    std::vector<PerCertStatus> chain{expired_root, good_cert_status()};
+    EXPECT_FALSE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, NonceMismatchFails) {
+    PerCertStatus bad_nonce = good_cert_status();
+    bad_nonce.ocsp->nonce_matches = false;
+    std::vector<PerCertStatus> chain{root_placeholder_status(), bad_nonce};
+    EXPECT_FALSE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, InvalidResponseFails) {
+    PerCertStatus bad_response = good_cert_status();
+    bad_response.ocsp->response_valid = false;
+    std::vector<PerCertStatus> chain{root_placeholder_status(), bad_response};
+    EXPECT_FALSE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, ErrorStatusFails) {
+    PerCertStatus errored = good_cert_status();
+    errored.ocsp->crl_status = OCSPStatus::ERROR;
+    std::vector<PerCertStatus> chain{root_placeholder_status(), errored};
+    EXPECT_FALSE(all_certs_trusted(chain));
+}
+
+TEST(AllCertsTrustedTest, MissingOcspInfoPasses) {
+    PerCertStatus no_ocsp;
+    no_ocsp.expired = false;
+    std::vector<PerCertStatus> chain{root_placeholder_status(), no_ocsp};
+    EXPECT_TRUE(all_certs_trusted(chain));
 }

@@ -1,0 +1,7 @@
+501_1({
+    0: "test-corim-with-profile",
+    1: [
+        506_1(h'a201a10077746573742d636f6d69642d776974682d70726f66696c6504a1008182a100a1016756656e646f725a81a101a10101'),
+    ],
+    3: 32_0("http://example.test/unknown-profile"),
+})

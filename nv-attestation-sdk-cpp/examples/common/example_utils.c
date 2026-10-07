@@ -13,7 +13,7 @@
 #include "example_utils.h"
 #include <string.h>
 
-static nvat_log_level_t get_log_level_from_env() {
+static nvat_log_level_t get_log_level_from_env(void) {
     const char* env_val = getenv("NVAT_SDK_EXAMPLES_LOG_LEVEL");
     if (env_val == NULL) {
         return NVAT_LOG_LEVEL_ERROR;

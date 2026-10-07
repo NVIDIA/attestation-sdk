@@ -1,0 +1,26 @@
+{
+  "ev_triples": {
+    "evidence_triples": [
+      {
+        "environment": {
+          "class": {
+            "model": "TestExtra",
+            "vendor": "TestVendor"
+          }
+        },
+        "measurements": [
+          {
+            "values": {
+              "digests": [
+                "sha-256;qrvM3e7/ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJk="
+              ],
+              "name": "extra"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "evidence_id": "uuid:11223344-5566-7788-9900-aabbccddeeff",
+  "profile": "oid:1.2.3"
+}

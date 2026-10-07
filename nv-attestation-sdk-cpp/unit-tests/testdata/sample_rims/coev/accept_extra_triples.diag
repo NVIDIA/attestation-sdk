@@ -1,0 +1,28 @@
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestExtra" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899']
+              ],
+              / name / 11: "extra"
+            }
+          }
+        ]
+      ]
+    ],
+    / identity-triples / 1: [ h'00' ],
+    / dependency-triples / 2: [ h'00' ],
+    / membership-triples / 3: [ h'00' ],
+    / coswid-triples / 4: [ h'00' ],
+    / attest-key-triples / 5: [ h'00' ]
+  },
+  / evidence-id / 1: 37(h'11223344556677889900aabbccddeeff'),
+  / profile / 2: 111(h'2a03')
+})

@@ -40,14 +40,18 @@ class RegoClaimsEvaluator : public IClaimsEvaluator {
         RegoClaimsEvaluator(const std::string& policy) : m_policy(policy) {}
 
         Error evaluate_claims(const ClaimsCollection& claims, bool& out_match) override {
-            std::string json;
-            Error error = claims.serialize_json(json);
+            std::string serialized_claims;
+            Error error = claims.serialize_json(serialized_claims);
             if (error != Error::Ok) {
                 LOG_ERROR("Failed to serialize claims");
                 return error;
             }
+            return evaluate_json(serialized_claims, out_match);
+        }
+
+        Error evaluate_json(const std::string& json, bool& out_match) override {
+            out_match = false;
             LOG_TRACE("--- Rego Policy ---" << std::endl << m_policy << "--- End Rego Policy ---");
-            LOG_TRACE("--- Claims ---" << std::endl << json << "--- End Claims ---");
             auto evaluation_result = m_engine.evaluate_policy(m_policy, json, ENTRYPOINT);
             if (evaluation_result == nullptr) {
                 return Error::PolicyEvaluationError;
@@ -55,15 +59,17 @@ class RegoClaimsEvaluator : public IClaimsEvaluator {
 
             try {
                 LOG_TRACE("--- Policy evaluation result ---" << std::endl << *evaluation_result << "--- End Policy Evaluation Result ---");
-                auto json = nlohmann::json::parse(*evaluation_result);
-                // Safely access nested members using .at() to throw if missing/wrong type
-                out_match = json.at("result").at(0).at("expressions").at(0).at("value");
+                const auto result = nlohmann::json::parse(*evaluation_result);
+                const auto& value = result.at("result").at(0).at("expressions").at(0).at("value");
+                if (!value.is_boolean()) {
+                    LOG_ERROR("Policy result is not a boolean");
+                    return Error::PolicyEvaluationError;
+                }
+                out_match = value.get<bool>();
                 return Error::Ok;
             } catch (const nlohmann::json::exception& e) {
                 LOG_ERROR(std::string("Failed to evaluate policy: ") + e.what());
-                // Even if JSON parsing fails, default to false instead of error
-                out_match = false;
-                return Error::Ok;
+                return Error::PolicyEvaluationError;
             }
         }
 };
@@ -101,6 +107,7 @@ std::shared_ptr<IClaimsEvaluator> ClaimsEvaluatorFactory::create_overall_result_
             check_gpu_ar_cert_chain(claims)
             check_gpu_driver_rim_cert_chain(claims)
             check_gpu_vbios_rim_cert_chain(claims)
+            check_opaque_data_match(claims)
         }
 
         validate_switch_claims(claims) {
@@ -111,6 +118,10 @@ std::shared_ptr<IClaimsEvaluator> ClaimsEvaluatorFactory::create_overall_result_
 
         check_measurements_match(claims) {
             claims.measres == "success"
+        }
+
+        check_opaque_data_match(claims) {
+            object.get(claims, "x-nvidia-mismatch-opaque-data-records", null) == null
         }
 
         check_gpu_ar_cert_chain(claims) {

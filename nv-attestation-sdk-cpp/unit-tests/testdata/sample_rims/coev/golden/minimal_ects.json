@@ -1,0 +1,19 @@
+[
+  {
+    "claims": [
+      {
+        "values": {
+          "digests": [
+            "sha-256;ABEiM0RVZneImaq7zN3u/wARIjNEVWZ3iJmqu8zd7v8="
+          ]
+        }
+      }
+    ],
+    "environment": {
+      "class": {
+        "model": "TestModel",
+        "vendor": "TestVendor"
+      }
+    }
+  }
+]

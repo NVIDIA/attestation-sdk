@@ -23,14 +23,9 @@ class Environment : public ::testing::Environment {
 
   // Override this to define how to set up the environment.
   void SetUp() override {
-    // Always run the certificate generation script (it will check if certs already exist)
-    const std::string cert_dir = "testdata/x509_cert_chain/";
-    std::string command = "cd " + cert_dir + " && ./generate_test_certs.sh";
-    
-    int result = std::system(command.c_str());
-    if (result != 0) {
-      std::cerr << "Warning: Certificate generation script failed. Exit code: " << result << std::endl;
-    }
+    // Fixtures are produced by the `prepare-test-data-for-unit-tests` custom
+    // target in unit-tests/CMakeLists.txt (runs before this binary is built).
+    // No runtime side-effects here.
 
     std::shared_ptr<SdkOptions> options = std::make_shared<SdkOptions>();
     options -> logger = std::make_shared<SpdLogLogger>(LogLevel::TRACE);

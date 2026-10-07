@@ -323,6 +323,24 @@ impl HttpOptions {
         }
     }
 
+    /// Set the path to a CA certificate bundle file (PEM) for TLS verification
+    pub fn set_tls_ca_cert(&mut self, path: &str) -> Result<()> {
+        let c_path = CString::new(path).map_err(|_| NvatError::new(NVAT_RC_BAD_ARGUMENT as u16))?;
+        unsafe {
+            nvat_http_options_set_tls_ca_cert(self.inner, c_path.as_ptr());
+        }
+        Ok(())
+    }
+
+    /// Set the path to a directory of CA certificates for TLS verification
+    pub fn set_tls_ca_path(&mut self, path: &str) -> Result<()> {
+        let c_path = CString::new(path).map_err(|_| NvatError::new(NVAT_RC_BAD_ARGUMENT as u16))?;
+        unsafe {
+            nvat_http_options_set_tls_ca_path(self.inner, c_path.as_ptr());
+        }
+        Ok(())
+    }
+
     pub(crate) fn as_ptr(&self) -> nvat_http_options_t {
         self.inner
     }
@@ -332,6 +350,48 @@ impl Drop for HttpOptions {
     fn drop(&mut self) {
         unsafe {
             nvat_http_options_free(&mut self.inner);
+        }
+    }
+}
+
+/// JWT time-claim validation settings for remote attestation verification.
+///
+/// The default configuration permits 60 seconds of clock skew for the `exp`,
+/// `nbf`, and `iat` claims. Use
+/// [`set_clock_skew_leeway_seconds`](Self::set_clock_skew_leeway_seconds) to
+/// select a different leeway; zero enables strict validation.
+pub struct JwtValidationOptions {
+    inner: nvat_jwt_validation_options_t,
+}
+
+impl JwtValidationOptions {
+    /// Create JWT validation settings with the default 60-second clock-skew
+    /// leeway.
+    pub fn default_options() -> Result<Self> {
+        let mut options = ptr::null_mut();
+        unsafe {
+            NvatError::check(nvat_jwt_validation_options_create_default(&mut options))?;
+        }
+        Ok(Self { inner: options })
+    }
+
+    /// Set the clock-skew leeway, in seconds, for `exp`, `nbf`, and `iat`.
+    /// A value of zero enables strict time-claim validation.
+    pub fn set_clock_skew_leeway_seconds(&mut self, seconds: u64) {
+        unsafe {
+            nvat_jwt_validation_options_set_clock_skew_leeway_seconds(self.inner, seconds);
+        }
+    }
+
+    pub(crate) fn as_ptr(&self) -> nvat_jwt_validation_options_t {
+        self.inner
+    }
+}
+
+impl Drop for JwtValidationOptions {
+    fn drop(&mut self) {
+        unsafe {
+            nvat_jwt_validation_options_free(&mut self.inner);
         }
     }
 }
@@ -361,6 +421,8 @@ pub struct HttpOptionsBuilder {
     max_backoff_ms: Option<i64>,
     connection_timeout_ms: Option<i64>,
     request_timeout_ms: Option<i64>,
+    tls_ca_cert: Option<String>,
+    tls_ca_path: Option<String>,
 }
 
 impl HttpOptionsBuilder {
@@ -394,6 +456,18 @@ impl HttpOptionsBuilder {
         self
     }
 
+    /// Set the path to a TLS CA certificate bundle file (PEM).
+    pub fn tls_ca_cert(mut self, path: impl Into<String>) -> Self {
+        self.tls_ca_cert = Some(path.into());
+        self
+    }
+
+    /// Set the path to a directory of TLS CA certificates.
+    pub fn tls_ca_path(mut self, path: impl Into<String>) -> Self {
+        self.tls_ca_path = Some(path.into());
+        self
+    }
+
     /// Build the [`HttpOptions`] with the configured values.
     ///
     /// This creates the underlying C object and applies all configured settings.
@@ -415,6 +489,12 @@ impl HttpOptionsBuilder {
         if let Some(ms) = self.request_timeout_ms {
             opts.set_request_timeout_ms(ms);
         }
+        if let Some(ref path) = self.tls_ca_cert {
+            opts.set_tls_ca_cert(path)?;
+        }
+        if let Some(ref path) = self.tls_ca_path {
+            opts.set_tls_ca_path(path)?;
+        }
 
         Ok(opts)
     }
@@ -425,6 +505,10 @@ impl HttpOptionsBuilder {
 mod log_callbacks {
     use super::*;
     use std::ffi::CStr;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    /// Log target for messages forwarded from the SDK
+    const SDK_LOG_TARGET: &str = "nv_attestation_sdk::c_sdk";
 
     /// Convert C log level to Rust log level
     fn nvat_level_to_log_level(level: nvat_log_level_t) -> log::Level {
@@ -449,9 +533,14 @@ mod log_callbacks {
         _line: std::os::raw::c_int,
         _user_data: *mut std::os::raw::c_void,
     ) -> bool {
-        // Convert C log level to Rust log level and check if enabled
-        let rust_level = nvat_level_to_log_level(level);
-        log::log_enabled!(rust_level)
+        // Unwinding into C is UB. A panic here is silently swallowed: we cannot
+        // log from inside the logger's own recovery path without risking
+        // re-entry, so we fall back to "logging disabled" for this call.
+        catch_unwind(AssertUnwindSafe(|| {
+            let rust_level = nvat_level_to_log_level(level);
+            log::log_enabled!(target: SDK_LOG_TARGET, rust_level)
+        }))
+        .unwrap_or(false)
     }
 
     /// Callback to write log messages to the Rust log system
@@ -466,56 +555,66 @@ mod log_callbacks {
         line: std::os::raw::c_int,
         _user_data: *mut std::os::raw::c_void,
     ) {
-        if message.is_null() {
-            return;
-        }
-
-        // SAFETY: The C SDK guarantees that message is a valid null-terminated string
-        let msg = unsafe {
-            match CStr::from_ptr(message).to_str() {
-                Ok(s) => s,
-                Err(_) => return, // Skip invalid UTF-8
+        // Unwinding into C is UB. A panic here is silently swallowed (dropping
+        // one log line) rather than aborting the process; the logger backend is
+        // not safe to re-enter from its own panic recovery.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            if message.is_null() {
+                return;
             }
-        };
 
-        let rust_level = nvat_level_to_log_level(level);
+            // SAFETY: The C SDK guarantees that message is a valid null-terminated string
+            let msg = unsafe {
+                match CStr::from_ptr(message).to_str() {
+                    Ok(s) => s,
+                    Err(_) => return, // Skip invalid UTF-8
+                }
+            };
 
-        // Extract source location information if available
-        let file = if !filename.is_null() {
-            unsafe { CStr::from_ptr(filename).to_str().ok() }
-        } else {
-            None
-        };
+            let rust_level = nvat_level_to_log_level(level);
+            if !log::log_enabled!(target: SDK_LOG_TARGET, rust_level) {
+                return;
+            }
 
-        let func = if !function.is_null() {
-            unsafe { CStr::from_ptr(function).to_str().ok() }
-        } else {
-            None
-        };
+            // Extract source location information if available
+            let file = if !filename.is_null() {
+                unsafe { CStr::from_ptr(filename).to_str().ok() }
+            } else {
+                None
+            };
 
-        // Format the log message with source location
-        let location = match (file, func) {
-            (Some(f), Some(fn_name)) => format!("{}:{} in {}", f, line, fn_name),
-            (Some(f), None) => format!("{}:{}", f, line),
-            (None, Some(fn_name)) => format!("in {}", fn_name),
-            (None, None) => String::new(),
-        };
+            let func = if !function.is_null() {
+                unsafe { CStr::from_ptr(function).to_str().ok() }
+            } else {
+                None
+            };
 
-        // Log the message through the Rust log system
-        if location.is_empty() {
-            log::log!(rust_level, "{}", msg);
-        } else {
-            log::log!(rust_level, "{} - {}", location, msg);
-        }
+            // Log through the Rust log system, attributed to the C SDK's
+            // source location rather than this callback's
+            log::logger().log(
+                &log::Record::builder()
+                    .level(rust_level)
+                    .target(SDK_LOG_TARGET)
+                    .module_path(func)
+                    .file(file)
+                    .line(u32::try_from(line).ok())
+                    .args(format_args!("{}", msg))
+                    .build(),
+            );
+        }));
     }
 
     /// Callback to flush buffered log messages
     ///
     /// Called by the C SDK at critical points to ensure logs are persisted.
     pub(super) unsafe extern "C" fn rust_flush_callback(_user_data: *mut std::os::raw::c_void) {
-        // env_logger and most Rust loggers flush automatically
-        // This is a no-op, but we could add explicit flushing if needed
-        log::logger().flush();
+        // Unwinding into C is UB. A panic in the backend's flush is silently
+        // swallowed for the same re-entry reason as the other callbacks.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            // env_logger and most Rust loggers flush automatically
+            // This is a no-op, but we could add explicit flushing if needed
+            log::logger().flush();
+        }));
     }
 }
 

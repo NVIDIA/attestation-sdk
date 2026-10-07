@@ -35,6 +35,7 @@ namespace nvattestation {
     MACRO(AllocFailed, NVAT_RC_ALLOC_FAILED) \
     MACRO(FeatureNotEnabled, NVAT_RC_FEATURE_NOT_ENABLED) \
     MACRO(XmlInitFailed, NVAT_RC_XML_INIT_FAILED) \
+    MACRO(CurlInitFailed, NVAT_RC_CURL_INIT_FAILED) \
     MACRO(RelyingPartyPolicyMismatch, NVAT_RC_RP_POLICY_MISMATCH) \
     MACRO(OverallResultFalse, NVAT_RC_OVERALL_RESULT_FALSE) \
     MACRO(RimForbidden, NVAT_RC_RIM_FORBIDDEN) \
@@ -48,6 +49,7 @@ namespace nvattestation {
     MACRO(NrasAttestationError, NVAT_RC_NRAS_ATTESTATION_ERROR) \
     MACRO(NrasTokenInvalid, NVAT_RC_NRAS_TOKEN_INVALID) \
     MACRO(NrasForbidden, NVAT_RC_NRAS_FORBIDDEN) \
+    MACRO(NonceMismatch, NVAT_RC_NONCE_MISMATCH) \
     MACRO(OcspInvalidResponse, NVAT_RC_OCSP_INVALID_RESPONSE) \
     MACRO(OcspServerError, NVAT_RC_OCSP_SERVER_ERROR) \
     MACRO(OcspInvalidRequest, NVAT_RC_OCSP_INVALID_REQUEST) \
@@ -73,6 +75,12 @@ namespace nvattestation {
     MACRO(CertFwidNotFound, NVAT_RC_CERT_FWID_NOT_FOUND) \
     MACRO(CertNotFound, NVAT_RC_CERT_NOT_FOUND) \
     MACRO(CertChainVerificationFailure, NVAT_RC_CERT_CHAIN_VERIFICATION_FAILURE) \
+    MACRO(RateLimited, NVAT_RC_RATE_LIMITED) \
+    MACRO(EvidenceMalformed, NVAT_RC_EVIDENCE_MALFORMED) \
+    MACRO(EvidenceInvalidSignature, NVAT_RC_EVIDENCE_INVALID_SIGNATURE) \
+    MACRO(EvidenceNonceMismatch, NVAT_RC_EVIDENCE_NONCE_MISMATCH) \
+    MACRO(EarSigningFailed, NVAT_RC_EAR_SIGNING_FAILED) \
+    MACRO(VerifierJwksError, NVAT_RC_VERIFIER_JWKS_ERROR) \
     MACRO(JsonSerializationError, NVAT_RC_JSON_SERIALIZATION_ERROR) \
     MACRO(LibXml2Error, NVAT_RC_LIBXML2_ERROR) \
     MACRO(NscqInitFailed, NVAT_RC_NSCQ_INIT_FAILED) \
@@ -84,7 +92,10 @@ namespace nvattestation {
     MACRO(SwitchEvidenceVbiosRimVersionMismatch, NVAT_RC_SWITCH_EVIDENCE_VBIOS_RIM_VERSION_MISMATCH) \
     MACRO(SwitchEvidenceFwidMismatch, NVAT_RC_SWITCH_EVIDENCE_FWID_MISMATCH) \
     MACRO(SwitchEvidenceInvalidSignature, NVAT_RC_SWITCH_EVIDENCE_INVALID_SIGNATURE) \
-    MACRO(CacheObjectNotFound, NVAT_RC_CACHE_OBJECT_NOT_FOUND)
+    MACRO(CacheObjectNotFound, NVAT_RC_CACHE_OBJECT_NOT_FOUND) \
+    MACRO(CoseParseError, NVAT_RC_COSE_PARSE_ERROR) \
+    MACRO(CoseInvalidSignature, NVAT_RC_COSE_INVALID_SIGNATURE) \
+    MACRO(CoseThumbprintMismatch, NVAT_RC_COSE_THUMBPRINT_MISMATCH)
 // Define both the Enum and an array of enum values
 enum class Error {
     #define ERROR_ENUM_TO_ENUM(name, val) name = (val),
@@ -108,6 +119,7 @@ inline const char* to_string(Error error) {
         case Error::AllocFailed: return "Allocation Failed";
         case Error::FeatureNotEnabled: return "Feature is not enabled";
         case Error::XmlInitFailed: return "XML Initialization Failed";
+        case Error::CurlInitFailed: return "Curl Initialization Failed";
         case Error::RelyingPartyPolicyMismatch: return "Relying Party Policy Mismatch";
         case Error::OverallResultFalse: return "Overall Attestation Result is False";
 
@@ -170,6 +182,12 @@ inline const char* to_string(Error error) {
         case Error::SwitchEvidenceFwidMismatch: return "NVSwitch Evidence FWID Mismatch";
         case Error::SwitchEvidenceInvalidSignature: return "NVSwitch Evidence Invalid Signature";
 
+        case Error::EvidenceMalformed: return "Evidence Malformed";
+        case Error::EvidenceInvalidSignature: return "Evidence Invalid Signature";
+        case Error::EvidenceNonceMismatch: return "Evidence Nonce Mismatch";
+        case Error::EarSigningFailed: return "EAR Signing Failed";
+        case Error::VerifierJwksError: return "Verifier JWKS Error";
+
         // JSON serialization errors
         case Error::JsonSerializationError: return "JSON Serialization Error";
 
@@ -181,9 +199,16 @@ inline const char* to_string(Error error) {
         case Error::NrasAttestationError: return "NRAS Attestation Error";
         case Error::NrasTokenInvalid: return "NRAS Token Invalid";
         case Error::NrasForbidden: return "NRAS Forbidden";
+        case Error::NonceMismatch: return "EAT Nonce Mismatch";
 
         // Cache errors
         case Error::CacheObjectNotFound: return "Cache Object Not Found";
+        case Error::RateLimited: return "Rate Limited";
+
+        // COSE errors
+        case Error::CoseParseError: return "COSE Parse Error";
+        case Error::CoseInvalidSignature: return "COSE Invalid Signature";
+        case Error::CoseThumbprintMismatch: return "COSE Certificate Thumbprint Mismatch";
     }
     return "Undefined";
 }

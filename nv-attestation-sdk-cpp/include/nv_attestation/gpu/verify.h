@@ -19,6 +19,8 @@
 
 #include "nv_attestation/claims.h"
 #include "nv_attestation/claims_evaluator.h"
+#include "nv_attestation/gpu/claims.h"
+#include "nv_attestation/gpu/spdm/gpu_opaque_data_parser.hpp"
 #include "nv_attestation/nv_jwt.h"
 #include "nv_attestation/rim.h"
 #include "nv_attestation/nv_x509.h"
@@ -88,12 +90,19 @@ class LocalGpuVerifier : public IGpuVerifier {
         std::shared_ptr<IOcspHttpClient> m_ocsp_http_client;
         DetachedEATOptions m_detached_eat_options;
         
-        Error generate_claims_v3(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, std::string* out_detached_eat, ClaimsCollection& out_claims) const;
-        static Error set_gpu_evidence_claims(const GpuEvidenceClaims& gpu_evidence_claims, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims);
-        Error set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
-        Error set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const;
-        static Error generate_set_measurement_claims(const Measurements& golden_driver_measurements, const Measurements& golden_vbios_measurements, const GpuEvidence::AttestationReport& attestation_report, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims);
-        static Error add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV3& out_serializable_claims);
+        Error generate_claims_v4(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, std::string* out_detached_eat, ClaimsCollection& out_claims) const;
+        static Error set_gpu_evidence_claims(const GpuEvidenceClaims& gpu_evidence_claims, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims);
+        Error set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) const;
+        Error set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) const;
+        static Error generate_set_measurement_claims(const Measurements& golden_driver_measurements, const Measurements& golden_vbios_measurements, const GpuEvidence::AttestationReport& attestation_report, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims);
+        static Error add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV4& out_serializable_claims);
+    public:
+        static void compare_opaque_data(const GpuOpaqueDataParser& opaque_parser,
+                                        const OpaqueRimRecords& rim_records,
+                                        SerializableGpuClaimsV4& out_claims);
+        static Error check_opaque_records_conflict(const OpaqueRimRecords& driver_opaque_records,
+                                                    const OpaqueRimRecords& vbios_opaque_records);
+    private:
 };
 
 /**

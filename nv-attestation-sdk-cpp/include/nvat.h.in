@@ -90,6 +90,8 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_FEATURE_NOT_ENABLED            (6)
 /// @brief Indicates a failure to initialize the required libXML or xmlsec libraries.
 #define NVAT_RC_XML_INIT_FAILED                (7)
+/// @brief Indicates a failure to initialize libcurl.
+#define NVAT_RC_CURL_INIT_FAILED               (8)
 /// @brief Indicates an error when parsing XML.
 #define NVAT_RC_LIBXML2_ERROR                  (10)
 /// @brief Indicates that a relying party policy rejected some or all of the supplied attestation results.
@@ -100,6 +102,20 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_JSON_SERIALIZATION_ERROR       (13)
 /// @brief Indicates an error occurred when fetching an object from the cache.
 #define NVAT_RC_CACHE_OBJECT_NOT_FOUND         (14)
+/// @brief Indicates a verifier or attestation service rate-limited the request.
+#define NVAT_RC_RATE_LIMITED                   (15)
+/// @brief Indicates that the evidence supplied to the verification function could not be parsed.
+#define NVAT_RC_EVIDENCE_MALFORMED             (16)
+/// @brief Indicates the evidence signature failed verification.
+#define NVAT_RC_EVIDENCE_INVALID_SIGNATURE     (17)
+/// @brief Indicates the nonce in the evidence did not match the expected nonce.
+#define NVAT_RC_EVIDENCE_NONCE_MISMATCH        (18)
+/// @brief Indicates the token's eat_nonce did not match the expected nonce supplied by the relying party.
+#define NVAT_RC_NONCE_MISMATCH                 (19)
+/// @brief Indicates the EAR JWT could not be signed (e.g. an invalid signing key).
+#define NVAT_RC_EAR_SIGNING_FAILED             (20)
+/// @brief Indicates the selected verifier JWKS was unavailable or unusable.
+#define NVAT_RC_VERIFIER_JWKS_ERROR            (21)
 /// @brief Indicates the client is not authorized to call the NVIDIA RIM service.
 #define NVAT_RC_RIM_FORBIDDEN                  (101)
 /// @brief Indicates an HTTP internal error occurred when calling the NVIDIA RIM service.
@@ -181,7 +197,7 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_CORELIB_ERROR                  (608)
 /// @brief Indicates an error occurred when calling the NVIDIA Remote Attestation Service.
 #define NVAT_RC_NRAS_ATTESTATION_ERROR         (700)
-/// @brief Indicates an error occurred when verifying a token from the NVIDIA Remote Attestation Service.
+/// @brief Indicates a token could not be authenticated.
 #define NVAT_RC_NRAS_TOKEN_INVALID             (701)
 /// @brief Indicates client is not authorized to call the NVIDIA NRAS service.
 #define NVAT_RC_NRAS_FORBIDDEN                 (702)
@@ -191,6 +207,12 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_CERT_NOT_FOUND                 (801)
 /// @brief Indicates a certificate chain verification failure.
 #define NVAT_RC_CERT_CHAIN_VERIFICATION_FAILURE (802)
+/// @brief Indicates an error parsing a COSE structure.
+#define NVAT_RC_COSE_PARSE_ERROR                (901)
+/// @brief Indicates a COSE signature verification failure.
+#define NVAT_RC_COSE_INVALID_SIGNATURE          (902)
+/// @brief Indicates a COSE x5t certificate thumbprint mismatch.
+#define NVAT_RC_COSE_THUMBPRINT_MISMATCH        (903)
 
 /** @} return_codes */
 
@@ -251,6 +273,11 @@ typedef struct nvat_logger_st* nvat_logger_t;
  * @brief Common configuration for HTTP clients.
  */
 typedef struct nvat_http_options_st* nvat_http_options_t;
+
+/**
+ * @brief JWT validation settings for signed attestation results.
+ */
+typedef struct nvat_jwt_validation_options_st* nvat_jwt_validation_options_t;
 
 /**
  * @brief Enum indicating possible log levels.
@@ -402,7 +429,23 @@ void nvat_http_options_set_max_backoff_ms(nvat_http_options_t http_options, long
 void nvat_http_options_set_connection_timeout_ms(nvat_http_options_t http_options, long connection_timeout_ms);
 /** @brief Sets the overall request timeout of an HTTP request. */
 void nvat_http_options_set_request_timeout_ms(nvat_http_options_t http_options, long request_timeout_ms);
+/** @brief Sets the path to a TLS CA certificate bundle file (PEM). If not set, the system default is used. */
+void nvat_http_options_set_tls_ca_cert(nvat_http_options_t http_options, const char* tls_ca_cert);
+/** @brief Sets the path to a directory of TLS CA certificates. If not set, the system default is used. */
+void nvat_http_options_set_tls_ca_path(nvat_http_options_t http_options, const char* tls_ca_path);
 void nvat_http_options_free(nvat_http_options_t* http_options);
+
+/**
+ * @brief Create JWT validation settings with a 60-second clock-skew leeway.
+ */
+nvat_rc_t nvat_jwt_validation_options_create_default(
+    nvat_jwt_validation_options_t* out_options);
+/** @brief Set the clock-skew leeway used for JWT time claims. */
+void nvat_jwt_validation_options_set_clock_skew_leeway_seconds(
+    nvat_jwt_validation_options_t options, uint64_t seconds);
+/** @brief Free JWT validation settings. */
+void nvat_jwt_validation_options_free(
+    nvat_jwt_validation_options_t* options);
 
 /** @} options */
 
@@ -416,6 +459,53 @@ void nvat_http_options_free(nvat_http_options_t* http_options);
  */
  // TODO(p2): auth
 typedef struct nvat_ocsp_client_st* nvat_ocsp_client_t;
+
+/** @brief Hash algorithm used to construct an OCSP CertID. */
+typedef enum {
+    NVAT_OCSP_CERT_ID_HASH_SHA256 = 0,
+    NVAT_OCSP_CERT_ID_HASH_SHA1 = 1,
+    NVAT_OCSP_CERT_ID_HASH_SHA384 = 2,
+} nvat_ocsp_cert_id_hash_algorithm_t;
+
+/**
+ * @brief Parse a CertID hash algorithm name.
+ *
+ * Accepts SHA-1, SHA-256, and SHA-384, with or without a hyphen and
+ * case-insensitively.
+ *
+ * @param name Algorithm name to parse. Must not be NULL.
+ * @param out_algorithm Receives the parsed algorithm. Must not be NULL.
+ */
+nvat_rc_t nvat_ocsp_cert_id_hash_algorithm_from_name(
+    const char* name,
+    nvat_ocsp_cert_id_hash_algorithm_t* out_algorithm
+);
+
+/** @brief Construction options for an OCSP client. */
+typedef struct nvat_ocsp_client_options_st* nvat_ocsp_client_options_t;
+
+/**
+ * @brief Allocate OCSP client construction options with SHA-256 defaults.
+ *
+ * @param out_options On success, receives an options handle. Free with
+ *        @ref nvat_ocsp_client_options_free.
+ */
+nvat_rc_t nvat_ocsp_client_options_create_default(
+    nvat_ocsp_client_options_t* out_options
+);
+
+/**
+ * @brief Set the hash algorithm used to construct OCSP CertIDs.
+ *
+ * @param options Options handle to update.
+ * @param algorithm CertID hash algorithm.
+ */
+nvat_rc_t nvat_ocsp_client_options_set_cert_id_hash_algorithm(
+    nvat_ocsp_client_options_t options,
+    nvat_ocsp_cert_id_hash_algorithm_t algorithm
+);
+
+void nvat_ocsp_client_options_free(nvat_ocsp_client_options_t* options);
 
 /**
  * @brief Create an OCSP client with default settings.
@@ -437,6 +527,28 @@ nvat_rc_t nvat_ocsp_client_create_default(
 );
 
 /**
+ * @brief Create an OCSP client with explicit construction options.
+ *
+ * The options are copied during this call and remain owned by the caller.
+ * Passing NULL uses fixed SHA-256 defaults and does not consult
+ * NVAT_OCSP_CERT_ID_HASH_ALGORITHM. Other environment-backed settings, such as
+ * the default base URL, retain their existing behavior.
+ *
+ * @param out_client On success, receives the client handle.
+ * @param base_url If NULL, the default base URL is used.
+ * @param service_key Service key for authenticated calls. NULL or "" for none.
+ * @param http_options HTTP options. NULL uses defaults.
+ * @param options Construction options to copy. NULL uses fixed SHA-256.
+ */
+nvat_rc_t nvat_ocsp_client_create_default_with_options(
+    nvat_ocsp_client_t* out_client,
+    const char* base_url,
+    const char* service_key,
+    const nvat_http_options_t http_options,
+    const nvat_ocsp_client_options_t options
+);
+
+/**
  * @brief Create a cached OCSP client that wraps an existing OCSP client.
  *
  * **Ownership**: On success, the inner_client is safe to be free'd as it is
@@ -451,6 +563,43 @@ nvat_rc_t nvat_ocsp_client_create_cached(
     const nvat_ocsp_client_t inner_client,
     uint64_t max_size_bytes,
     time_t ttl_seconds
+);
+
+/**
+ * @brief Create an OCSP client that derives each responder URL from the
+ *        certificate's Authority Information Access extension — the client
+ *        required by the V2 local CoRIM verifier.
+ *
+ * Unlike @ref nvat_ocsp_client_create_default, AIA responder lookup is on: the
+ * responder URL is taken from each certificate's AIA extension. A certificate
+ * that carries no AIA responder is skipped (its revocation status is not
+ * checked) rather than falling back to @p base_url.
+ * URL rewrites and the AIA behavior are fixed at construction, so the client
+ * is safe to wrap with @ref nvat_ocsp_client_create_cached.
+ * The options are copied during this call and remain owned by the caller.
+ * Passing NULL uses fixed SHA-256 defaults and does not consult
+ * NVAT_OCSP_CERT_ID_HASH_ALGORITHM.
+ *
+ * @param out_client On success, receives the client handle.
+ * @param base_url Default responder URL used at construction. NULL uses the
+ *        default. Not consulted per-certificate when AIA lookup is on.
+ * @param service_key Service key for authenticated calls. NULL or "" for none.
+ * @param http_options HTTP options. NULL uses defaults.
+ * @param rewrite_patterns Prefix-substitution patterns applied to the responder
+ *        URL before the request; first match wins. NULL when @p num_rewrites is 0.
+ * @param rewrite_replacements Replacements paired with @p rewrite_patterns.
+ * @param num_rewrites Number of entries in the rewrite arrays.
+ * @param options Construction options to copy. NULL uses fixed SHA-256.
+ */
+nvat_rc_t nvat_ocsp_client_create_aia(
+    nvat_ocsp_client_t* out_client,
+    const char* base_url,
+    const char* service_key,
+    const nvat_http_options_t http_options,
+    const char* const* rewrite_patterns,
+    const char* const* rewrite_replacements,
+    size_t num_rewrites,
+    const nvat_ocsp_client_options_t options
 );
 
 void nvat_ocsp_client_free(nvat_ocsp_client_t* ocsp_client);
@@ -543,6 +692,7 @@ typedef struct nvat_nonce_st* nvat_nonce_t;
  * @brief Generate a secure random nonce with the given length.
  *
  * Note that the required nonce length may vary by device.
+ * The requested length must be at least 32 bytes.
  *
  * System must have access to a trusted entropy source.
  * @see <a href="https://docs.openssl.org/3.3/man3/RAND_bytes/">OpenSSL RAND_bytes</a>.
@@ -882,6 +1032,12 @@ void nvat_switch_evidence_array_free(nvat_switch_evidence_t** switch_evidence_ar
 typedef struct nvat_detached_eat_options_st* nvat_detached_eat_options_t;
 
 /**
+ * @brief Alias for readability on the EAR-signing path — same underlying
+ *        type as nvat_detached_eat_options_t (private_key_pem, issuer, kid).
+ */
+typedef nvat_detached_eat_options_t nvat_ear_signing_options_t;
+
+/**
  * @brief Claims describing the properties of submitted evidence.
  *
  * \verbatim embed:rst:leading-asterisk
@@ -934,6 +1090,7 @@ nvat_rc_t nvat_get_detached_eat_es384(const nvat_claims_collection_t claims, con
 typedef struct nvat_evidence_policy_st* nvat_evidence_policy_t;
 
 #define NVAT_GPU_CLAIMS_VERSION_V3 (3)
+#define NVAT_GPU_CLAIMS_VERSION_V4 (4)
 typedef uint8_t nvat_gpu_claims_version_t;
 
 #define NVAT_SWITCH_CLAIMS_VERSION_V3 (3)
@@ -1188,9 +1345,129 @@ nvat_rc_t nvat_relying_party_policy_create_rego_from_str(nvat_relying_party_poli
  */
 nvat_rc_t nvat_apply_relying_party_policy(nvat_relying_party_policy_t policy, const nvat_claims_collection_t claims);
 
+/**
+ * @brief Evaluate an Entity Attestation Result (EAR) JSON object against a
+ *        relying party policy.
+ *
+ * This function validates only that @p ear_json contains a JSON object. It
+ * does not authenticate the EAR or validate its schema. Callers must verify
+ * remotely received EARs before using their policy decision.
+ *
+ * @param policy The relying party policy to evaluate.
+ * @param ear_json A null-terminated JSON string containing the complete EAR
+ *                 object supplied to Rego as `input`.
+ *
+ * @return
+ *   - @ref NVAT_RC_OK if the EAR matches the policy
+ *   - @ref NVAT_RC_RP_POLICY_MISMATCH if the EAR does not match the policy
+ *   - @ref NVAT_RC_BAD_ARGUMENT if an argument is null, the JSON is malformed,
+ *     or the JSON root is not an object
+ *   - @ref NVAT_RC_POLICY_EVALUATION_ERROR if policy evaluation fails
+ */
+nvat_rc_t nvat_apply_relying_party_policy_to_ear(
+    nvat_relying_party_policy_t policy,
+    const char* ear_json
+);
+
 void nvat_relying_party_policy_free(nvat_relying_party_policy_t* relying_party_policy);
 
 /** @} rp_policy */
+
+/**
+  * @defgroup attestation_result_verification Attestation Result Verification
+  * @{
+  */
+
+/**
+ * @brief Verify an NVIDIA attestation token (detached EAT) issued by NRAS.
+ *
+ * Intended for a relying party that receives an EAT out of band and wants to
+ * verify it without re-running attestation. Fetches NRAS's published public
+ * keys from `nras_base_url`/.well-known/jwks.json, verifies the ES384
+ * signature of the overall and per-device submodule JWTs, validates the
+ * submodule digests, and returns the verified claims.
+ *
+ * Apply a relying party policy to the result with
+ * @ref nvat_apply_relying_party_policy. See @ref nvat_claims_collection_st for
+ * the claims format.
+ *
+ * @note The token must always contain an `eat_nonce`. If @p expected_nonce is
+ *       provided, the token's `eat_nonce` must equal it for freshness;
+ *       otherwise the nonce value is not checked against any expected value.
+ *
+ * @param eat NULL-terminated detached-EAT JSON string to verify.
+ * @param nras_base_url Base URL of the NRAS instance that issued the token
+ *        (e.g. "https://nras.attestation.nvidia.com"). The JWKS path is
+ *        appended internally. Must not be NULL.
+ * @param service_key Optional service key sent with the JWKS fetch. The public
+ *        NRAS JWKS endpoint does not require one; pass NULL to send no
+ *        credential. Provided for consistency with the other remote calls and
+ *        for deployments that authenticate the JWKS fetch.
+ * @param expected_nonce Optional nonce the relying party expects the token to
+ *        be bound to. When non-NULL, the token's overall `eat_nonce` must equal
+ *        it or verification fails with NVAT_RC_NONCE_MISMATCH. Pass NULL to skip
+ *        the nonce comparison. Not consumed; caller retains ownership.
+ * @param http_options Optional HTTP/TLS options (CA roots, timeouts). Pass NULL
+ *        for defaults.
+ * @param jwt_validation_options Optional JWT time-claim validation settings.
+ *        Pass NULL for the default 60-second clock-skew leeway.
+ * @param out_claims Out parameter; on success points to a newly allocated
+ *        claims collection. Caller owns it; free with
+ *        nvat_claims_collection_free().
+ * @return NVAT_RC_OK on success; NVAT_RC_OVERALL_RESULT_FALSE if the token's
+ *         overall attestation result is false (with @p out_claims still set);
+ *         NVAT_RC_NONCE_MISMATCH if @p expected_nonce was supplied and does not
+ *         match the token's `eat_nonce`; NVAT_RC_NRAS_TOKEN_INVALID if the
+ *         signature, issuer, or structure is invalid; NVAT_RC_BAD_ARGUMENT for
+ *         NULL required arguments; other codes for HTTP/JWKS errors.
+ */
+nvat_rc_t nvat_verify_attestation_result(
+    const char* eat,
+    const char* nras_base_url,
+    const char* service_key,
+    nvat_nonce_t expected_nonce,
+    nvat_http_options_t http_options,
+    const nvat_jwt_validation_options_t jwt_validation_options,
+    nvat_claims_collection_t* out_claims);
+
+/**
+ * @brief Authenticate a signed Entity Attestation Result (EAR).
+ *
+ * The SDK fetches the verifier's well-known JWKS, verifies the ES384
+ * signature and issuer, and returns authenticated EAR JSON only on success.
+ * It does not validate the EAR schema or appraisal semantics; callers can
+ * apply those requirements through relying-party policy.
+ *
+ * @note The `iat`, `nbf`, and `exp` claims are validated when present but are
+ *       not required. A token without `exp` has no token-defined expiration.
+ *
+ * @param ear_jwt Non-empty compact EAR JWT to verify.
+ * @param verifier_base_url Non-empty HTTPS base URL for the verifier.
+ * @param service_key Optional service key for the JWKS request. It is sent
+ *        only to HTTPS nvidia.com hosts and subdomains; otherwise it is
+ *        suppressed.
+ * @param expected_nonce Optional expected nonce. When provided, the token must
+ *        contain a matching canonical `eat_nonce`; otherwise the nonce claim is
+ *        not inspected. The caller retains ownership.
+ * @param http_options Optional HTTP/TLS settings. Pass NULL for defaults.
+ * @param jwt_validation_options Optional JWT validation settings. Pass NULL
+ *        for the default 60-second clock-skew leeway.
+ * @param out_ear_json Required output parameter. It is set to NULL before
+ *        validation and remains NULL on every failure. On success it receives
+ *        a newly allocated authenticated EAR JSON string; free it with
+ *        @ref nvat_str_free.
+ */
+nvat_rc_t nvat_verify_ear(
+    const char* ear_jwt,
+    const char* verifier_base_url,
+    const char* service_key,
+    nvat_nonce_t expected_nonce,
+    nvat_http_options_t http_options,
+    nvat_jwt_validation_options_t jwt_validation_options,
+    nvat_str_t* out_ear_json
+);
+
+/** @} attestation_result_verification */
 
 /**
  * @defgroup attest Attestation
@@ -1394,6 +1671,384 @@ nvat_rc_t nvat_attest_device(
 );
 
 /** @} attest */
+
+/**
+ * @defgroup cmw CMW Collection (V2 Input)
+ *
+ * @brief In-memory builder/serializer for the RATS Conceptual Message Wrapper
+ *        input collection consumed by the V2 verifier.
+ *
+ * Profile URI: `tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0`.
+ * @{
+ */
+
+/**
+ * @brief Serialization format of a CMW collection.
+ *
+ * Use @ref NVAT_CMW_FORMAT_JSON. CBOR is reserved and currently returns
+ * @ref NVAT_RC_FEATURE_NOT_ENABLED.
+ */
+typedef enum {
+    NVAT_CMW_FORMAT_JSON = 0,
+    NVAT_CMW_FORMAT_CBOR = 1,
+} nvat_cmw_format_t;
+
+/**
+ * @brief Opaque handle to a CMW input collection.
+ */
+typedef struct nvat_cmw_collection_st* nvat_cmw_collection_t;
+
+/**
+ * @brief Build a CMW input collection from an array of GPU evidence.
+ *
+ * Each input evidence becomes one CMW evidence-item child labelled
+ * `gpu_<i>` (zero-based). The outer collection carries the provided nonce
+ * as `application/octet-stream`.
+ *
+ * @param out On success, set to the newly allocated collection. Free with
+ *            @ref nvat_cmw_collection_free.
+ * @param gpu_evidence_array Array of GPU evidence handles. Must not be NULL
+ *                           and must contain at least one entry.
+ * @param num_evidences Number of entries in @p gpu_evidence_array.
+ * @param nonce Attestation nonce. Must not be NULL.
+ *
+ * TODO(v2): generalize for NVSwitch / EAT / non-GPU evidence.
+ */
+nvat_rc_t nvat_cmw_collection_create_from_gpu_evidence(
+    nvat_cmw_collection_t* out,
+    const nvat_gpu_evidence_t* gpu_evidence_array,
+    size_t num_evidences,
+    const nvat_nonce_t nonce
+);
+
+/**
+ * @brief Build a CMW input collection from a raw SPDM transcript and PEM
+ *        certificate chain.
+ *
+ * The evidence item is labelled @p label (e.g. `"device_0"`). When @p nonce
+ * is non-NULL it is set as the per-evidence nonce; the verifier will check it
+ * against the nonce signed into the SPDM transcript to confirm freshness. When
+ * NULL, no per-evidence freshness check is performed.
+ *
+ * @param out On success, set to the newly allocated collection. Free with
+ *            @ref nvat_cmw_collection_free.
+ * @param label Label for the evidence item. Must not be NULL.
+ * @param transcript Raw SPDM measurement transcript bytes. Must not be NULL.
+ * @param transcript_len Length of @p transcript in bytes.
+ * @param cert_pem PEM-encoded certificate chain bytes. Must not be NULL.
+ * @param cert_pem_len Length of @p cert_pem in bytes.
+ * @param nonce Expected per-evidence nonce (checked against the SPDM transcript),
+ *              or NULL to skip the freshness check.
+ */
+nvat_rc_t nvat_cmw_collection_create_from_spdm_transcript(
+    nvat_cmw_collection_t* out,
+    const char* label,
+    const uint8_t* transcript,
+    size_t transcript_len,
+    const uint8_t* cert_pem,
+    size_t cert_pem_len,
+    const nvat_nonce_t nonce
+);
+
+/**
+ * @brief Build a CMW input collection from a signed EAT/CWT token.
+ *
+ * The token embeds its own device-identity chain, so no separate certificate
+ * chain is needed. A non-NULL @p nonce is checked against the token's nonce
+ * claim; NULL skips the freshness check.
+ *
+ * @param out On success, set to the newly allocated collection. Free with
+ *            @ref nvat_cmw_collection_free.
+ */
+nvat_rc_t nvat_cmw_collection_create_from_eat(
+    nvat_cmw_collection_t* out,
+    const char* label,
+    const uint8_t* signed_cwt,
+    size_t signed_cwt_len,
+    const nvat_nonce_t nonce
+);
+
+/**
+ * @brief Serialize a CMW input collection.
+ *
+ * @param cmw Collection handle.
+ * @param format Wire format. CBOR returns @ref NVAT_RC_FEATURE_NOT_ENABLED.
+ * @param out_serialized On success, set to a newly allocated string. Free
+ *                       with @ref nvat_str_free.
+ */
+nvat_rc_t nvat_cmw_collection_serialize(
+    const nvat_cmw_collection_t cmw,
+    nvat_cmw_format_t format,
+    nvat_str_t* out_serialized
+);
+
+void nvat_cmw_collection_free(nvat_cmw_collection_t* cmw);
+
+/** @} cmw */
+
+/**
+ * @defgroup corim_store CoRIM Store (V2)
+ *
+ * @brief Fetches CoRIM bodies from rim-locator URLs for the local verifier.
+ *        Configure it, then inject it into @ref nvat_local_corim_verifier_create.
+ *
+ * @{
+ */
+
+/**
+ * @brief Opaque handle to a CoRIM store.
+ */
+typedef struct nvat_corim_store_st* nvat_corim_store_t;
+
+/**
+ * @brief Create a CoRIM store seeded with the NVIDIA RIM allowlist prefix.
+ *
+ * @param out_store On success, receives the store handle. Free with
+ *        @ref nvat_corim_store_free.
+ * @param service_key Service key for https RIM fetches. Pass NULL or "" for none.
+ * @param http_options HTTP options. NULL uses defaults.
+ */
+nvat_rc_t nvat_corim_store_create(
+    nvat_corim_store_t* out_store,
+    const char* service_key,
+    const nvat_http_options_t http_options
+);
+
+/**
+ * @brief Append a rim-locator URL rewrite rule (prefix substitution).
+ *
+ * When a rim-locator URL starts with @p pattern, the prefix is replaced with
+ * @p replacement before fetching. Rules apply in insertion order; first match
+ * wins. The pre-rewrite URL must still pass the allowlist, so rules redirect
+ * the allowed endpoint to file:// mirrors or staging hosts without weakening
+ * the input gate.
+ */
+nvat_rc_t nvat_corim_store_add_url_rewrite(
+    nvat_corim_store_t store,
+    const char* pattern,
+    const char* replacement
+);
+
+/**
+ * @brief Append an https:// prefix to the raw-URL allowlist checked before any
+ *        rewrite.
+ */
+nvat_rc_t nvat_corim_store_add_allowed_url_prefix(
+    nvat_corim_store_t store,
+    const char* prefix
+);
+
+/**
+ * @brief Enable in-memory LRU+TTL caching on a CoRIM store.
+ *
+ * Subsequent calls to the store's internal fetch path check the cache before
+ * making any network or filesystem request. The cache key is the effective URL
+ * after rewrites. Must be called before @ref nvat_local_corim_verifier_create
+ * transfers ownership of the store.
+ *
+ * @param store           The store to configure. Must not be NULL.
+ * @param max_size_bytes  Maximum total byte capacity of the cache. Must be > 0.
+ * @param ttl_seconds     Time-to-live for each cached entry in seconds. Must be >= 0.
+ * @return @ref NVAT_RC_OK on success, @ref NVAT_RC_BAD_ARGUMENT if store is
+ *         NULL, max_size_bytes is 0, or ttl_seconds is negative.
+ */
+nvat_rc_t nvat_corim_store_enable_in_memory_cache(
+    nvat_corim_store_t store,
+    uint64_t           max_size_bytes,
+    time_t             ttl_seconds
+);
+
+void nvat_corim_store_free(nvat_corim_store_t* store);
+
+/** @} corim_store */
+
+/**
+ * @defgroup local_corim_verifier Local CoRIM Verifier (V2)
+ *
+ * @brief Verify a CMW input collection in-process. Replaces the legacy
+ *        GPU/NVSwitch local verifiers for CoRIM-compliant devices.
+ *
+ * @{
+ */
+
+/**
+ * @brief Opaque handle to a local CoRIM-based verifier.
+ */
+typedef struct nvat_local_corim_verifier_st* nvat_local_corim_verifier_t;
+
+/**
+ * @brief Create a local CoRIM verifier from injected collaborators.
+ *
+ * @param out_verifier On success, receives the verifier handle. Free with
+ *        @ref nvat_local_corim_verifier_free.
+ * @param corim_store Pointer to a RIM fetching collaborator handle (allowlist,
+ *        rewrites, service key). Required. On success, ownership transfers to
+ *        the verifier and @p *corim_store is set to NULL.
+ * @param ocsp_client Revocation collaborator. NULL means no revocation
+ *        checking.
+ */
+nvat_rc_t nvat_local_corim_verifier_create(
+    nvat_local_corim_verifier_t* out_verifier,
+    nvat_corim_store_t* corim_store,
+    nvat_ocsp_client_t ocsp_client
+);
+
+/**
+ * @brief Verify a CMW input collection and emit a signed EAR.
+ *
+ * Appraisal findings — cert chain status, OCSP, evidence signature, and the
+ * measurement match — are collected per evidence item rather than enforced.
+ * The return code reflects only whether the input could be processed; the
+ * pass/fail verdict is derived from @p out_ear_jwt by the caller.
+ *
+ * @param verifier Handle from @ref nvat_local_corim_verifier_create.
+ * @param cmw_data CMW collection bytes.
+ * @param cmw_len Length of @p cmw_data in bytes.
+ * @param format Wire format. CBOR returns @ref NVAT_RC_FEATURE_NOT_ENABLED.
+ * @param ear_signing_options EAR-signing options (private_key_pem, issuer,
+ *        kid), from @ref nvat_detached_eat_options_create.
+ *        NULL, or an options handle with an empty private key, yields an
+ *        unsigned EAR (alg=none) — for tests only; production callers must
+ *        supply a key.
+ * @param out_ear_jwt On success, set to a newly allocated string holding
+ *        the EAR (Entity Attestation Result) JWT for this appraisal. Free
+ *        with @ref nvat_str_free. May be NULL to discard the result.
+ * @param out_ear_json On success, set to a newly allocated string holding
+ *        the same EAR as unsigned JSON (no need to decode @p out_ear_jwt).
+ *        Free with @ref nvat_str_free. May be NULL to discard the result.
+ *
+ * TODO: future signature also takes @ref nvat_evidence_policy_t. RP policy
+ * is out of scope here.
+ */
+nvat_rc_t nvat_local_corim_verifier_verify_cmw(
+    const nvat_local_corim_verifier_t verifier,
+    const uint8_t* cmw_data,
+    size_t cmw_len,
+    nvat_cmw_format_t format,
+    nvat_ear_signing_options_t ear_signing_options,
+    nvat_str_t* out_ear_jwt,
+    nvat_str_t* out_ear_json
+);
+
+/**
+ * @brief Toggle CoRIM signature verification.
+ *
+ * When @p enabled is true (the default) the verifier requires every
+ * fetched CoRIM to be a tagged signed-corim whose COSE_Sign1
+ * signature checks out against the CoRIM trust store. When false,
+ * the verifier additionally accepts unsigned CoRIMs (tagged
+ * unsigned-corim-map) and skips signature validation on signed ones
+ * — intended for development against unsigned fixtures, never for
+ * production.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_verify_rim_signature(
+    nvat_local_corim_verifier_t verifier,
+    bool enabled
+);
+
+/**
+ * @brief Toggle signature verification on a CoEV fetched from the RIM service.
+ *
+ * Covers a concise-evidence blob fetched alongside a RIM, independent of the
+ * RIM's own signature (@ref nvat_local_corim_verifier_set_verify_rim_signature)
+ * since CoEV signing can lag CoRIM signing in a given deployment. Verification
+ * is enabled by default; disabling it is never appropriate in production.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_verify_coev_signature(
+    nvat_local_corim_verifier_t verifier,
+    bool enabled
+);
+
+/**
+ * @brief Toggle evidence signature verification.
+ *
+ * Enabled by default. When false the verifier retains unsigned or badly-signed
+ * evidence and all claims available from a parseable, untrusted chain,
+ * including DTI ECTs and akpub. The result remains unverified and
+ * contraindicated. Disable only for development fixtures.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_verify_evidence_signature(
+    nvat_local_corim_verifier_t verifier,
+    bool enabled
+);
+
+/**
+ * @brief Toggle certificate revocation checking via OCSP.
+ *
+ * When @p enabled is true (the default), the verifier checks revocation
+ * of the device-identity chain and (when RIM signatures are verified)
+ * the CoRIM signing chain. The default OCSP client derives each
+ * responder URL from the certificate's Authority Information Access
+ * extension. When disabled, chains are treated as not revoked.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_verify_revocation(
+    nvat_local_corim_verifier_t verifier,
+    bool enabled
+);
+
+/**
+ * @brief Set a fallback ConciseEvidence (#6.571 CBOR blob).
+ *
+ * When SPDM evidence yields no ECTs, the backup is parsed and its ECTs are
+ * used instead. Bytes are stored as-is; parse errors surface during
+ * @ref nvat_local_corim_verifier_verify_cmw.
+ *
+ * @param verifier Handle from @ref nvat_local_corim_verifier_create.
+ * @param coev_data Raw bytes of a #6.571-tagged ConciseEvidence blob.
+ * @param coev_len Length of @p coev_data in bytes.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_backup_spdm_coev(
+    nvat_local_corim_verifier_t verifier,
+    const uint8_t* coev_data,
+    size_t coev_len
+);
+
+/**
+ * @brief Append a fallback RIM locator URI.
+ *
+ * When evidence contains no rim-locator URLs, the backup list is used
+ * instead.
+ *
+ * @param verifier Handle from @ref nvat_local_corim_verifier_create.
+ * @param uri Null-terminated RIM locator URI string.
+ */
+nvat_rc_t nvat_local_corim_verifier_add_backup_rim_locator(
+    nvat_local_corim_verifier_t verifier,
+    const char* uri
+);
+
+/**
+ * @brief Hash algorithms for computing ear_nvidia_inputs.digests.
+ *
+ * Values are IANA Named Information registry hash algorithm IDs, the same
+ * identifiers CoRIM and CoEV digest records use.
+ */
+typedef enum {
+    NVAT_HASH_ALGORITHM_SHA256 = 1,
+    NVAT_HASH_ALGORITHM_SHA384 = 7,
+    NVAT_HASH_ALGORITHM_SHA512 = 8,
+} nvat_hash_algorithm_t;
+
+/**
+ * @brief Set the default hash algorithms for ear_nvidia_inputs.digests.
+ *
+ * Used when the request does not ask for specific algorithms; an input
+ * carrying ars.digest-algos overrides this. Defaults to
+ * {NVAT_HASH_ALGORITHM_SHA256}. Pass num_algs=0 to disable digest output.
+ *
+ * @param verifier Handle from @ref nvat_local_corim_verifier_create.
+ * @param algs     Array of hash algorithm identifiers.
+ * @param num_algs Number of elements in @p algs.
+ */
+nvat_rc_t nvat_local_corim_verifier_set_default_hash_algorithms(
+    nvat_local_corim_verifier_t verifier,
+    const nvat_hash_algorithm_t* algs,
+    size_t num_algs
+);
+
+void nvat_local_corim_verifier_free(nvat_local_corim_verifier_t* verifier);
+
+/** @} local_corim_verifier */
 
 #ifdef __cplusplus
 }

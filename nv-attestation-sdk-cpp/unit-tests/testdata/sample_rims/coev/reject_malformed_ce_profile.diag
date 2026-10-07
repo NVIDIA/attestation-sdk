@@ -1,0 +1,29 @@
+/ profile (key 2) of concise-evidence-map is present but is an int rather    /
+/ than a profile-type-choice. Nested inside a tagged-spdm-toc so this also   /
+/ exercises the check on the parse_spdm_toc path, not just the standalone   /
+/ parse_concise_evidence one.                                               /
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+                  ]
+                }
+              }
+            ]
+          ]
+        ]
+      },
+      / profile / 2: 42
+    })
+  ]
+})

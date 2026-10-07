@@ -55,6 +55,22 @@ static bool load_subobject_from_file(const std::string& path, const std::string&
     }
 }
 
+TEST(GpuClaimsVersionFromCTest, V4Maps) {
+    GpuClaimsVersion version;
+    ASSERT_EQ(gpu_claims_version_from_c(NVAT_GPU_CLAIMS_VERSION_V4, version), Error::Ok);
+    EXPECT_EQ(version, GpuClaimsVersion::V4);
+}
+
+TEST(GpuClaimsVersionFromCTest, V3RejectedAsBadArgument) {
+    GpuClaimsVersion version;
+    EXPECT_EQ(gpu_claims_version_from_c(NVAT_GPU_CLAIMS_VERSION_V3, version), Error::BadArgument);
+}
+
+TEST(GpuClaimsVersionFromCTest, UnknownRejectedAsBadArgument) {
+    GpuClaimsVersion version;
+    EXPECT_EQ(gpu_claims_version_from_c(99, version), Error::BadArgument);
+}
+
 // End-to-end test for detached EAT generation and verification
 TEST(DetachedEatTest, CreateAndVerify) {
     // Arrange: load GPU and SWITCH claim JSON objects
@@ -67,7 +83,7 @@ TEST(DetachedEatTest, CreateAndVerify) {
         << "Failed to load SWITCH-0 from switch_decoded.json";
 
     // Deserialize into SDK claim objects
-    SerializableGpuClaimsV3 gpu_claims;
+    SerializableGpuClaimsV4 gpu_claims;
     ASSERT_NO_THROW(from_json(gpu_claim_obj, gpu_claims));
 
     SerializableSwitchClaimsV3 switch_claims;
@@ -75,7 +91,7 @@ TEST(DetachedEatTest, CreateAndVerify) {
 
     // Build ClaimsCollection
     ClaimsCollection claims_collection;
-    auto gpu_ptr = std::make_shared<SerializableGpuClaimsV3>(gpu_claims);
+    auto gpu_ptr = std::make_shared<SerializableGpuClaimsV4>(gpu_claims);
     auto switch_ptr = std::make_shared<SerializableSwitchClaimsV3>(switch_claims);
     claims_collection.append(gpu_ptr);
     claims_collection.append(switch_ptr);
@@ -151,8 +167,8 @@ TEST(DetachedEatTest, CreateAndVerify) {
     check_payload_claims(gpu_payload);
 
     // make sure that the gpu and switch claims can be deserialized from the payload
-    SerializableGpuClaimsV3 gpu_claims_from_payload;
-    err = deserialize_from_json<SerializableGpuClaimsV3>(gpu_payload.dump(), gpu_claims_from_payload);
+    SerializableGpuClaimsV4 gpu_claims_from_payload;
+    err = deserialize_from_json<SerializableGpuClaimsV4>(gpu_payload.dump(), gpu_claims_from_payload);
     ASSERT_EQ(err, Error::Ok) << "deserialize_from_json failed: " << to_string(err);
     SerializableSwitchClaimsV3 switch_claims_from_payload;
     err = deserialize_from_json<SerializableSwitchClaimsV3>(switch_payload.dump(), switch_claims_from_payload);
@@ -184,7 +200,7 @@ TEST(DetachedEatTest, CreateReturnsOverallResultFalse) {
         << "Failed to load SWITCH-0 from switch_decoded.json";
 
     // Deserialize into SDK claim objects
-    SerializableGpuClaimsV3 gpu_claims;
+    SerializableGpuClaimsV4 gpu_claims;
     ASSERT_NO_THROW(from_json(gpu_claim_obj, gpu_claims));
 
     SerializableSwitchClaimsV3 switch_claims;
@@ -195,7 +211,7 @@ TEST(DetachedEatTest, CreateReturnsOverallResultFalse) {
 
     // Build ClaimsCollection
     ClaimsCollection claims_collection;
-    auto gpu_ptr = std::make_shared<SerializableGpuClaimsV3>(gpu_claims);
+    auto gpu_ptr = std::make_shared<SerializableGpuClaimsV4>(gpu_claims);
     auto switch_ptr = std::make_shared<SerializableSwitchClaimsV3>(switch_claims);
     claims_collection.append(gpu_ptr);
     claims_collection.append(switch_ptr);
@@ -208,4 +224,44 @@ TEST(DetachedEatTest, CreateReturnsOverallResultFalse) {
 
     // Assert
     ASSERT_EQ(err, Error::OverallResultFalse) << "Expected OverallResultFalse when any claim has measres != success";
+}
+
+// Test that get_detached_eat returns OverallResultFalse when a GPU claim reports an opaque-data (MIN_SVN) mismatch,
+// even though every other claim (including measres) passes.
+TEST(DetachedEatTest, CreateReturnsOverallResultFalseOnOpaqueDataMismatch) {
+    nlohmann::json gpu_claim_obj;
+    ASSERT_TRUE(load_subobject_from_file("testdata/sample_attestation_data/hopperClaimsv3_decoded.json", "GPU-0", gpu_claim_obj))
+        << "Failed to load GPU-0 from hopperClaimsv3_decoded.json";
+
+    nlohmann::json switch_claim_obj;
+    ASSERT_TRUE(load_subobject_from_file("testdata/sample_attestation_data/switch_decoded.json", "SWITCH-0", switch_claim_obj))
+        << "Failed to load SWITCH-0 from switch_decoded.json";
+
+    SerializableGpuClaimsV4 gpu_claims;
+    ASSERT_NO_THROW(from_json(gpu_claim_obj, gpu_claims));
+
+    SerializableSwitchClaimsV3 switch_claims;
+    ASSERT_NO_THROW(from_json(switch_claim_obj, switch_claims));
+
+    SerializableOpaqueDataMismatch mismatch;
+    mismatch.opaque_data_id = 37U;
+    mismatch.name           = "FSP_UCODE_MIN_SVN";
+    mismatch.golden_value   = 5U;
+    mismatch.runtime_type   = std::make_shared<std::string>("MIN_SVN");
+    mismatch.runtime_value  = std::make_shared<uint64_t>(4U);
+    gpu_claims.m_mismatched_opaque_records =
+        std::make_shared<std::vector<SerializableOpaqueDataMismatch>>(std::vector<SerializableOpaqueDataMismatch>{mismatch});
+
+    ClaimsCollection claims_collection;
+    auto gpu_ptr = std::make_shared<SerializableGpuClaimsV4>(gpu_claims);
+    auto switch_ptr = std::make_shared<SerializableSwitchClaimsV3>(switch_claims);
+    claims_collection.append(gpu_ptr);
+    claims_collection.append(switch_ptr);
+
+    std::string detached_eat_json;
+    DetachedEATOptions detached_eat_options;
+    detached_eat_options.m_issuer = "test-issuer";
+    Error err = claims_collection.get_detached_eat(detached_eat_json, detached_eat_options);
+
+    ASSERT_EQ(err, Error::OverallResultFalse) << "Expected OverallResultFalse when a GPU claim has an opaque-data mismatch";
 }

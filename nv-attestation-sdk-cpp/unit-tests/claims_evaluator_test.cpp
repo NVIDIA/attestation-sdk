@@ -17,6 +17,7 @@
 
 //stdlibs
 #include <fstream>
+#include <sstream>
 #include <thread>
 
 //third party
@@ -138,6 +139,106 @@ TEST(ClaimsEvaluatorTestCApi, CreateRegoClaimsEvaluator) {
     nvat_relying_party_policy_free(&rp_policy);
 }
 
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsNullPolicy) {
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(nullptr, R"({})"),
+              NVAT_RC_BAD_ARGUMENT);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsNullEar) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(&policy, VALID_POLICY),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, nullptr),
+              NVAT_RC_BAD_ARGUMENT);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsMalformedJson) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(&policy, VALID_POLICY),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, "not-json"),
+              NVAT_RC_BAD_ARGUMENT);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsTopLevelArray) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(&policy, VALID_POLICY),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, R"([])"),
+              NVAT_RC_BAD_ARGUMENT);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsTopLevelScalar) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(&policy, VALID_POLICY),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, "42"),
+              NVAT_RC_BAD_ARGUMENT);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, PolicyCanAcceptContraindicatedEar) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(
+        &policy,
+        "package policy\nnv_match := input.submods.gpu_0.ear_status == \"contraindicated\""),
+        NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(
+        policy, R"({"submods":{"gpu_0":{"ear_status":"contraindicated"}}})"),
+        NVAT_RC_OK);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, PolicyCanRejectAffirmingEar) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(
+        &policy,
+        "package policy\ndefault nv_match := false"),
+        NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(
+        policy, R"({"submods":{"gpu_0":{"ear_status":"affirming"}}})"),
+        NVAT_RC_RP_POLICY_MISMATCH);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsUndefinedPolicyResult) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(&policy, INVALID_POLICY),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, R"({})"),
+              NVAT_RC_POLICY_EVALUATION_ERROR);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
+TEST(ClaimsEvaluatorTestCApi, ApplyEarRejectsNonBooleanPolicyResult) {
+    nvat_relying_party_policy_t policy = nullptr;
+    ASSERT_EQ(nvat_relying_party_policy_create_rego_from_str(
+        &policy, "package policy\nnv_match := \"yes\""),
+        NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_apply_relying_party_policy_to_ear(policy, R"({})"),
+              NVAT_RC_POLICY_EVALUATION_ERROR);
+
+    nvat_relying_party_policy_free(&policy);
+}
+
 TEST_F(ClaimsEvaluatorTest, EvaluateValidClaimsWithRegoEvaluator) {
     auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(VALID_POLICY);
 
@@ -166,6 +267,80 @@ TEST_F(ClaimsEvaluatorTest, EvaluateInvalidClaimsWithRegoEvaluator) {
     EXPECT_EQ(result, false);
 }
 
+TEST_F(ClaimsEvaluatorTest, EvaluateEarJsonReadsCompleteRootObject) {
+    const std::string policy = R"(
+        package policy
+        default nv_match := false
+        nv_match := true {
+            input.eat_profile == "test-profile"
+            input.submods.gpu_0.ear_status == "contraindicated"
+        }
+    )";
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(policy);
+
+    bool result = false;
+    Error error = evaluator->evaluate_json(
+        R"({"eat_profile":"test-profile","submods":{"gpu_0":{"ear_status":"contraindicated"}}})",
+        result);
+
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_TRUE(result);
+}
+
+TEST_F(ClaimsEvaluatorTest, EvaluateEarJsonDoesNotLogAuthenticatedPayload) {
+    const std::string secret = "distinctive-authenticated-ear-secret";
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(R"(
+        package policy
+        default nv_match := true
+    )");
+
+    testing::internal::CaptureStderr();
+    bool result = false;
+    const Error error = evaluator->evaluate_json(
+        std::string("{\"private\":\"") + secret + "\"}", result);
+    const std::string logs = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_TRUE(result);
+    EXPECT_EQ(logs.find(secret), std::string::npos);
+}
+
+TEST_F(ClaimsEvaluatorTest, EvaluateEarJsonReturnsFalsePolicyDecision) {
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(R"(
+        package policy
+        default nv_match := false
+    )");
+
+    bool result = true;
+    Error error = evaluator->evaluate_json(R"({"submods":{}})", result);
+
+    EXPECT_EQ(error, Error::Ok);
+    EXPECT_FALSE(result);
+}
+
+TEST_F(ClaimsEvaluatorTest, EvaluateEarJsonRejectsUndefinedPolicyResult) {
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(INVALID_POLICY);
+
+    bool result = true;
+    Error error = evaluator->evaluate_json(R"({"submods":{}})", result);
+
+    EXPECT_EQ(error, Error::PolicyEvaluationError);
+    EXPECT_FALSE(result);
+}
+
+TEST_F(ClaimsEvaluatorTest, EvaluateEarJsonRejectsNonBooleanPolicyResult) {
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(R"(
+        package policy
+        nv_match := "yes"
+    )");
+
+    bool result = false;
+    Error error = evaluator->evaluate_json(R"({"submods":{}})", result);
+
+    EXPECT_EQ(error, Error::PolicyEvaluationError);
+    EXPECT_FALSE(result);
+}
+
 TEST_F(ClaimsEvaluatorTest, EvaluateClaimsWithInvalidRegoPolicy) {
     auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(INVALID_POLICY);
 
@@ -176,22 +351,20 @@ TEST_F(ClaimsEvaluatorTest, EvaluateClaimsWithInvalidRegoPolicy) {
     
     bool result;
     Error error = evaluator->evaluate_claims(claims_collection, result);
-    EXPECT_EQ(error, Error::Ok);
-    EXPECT_EQ(result, false);
+    EXPECT_EQ(error, Error::PolicyEvaluationError);
 }
 
 TEST_F(ClaimsEvaluatorTest, EvaluateClaimsWithInvalidClaimsAndInvalidRegoPolicy) {
     auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(INVALID_POLICY);
 
     auto claims = std::make_shared<MockClaims>();;
-    claims->setup_json(VALID_CLAIMS);
+    claims->setup_json(INVALID_CLAIMS);
     ClaimsCollection claims_collection {};
     claims_collection.append(claims);
     
     bool result;
     Error error = evaluator->evaluate_claims(claims_collection, result);
-    EXPECT_EQ(error, Error::Ok);
-    EXPECT_EQ(result, false);
+    EXPECT_EQ(error, Error::PolicyEvaluationError);
 }
 
 TEST_F(ClaimsEvaluatorTest, EvaluateClaimsWithMalformedPolicy) {
@@ -206,4 +379,37 @@ TEST_F(ClaimsEvaluatorTest, EvaluateClaimsWithMalformedPolicy) {
     Error error = evaluator->evaluate_claims(claims_collection, result);
     EXPECT_EQ(error, Error::PolicyEvaluationError);
     EXPECT_EQ(result, false);
+}
+
+TEST_F(ClaimsEvaluatorTest, ShippedCorimEarPolicyRequiresAllStatusesToAffirm) {
+    const std::string policy_path =
+        std::string(NVAT_REPOSITORY_ROOT) +
+        "/relying_party_policy_examples/accept_corim_ear_affirming.rego";
+    std::ifstream policy_file(policy_path);
+    ASSERT_TRUE(policy_file) << "Failed to open " << policy_path;
+
+    std::ostringstream policy_stream;
+    policy_stream << policy_file.rdbuf();
+    auto evaluator = ClaimsEvaluatorFactory::create_rego_claims_evaluator(
+        policy_stream.str());
+
+    bool match = false;
+    EXPECT_EQ(evaluator->evaluate_json(
+        R"({"ear_status":"affirming","submods":{"gpu_0":{"ear_status":"affirming"},"gpu_1":{"ear_status":"affirming"}}})",
+        match), Error::Ok);
+    EXPECT_TRUE(match);
+
+    EXPECT_EQ(evaluator->evaluate_json(
+        R"({"ear_status":"affirming","submods":{"gpu_0":{"ear_status":"affirming"},"gpu_1":{"ear_status":"contraindicated"}}})",
+        match), Error::Ok);
+    EXPECT_FALSE(match);
+
+    EXPECT_EQ(evaluator->evaluate_json(
+        R"({"ear_status":"contraindicated","submods":{"gpu_0":{"ear_status":"affirming"}}})",
+        match), Error::Ok);
+    EXPECT_FALSE(match);
+
+    EXPECT_EQ(evaluator->evaluate_json(
+        R"({"ear_status":"affirming","submods":{}})", match), Error::Ok);
+    EXPECT_FALSE(match);
 }

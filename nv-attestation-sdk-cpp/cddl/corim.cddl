@@ -1,0 +1,300 @@
+; SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+; SPDX-License-Identifier: Apache-2.0
+;
+; Licensed under the Apache License, Version 2.0 (the "License");
+; you may not use this file except in compliance with the License.
+; You may obtain a copy of the License at
+;
+; http://www.apache.org/licenses/LICENSE-2.0
+;
+; Unless required by applicable law or agreed to in writing, software
+; distributed under the License is distributed on an "AS IS" BASIS,
+; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+; See the License for the specific language governing permissions and
+; limitations under the License.
+
+; Source: https://github.com/ietf-rats-wg/draft-ietf-rats-corim/releases/tag/cddl-draft-ietf-rats-corim-10
+; Modifications:
+; * Remove non-empty<T> as zcbor does not support generics. validation to be done after parsing
+; * Converted $socket /= extensibility to standard choice definitions (socket = a / b)
+;   This removes schema extensibility but preserves parsing semantics
+; * Added commas between map entries as required by zcbor parser
+; * Replaced $$extension-socket with extension-key => any, where extension-key = int / tstr
+; * Changed bytes bstr .cbor as required by zcbor
+; * Rename collisions between "name" and "$name" declarations. $name renamed to name-type-choice
+; * Set explicit array size limits for large structures:
+;   - corim-map.tags: [ 1*25 concise-tag-type-choice ] (was [ + ... ], default would be 10)
+;   - reference-triple-record.ref-claims: [ 1*50 measurement-map ] (was [ + ... ], default would be 10)
+;   - triples-map.reference-triples: [ 1*50 reference-triple-record ] (was [ + ... ], default would be 10)
+;   - domain-dependency-triple-record.trustees: [ 1*64 domain-type ] (was [ + ... ], default would be 10)
+;   These limits are based on observed CoRIM files from real hardware platforms
+; * Use commas rigorously, they are required
+; * .default is dropped on tag-version-type as it's not supported, handle later in code
+; * Resolve many conflicts between map key names and global constants,
+;   e.g. corim-entity-map.role conflicted with global role, producing bad generated code
+; * Removed CoSWID (concise-swid-tag) and CoTL (concise-tl-tag) detailed type definitions.
+;   Tags are still detected as opaque bstr for error reporting, but the full type schemas are excluded.
+;   This also removes all CoSWID-only key label constants (lines 584-673 of the original spec).
+; * Removed signed-corim / COSE_Sign1_corim / corim-meta-map / corim-signer-map / cwt-claims
+;   and related protected-/unprotected- header structures. parse_signed_corim verifies COSE_Sign1
+;   via cddl/cose.cddl's permissive header_map and then decodes the inner payload via
+;   tagged-unsigned-corim-map (this file). The deleted structures were generated but never read
+;   by src/corim.cpp.
+; * Several CoRIM/CoMID fields are rejected (or silently ignored) on presence by the wrapper
+;   (src/corim.cpp). Their inner CDDL has been replaced with `any` so zcbor doesn't generate
+;   structs the wrapper never reads. Each `any` carries a comment naming the rejection site.
+
+; Extension key type for wildcard map entries
+extension-key = int / tstr
+
+corim = concise-rim-type-choice
+
+concise-rim-type-choice /= tagged-unsigned-corim-map
+
+concise-tag-type-choice = tagged-concise-swid-tag / tagged-concise-mid-tag / tagged-concise-tl-tag
+
+corim-entity-map = {
+  corim-entity-name: 0 => entity-name-type-choice,
+  ? corim-reg-id: 1 => uri,
+  corim-role: 2 => [ + corim-role-type-choice ],
+}
+
+corim-id-type-choice = tstr / uuid-type
+
+corim-locator-map = {
+  corim-href: 0 => uri / [ + uri ],
+  ? corim-thumbprint: 1 => digest / [digest],
+}
+
+corim-map = {
+  id: 0 => corim-id-type-choice,
+  tags: 1 => [ 1*25 concise-tag-type-choice ],
+  ? dependent-rims: 2 => [ + corim-locator-map ],
+  ? profile: 3 => profile-type-choice,
+  ? rim-validity: 4 => validity-map,
+  ? entities: 5 => [ + corim-entity-map ],
+  * extension-key => any
+}
+unsigned-corim-map = corim-map
+
+manifest-creator = 1
+manifest-signer  = 2
+corim-role-type-choice = manifest-creator / manifest-signer
+
+profile-type-choice = uri / tagged-oid-type
+
+; almost always get mid, put it first
+tagged-concise-mid-tag = #6.506(bstr .cbor concise-mid-tag)
+;tagged-concise-mid-tag = #6.506(bstr)
+
+; ignore
+;tagged-concise-swid-tag = #6.505(bstr .cbor concise-swid-tag)
+tagged-concise-swid-tag = #6.505(bstr)
+
+; ignore
+;tagged-concise-tl-tag = #6.508(bstr .cbor concise-tl-tag)
+tagged-concise-tl-tag = #6.508(bstr)
+
+tagged-unsigned-corim-map = #6.501(unsigned-corim-map)
+
+validity-map = {
+  ? not-before: 0 => time,
+  not-after: 1 => time,
+}
+
+concise-mid-tag = {
+  ? language: 0 => text,
+  tag-identity: 1 => tag-identity-map,
+  ? entities: 2 => [ + comid-entity-map ],
+  ; rejected on presence (src/corim.cpp:848)
+  ? linked-tags: 3 => any,
+  triples: 4 => triples-map,
+  * extension-key => any
+}
+
+class-id-type-choice = tagged-oid-type / tagged-uuid-type / tagged-bytes
+
+class-map = {
+  ? class-id: 0 => class-id-type-choice,
+  ? vendor: 1 => tstr,
+  ? model: 2 => tstr,
+  ? layer: 3 => uint,
+  ? index: 4 => uint,
+}
+
+comid-entity-map = {
+  comid-entity-name: 0 => entity-name-type-choice,
+  ? comid-reg-id: 1 => uri,
+  comid-role: 2 => [ + comid-role-type-choice ],
+}
+
+comid-tag-creator = 0
+comid-creator     = 1
+comid-maintainer  = 2
+comid-role-type-choice = comid-tag-creator / comid-creator / comid-maintainer
+
+domain-dependency-triple-record = [
+  domain-id: domain-type,
+  trustees: [ 1*64 domain-type ]
+]
+
+domain-type = environment-map
+
+entity-name-type-choice = text
+
+environment-map = {
+  ? class: 0 => class-map,
+  ? instance: 1 => instance-id-type-choice,
+  ? group: 2 => group-id-type-choice,
+}
+
+flags-map = {
+  ? is-configured: 0 => bool,
+  ? is-secure: 1 => bool,
+  ? is-recovery: 2 => bool,
+  ? is-debug: 3 => bool,
+  ? is-replay-protected: 4 => bool,
+  ? is-integrity-protected: 5 => bool,
+  ? is-runtime-meas: 6 => bool,
+  ? is-immutable: 7 => bool,
+  ? is-tcb: 8 => bool,
+  ? is-confidentiality-protected: 9 => bool,
+  ; * extension-key => any
+}
+
+group-id-type-choice = tagged-uuid-type / tagged-bytes
+
+instance-id-type-choice = tagged-ueid-type / tagged-uuid-type / tagged-bytes
+
+int-range-type-choice = int / tagged-int-range
+int-range-type = [min: int / negative-inf, max: int / positive-inf]
+tagged-int-range = #6.564(int-range-type)
+positive-inf = null
+negative-inf = null
+
+measured-element-type-choice = tagged-oid-type / tagged-uuid-type / uint / tstr
+
+measurement-map = {
+  ? mkey: 0 => measured-element-type-choice,
+  mval: 1 => measurement-values-map,
+  ; rejected on presence (see reject_authorized_by fixture)
+  ? authorized-by: 2 => any,
+}
+
+measurement-values-map = {
+  ? version: 0 => version-map,
+  ? svn: 1 => svn-type-choice,
+  ? digests: 2 => digests-type,
+  ? flags: 3 => flags-map,
+  ? raw-value: 4 => raw-value-type-choice,
+  ; keys 5,6,7,8,9,10,13,14 rejected on presence (src/corim.cpp:421-444)
+  ? raw-value-mask-DEPRECATED: 5 => any,
+  ? mac-addr: 6 => any,
+  ? ip-addr: 7 => any,
+  ? serial-number: 8 => any,
+  ? ueid: 9 => any,
+  ? uuid: 10 => any,
+  ? name: 11 => text,
+  ; spdm-indirect (TCG DICE Concise Evidence Binding for SPDM v1.1 §7.1) — extends
+  ; measurement-values-map with SPDM measurement-block indexes for indirect
+  ; measurements (values located at SPDM blocks other than the manifest L=0xFD).
+  ; The spec expresses this via the $$measurement-values-map-extension socket;
+  ; zcbor 0.9.1 does not apply socket extensions across CDDL files, so the type
+  ; and field are declared inline here. Real reference-value (CoRIM) blobs never
+  ; carry this field — the existing reference-value parser does not surface it.
+  ? spdm-indirect: 12 => spdm-indirect-map,
+  ? cryptokeys: 13 => any,
+  ? integrity-registers: 14 => any,
+  ? int-range: 15 => int-range-type-choice,
+  ; * extension-key => any
+}
+
+; spdm-indirect-map (TCG DICE Concise Evidence Binding for SPDM v1.1 §7.1):
+; carries the SPDM measurement-block indexes referenced by the spdm-indirect
+; field of measurement-values-map. The `index` field is optional but, when
+; present, is a non-empty array of unsigned integers.
+spdm-indirect-map = {
+  ? index: 0 => [ 1*64 uint ],
+  * int     => any,
+}
+
+oid-type = bstr
+tagged-oid-type = #6.111(oid-type)
+
+raw-value-type-choice = tagged-bytes / tagged-masked-raw-value
+
+tagged-masked-raw-value = #6.563([
+  value: bstr,
+  mask : bstr
+])
+
+reference-triple-record = [
+  ref-env: environment-map,
+  ref-claims: [ 1*50 measurement-map ],
+]
+
+svn-type = uint
+; Renamed from "svn"/"min-svn" to avoid zcbor codegen name collision with the
+; "svn" map key label in measurement-values-map
+svn-val = svn-type
+min-svn-val = svn-type
+tagged-svn = #6.552(svn-val)
+tagged-min-svn = #6.553(min-svn-val)
+svn-type-choice = svn-val / tagged-svn / tagged-min-svn
+
+tag-id-type-choice = tstr / uuid-type
+
+tag-identity-map = {
+  tag-id => tag-id-type-choice,
+  ? tag-version => tag-version-type,
+}
+
+tag-version-type = uint
+
+tagged-bytes = #6.560(bstr)
+
+triples-map = {
+  ? reference-triples: 0 =>
+    [ 1*50 reference-triple-record ],
+  ; kinds 1, 8, 10 silently ignored (src/corim.cpp:868);
+  ; kinds 2, 3, 5, 6 rejected on presence (src/corim.cpp:856-866)
+  ? endorsed-triples: 1 => any,
+  ? identity-triples: 2 => any,
+  ? attest-key-triples: 3 => any,
+  ? dependency-triples: 4 =>
+    [ + domain-dependency-triple-record ],
+  ? membership-triples: 5 => any,
+  ? coswid-triples: 6 => any,
+  ? conditional-endorsement-series-triples: 8 => any,
+  ? conditional-endorsement-triples: 10 => any,
+  ; * extension-key => any,
+}
+
+ueid-type = bstr .size (7..33)
+tagged-ueid-type = #6.550(ueid-type)
+
+uuid-type = bstr .size 16
+tagged-uuid-type = #6.37(uuid-type)
+
+version-map = {
+  version: 0 => text,
+  ? version-map-scheme: 1 => version-scheme-type-choice,
+}
+
+digest = [
+  alg: (int / text),
+  val: bstr
+]
+
+digests-type = [ + digest ]
+
+version-scheme-type-choice = multipartnumeric / multipartnumeric-suffix / alphanumeric / decimal / semver / int / text
+
+tag-id = 0
+tag-version = 12
+
+multipartnumeric = 1
+multipartnumeric-suffix = 2
+alphanumeric = 3
+decimal = 4
+semver = 16384

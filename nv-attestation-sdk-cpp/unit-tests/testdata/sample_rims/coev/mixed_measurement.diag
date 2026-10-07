@@ -1,0 +1,27 @@
+/ True "mixed" measurement: a SINGLE measurement-values-map carries BOTH a /
+/ direct value (digests) AND the spdm-indirect extension. The TCG DICE spec /
+/ defines direct vs indirect as a dichotomy (§6.3.2) but the CDDL marks all /
+/ measurement-values-map fields as optional, so this co-existence is        /
+/ structurally valid CBOR. The parser is required to accept it (permissive  /
+/ parsing for evidence).                                                    /
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestMixed" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff']
+              ],
+              / spdm-indirect / 12: { / index / 0: [42] }
+            }
+          }
+        ]
+      ]
+    ]
+  }
+})

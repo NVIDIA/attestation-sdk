@@ -29,6 +29,11 @@
 
 namespace nvattestation {
 
+/**
+ * @brief Default issuer used for detached EAT/EAR signing when the caller
+ * does not explicitly override DetachedEATOptions::m_issuer.
+ */
+constexpr const char* kDefaultEatIssuer = "NVAT-LOCAL-VERIFIER";
 
 /**
  * @brief Represents certificate chain claims for attestation
@@ -220,7 +225,7 @@ class Claims {
 class DetachedEATOptions {
     public: 
         std::string m_private_key_pem = "";
-        std::string m_issuer = "NVAT-LOCAL-VERIFIER";
+        std::string m_issuer = kDefaultEatIssuer;
         std::string m_kid = "";
 
         DetachedEATOptions() = default;

@@ -1,0 +1,158 @@
+{
+  "entities": [
+    {
+      "name": "Coverage Signer",
+      "roles": [
+        "manifest-signer"
+      ]
+    }
+  ],
+  "id": "test-corim-coverage",
+  "rim_validity": {
+    "not_after": 1924905600
+  },
+  "tags": [
+    {
+      "reference_triples": [
+        {
+          "environment": {
+            "class": {
+              "vendor": "VendorCov"
+            }
+          },
+          "measurements": [
+            {
+              "key": 1,
+              "values": {
+                "version": {
+                  "scheme": 1,
+                  "value": "1.0"
+                }
+              }
+            },
+            {
+              "key": 2,
+              "values": {
+                "version": {
+                  "scheme": 2,
+                  "value": "1.0-rc"
+                }
+              }
+            },
+            {
+              "key": 3,
+              "values": {
+                "version": {
+                  "scheme": 3,
+                  "value": "1a"
+                }
+              }
+            },
+            {
+              "key": 4,
+              "values": {
+                "version": {
+                  "scheme": 4,
+                  "value": "10"
+                }
+              }
+            },
+            {
+              "key": 5,
+              "values": {
+                "version": {
+                  "scheme": 16384,
+                  "value": "1.2.3"
+                }
+              }
+            },
+            {
+              "key": 6,
+              "values": {
+                "version": {
+                  "scheme": 99,
+                  "value": "weird"
+                }
+              }
+            },
+            {
+              "key": 7,
+              "values": {
+                "svn": {
+                  "kind": "exact",
+                  "value": 42
+                }
+              }
+            },
+            {
+              "key": 8,
+              "values": {
+                "name": "named-measurement"
+              }
+            },
+            {
+              "key": "tstr-keyed-measurement",
+              "values": {
+                "svn": {
+                  "kind": "exact",
+                  "value": 7
+                }
+              }
+            },
+            {
+              "key": 10,
+              "values": {
+                "version": {
+                  "scheme": "binary",
+                  "value": "010203ff"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "vendor": "VendorCov"
+            }
+          },
+          "measurements": [
+            {
+              "values": {
+                "flags": {
+                  "confidentiality_protected": true,
+                  "configured": true,
+                  "debug": true,
+                  "immutable": true,
+                  "integrity_protected": true,
+                  "recovery": true,
+                  "replay_protected": true,
+                  "runtime_meas": true,
+                  "secure": true,
+                  "tcb": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "environment": {
+            "class": {
+              "vendor": "VendorCov"
+            }
+          },
+          "measurements": [
+            {
+              "values": {
+                "digests": [
+                  "sha-256;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "tag_id": "test-comid-coverage"
+    }
+  ]
+}

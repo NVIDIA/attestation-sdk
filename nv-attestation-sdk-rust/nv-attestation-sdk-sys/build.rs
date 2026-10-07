@@ -97,6 +97,7 @@ fn generate_bindings(header_path: &Path, include_dir: &Path) {
         .opaque_type("nvat_logger_st")
         .opaque_type("nvat_http_options_st")
         .opaque_type("nvat_ocsp_client_st")
+        .opaque_type("nvat_ocsp_client_options_st")
         .opaque_type("nvat_rim_store_st")
         .opaque_type("nvat_nonce_st")
         .opaque_type("nvat_gpu_evidence_st")
@@ -115,6 +116,9 @@ fn generate_bindings(header_path: &Path, include_dir: &Path) {
         .opaque_type("nvat_switch_local_verifier_st")
         .opaque_type("nvat_relying_party_policy_st")
         .opaque_type("nvat_attestation_ctx_st")
+        .opaque_type("nvat_cmw_collection_st")
+        .opaque_type("nvat_corim_store_st")
+        .opaque_type("nvat_local_corim_verifier_st")
         // Allowlist only the nvat API
         .allowlist_function("nvat_.*")
         .allowlist_type("nvat_.*")

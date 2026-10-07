@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <utility>
 #include <time.h>
 #include <openssl/bio.h>
 #include <openssl/conf.h>
@@ -35,11 +36,35 @@ namespace nvattestation {
 struct NvOcspResponse {
     time_t thisupd;
     time_t nextupd;
+    // Set only when status is revoked; 0 otherwise.
+    time_t revtime = 0;
+    // When the responder signed this response (OCSP producedAt); distinct
+    // from thisupd, which is when the status itself was last known correct.
+    time_t producedat = 0;
     int reason;
     int status;
     bool nonce_matches;
     bool response_valid;
+    // No request was made (AIA responder lookup on, cert carries no AIA
+    // responder). The other fields are unset and must be ignored.
+    bool skipped = false;
 };
+
+enum class OcspCertIdHashAlgorithm {
+    Sha1,
+    Sha256,
+    Sha384,
+};
+
+struct OcspClientOptions {
+    OcspCertIdHashAlgorithm cert_id_hash_algorithm =
+        OcspCertIdHashAlgorithm::Sha256;
+};
+
+Error ocsp_cert_id_hash_algorithm_from_name(
+    const std::string& name,
+    OcspCertIdHashAlgorithm& out_algorithm
+);
 
 /**
  * @brief Interface for an OCSP HTTP client.
@@ -95,6 +120,14 @@ public:
         const HttpOptions& http_options
     );
 
+    static Error create(
+        NvHttpOcspClient& out_client,
+        const std::string& base_url,
+        const std::string& service_key,
+        const HttpOptions& http_options,
+        const OcspClientOptions& options
+    );
+
     /**
      * @brief Creates an NvHttpOcspClient instance.
      *
@@ -110,11 +143,69 @@ public:
         const HttpOptions& http_options
     );
 
+    static Error init_from_env(
+        NvHttpOcspClient& out_client,
+        const char * base_url,
+        const std::string& service_key,
+        const HttpOptions& http_options,
+        const OcspClientOptions& options
+    );
+
+    OcspCertIdHashAlgorithm cert_id_hash_algorithm() const {
+        return m_options.cert_id_hash_algorithm;
+    }
+
+    // When enabled, the responder URL is taken from each subject cert's
+    // Authority Information Access extension instead of the configured base
+    // URL; a cert with no AIA responder is skipped (no request) rather than
+    // falling back to the base URL. Default disabled (legacy behavior: always
+    // use the base URL).
+    void set_use_cert_aia_responder(bool enabled) {
+        m_use_cert_aia_responder = enabled;
+    }
+
+    // Append a prefix-substitution rule applied to the responder URL before
+    // the request (e.g. upgrade http:// to https://, or redirect to an
+    // alternate responder, such as Trust Outpost). Rules are tried in
+    // insertion order; first match wins.
+    // Only applicable when m_use_cert_aia_reponder is true.
+    Error add_url_rewrite(std::string pattern, std::string replacement);
+
+    // First OCSP responder URL in the cert's AIA extension, or "" if none.
+    static std::string first_ocsp_responder_url(X509* cert);
+
+    // Determine the effective OCSP responder URL for subject_cert, honoring
+    // set_use_cert_aia_responder() and configured URL rewrites. Returns the
+    // base URL when AIA lookup is disabled; when it is enabled, returns the
+    // cert's (rewritten) AIA responder URL, or "" if the cert has none.
+    std::string select_request_url(X509* subject_cert) const;
+
+    // Apply prefix-substitution rules to url; first match wins.
+    static std::string apply_url_rewrites(
+        const std::vector<std::pair<std::string, std::string>>& rules,
+        const std::string& url);
+
 private:
     HttpOptions m_http_options;
-    std::string m_ocsp_url;
+    std::string m_ocsp_default_url;
     NvHttpClient m_http_client;
+    OcspClientOptions m_options;
+    bool m_use_cert_aia_responder = false;
+    std::vector<std::pair<std::string, std::string>> m_url_rewrites;
 
+    static Error create_cert_id(
+        OcspCertIdHashAlgorithm algorithm,
+        X509* subject_cert,
+        X509* issuer_cert,
+        nv_unique_ptr<OCSP_CERTID>& out_id
+    );
+
+    Error build_request(
+        X509* subject_cert,
+        X509* issuer_cert,
+        nv_unique_ptr<OCSP_REQUEST>& out_request,
+        nv_unique_ptr<OCSP_CERTID>& out_response_lookup_id
+    ) const;
 
     static Error get_ocsp_response_from_raw(
         const std::string& ocsp_response_raw,
@@ -133,6 +224,14 @@ private:
         nv_unique_ptr<OCSP_CERTID>& id,
         NvOcspResponse& out_ocsp_response
     );
+
+    // Grants the get_ocsp_status unit tests direct access, so timestamp
+    // parsing can be exercised without a live/mocked OCSP HTTP round trip.
+    friend class NvHttpOcspClientStatusTest_GoodStatusAllFieldsPresent_Test;
+    friend class NvHttpOcspClientStatusTest_RevokedStatusIncludesRevocationTime_Test;
+    friend class NvHttpOcspClientStatusTest_MissingNextUpdateUsesDefaultTtl_Test;
+    friend class NvHttpOcspClientHashTest_ConfiguredAlgorithmsBuildExpectedCertIds_Test;
+    friend class NvHttpOcspCacheClient;
 
 };
 
@@ -156,6 +255,8 @@ public:
     );
 
     private:
+    friend class NvHttpOcspCacheClientTest_CacheKeyUsesFixedSha256_Test;
+
     std::shared_ptr<IOcspHttpClient> m_inner_client;
     std::shared_ptr<INvCache> m_cache;
 

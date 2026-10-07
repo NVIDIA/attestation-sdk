@@ -72,6 +72,14 @@ namespace nvattest {
         }
     };
 
+    template<> struct DeleterOf<nvat_ocsp_client_options_t> {
+        void operator()(nvat_ocsp_client_options_t* ptr) const {
+            if (ptr) {
+                nvat_ocsp_client_options_free(ptr);
+            }
+        }
+    };
+
     template<> struct DeleterOf<nvat_evidence_policy_t> {
         using pointer = nvat_evidence_policy_t;
         void operator()(nvat_evidence_policy_t ptr) const {
@@ -109,6 +117,54 @@ namespace nvattest {
         void operator()(nvat_switch_evidence_source_t* ptr) const {
             if (ptr) {
                 nvat_switch_evidence_source_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_http_options_t> {
+        void operator()(nvat_http_options_t* ptr) const {
+            if (ptr) {
+                nvat_http_options_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_jwt_validation_options_t> {
+        void operator()(nvat_jwt_validation_options_t* ptr) const {
+            if (ptr) {
+                nvat_jwt_validation_options_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_cmw_collection_t> {
+        void operator()(nvat_cmw_collection_t* ptr) const {
+            if (ptr) {
+                nvat_cmw_collection_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_corim_store_t> {
+        void operator()(nvat_corim_store_t* ptr) const {
+            if (ptr) {
+                nvat_corim_store_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_local_corim_verifier_t> {
+        void operator()(nvat_local_corim_verifier_t* ptr) const {
+            if (ptr) {
+                nvat_local_corim_verifier_free(ptr);
+            }
+        }
+    };
+
+    template<> struct DeleterOf<nvat_detached_eat_options_t> {
+        void operator()(nvat_detached_eat_options_t* ptr) const {
+            if (ptr) {
+                nvat_detached_eat_options_free(ptr);
             }
         }
     };

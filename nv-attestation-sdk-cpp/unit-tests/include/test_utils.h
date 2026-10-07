@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -26,6 +27,7 @@
 //third party
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
+#include <nlohmann/json.hpp>
 
 #include "nv_attestation/utils.h"
 #include "nv_attestation/gpu/evidence.h"
@@ -34,12 +36,48 @@
 #include "nv_attestation/gpu/claims.h"
 #include "nv_attestation/claims.h"
 
+// Compare a serialized JSON object to a golden file. If REGEN_GOLDENS=1 is set
+// in the environment, the golden is overwritten with `actual` instead of being
+// compared. Mismatches print a human-readable RFC 6902 patch diff.
+void compare_to_golden(const nlohmann::json& actual, const std::string& golden_path);
+
 using namespace nvattestation;
 using ::testing::Return;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::SetArgReferee;
 using ::testing::Invoke;
+
+class ScopedEnvironmentVariable {
+public:
+    explicit ScopedEnvironmentVariable(const char* name) : m_name(name) {
+        const char* value = std::getenv(m_name.c_str());
+        if (value != nullptr) {
+            m_was_set = true;
+            m_original_value = value;
+        }
+    }
+
+    ~ScopedEnvironmentVariable() {
+        if (m_was_set) {
+            setenv(m_name.c_str(), m_original_value.c_str(), 1);
+        } else {
+            unsetenv(m_name.c_str());
+        }
+    }
+
+    ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+    ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) =
+        delete;
+
+    void set(const char* value) { setenv(m_name.c_str(), value, 1); }
+    void unset() { unsetenv(m_name.c_str()); }
+
+private:
+    std::string m_name;
+    bool m_was_set = false;
+    std::string m_original_value;
+};
 
 // Mock evidence data class containing test constants
 const std::unordered_map<std::string, std::string> evidence_to_nonce_map = {
@@ -77,6 +115,7 @@ public:
     static MockGpuEvidenceData create_expired_driver_rim_scenario();
     static MockGpuEvidenceData create_measurements_mismatch_scenario();
     static MockGpuEvidenceData create_blackwell_scenario();
+    static MockGpuEvidenceData create_rubin_scenario();
 };
 
 /**

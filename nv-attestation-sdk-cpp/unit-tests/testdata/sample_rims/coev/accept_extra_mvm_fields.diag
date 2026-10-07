@@ -1,0 +1,23 @@
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestExtraMvm" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899']
+              ],
+              / serial-number / 8: "TestSerial-001",
+              / ueid / 9: h'01020304050607',
+              / name / 11: "extra-mvm"
+            }
+          }
+        ]
+      ]
+    ]
+  }
+})

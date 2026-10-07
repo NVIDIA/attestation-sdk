@@ -1,0 +1,23 @@
+/ Same as minimal.diag but with a standalone concise-evidence profile (key 2) /
+/ set, for the evidence_handler.cpp backup-CoEV profile-propagation test.    /
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+              ]
+            }
+          }
+        ]
+      ]
+    ]
+  },
+  / profile / 2: 32("tag:nvidia.com,2026:evidence/profiles/coev/backup-ce/1.0.0")
+})

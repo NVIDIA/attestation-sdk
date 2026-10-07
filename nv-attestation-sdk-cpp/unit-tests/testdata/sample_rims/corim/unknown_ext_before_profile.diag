@@ -1,0 +1,12 @@
+/ An unknown extension key (99) placed BEFORE a well-formed profile (key 3).  /
+/ zcbor walks map entries positionally and runs the extension rule last, so   /
+/ key 99 halts the walk and key 3 is swept into the extension array behind it /
+/ even though its value is valid. The diagnostic must not blame the profile.  /
+501_1({
+    0: "test-corim-unknown-ext-before-profile",
+    1: [
+        506_1(h'a201a10077746573742d636f6d69642d776974682d70726f66696c6504a1008182a100a1016756656e646f725a81a101a10101'),
+    ],
+    99: "unknown-extension",
+    3: 32_0("http://example.test/unknown-profile"),
+})

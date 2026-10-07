@@ -1,0 +1,24 @@
+/ evidence-id (key 1) is present but is an int rather than a tagged-uuid-type /
+/ (#6.37). It backtracks into the extension array and would otherwise decode  /
+/ as an absent evidence-id.                                                   /
+571({
+  / ev-triples / 0: {
+    / evidence-triples / 0: [
+      [
+        / environment-map / {
+          / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+        },
+        [
+          {
+            / mval / 1: {
+              / digests / 2: [
+                [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+              ]
+            }
+          }
+        ]
+      ]
+    ]
+  },
+  / evidence-id / 1: 42
+})

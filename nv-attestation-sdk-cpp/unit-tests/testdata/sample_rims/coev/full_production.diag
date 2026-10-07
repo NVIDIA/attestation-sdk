@@ -1,0 +1,202 @@
+570_1({
+    0: [
+        571_1({
+            0: {
+                0: [
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100 CC settings - MPT"}},
+                        [
+                            {
+                                0: "CC MPT settings",
+                                1: {12: {0: [53_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "CC mode status - MPT"}},
+                        [
+                            {
+                                0: "CC mpt mode status",
+                                1: {12: {0: [49_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "FB protection settings"}},
+                        [
+                            {
+                                0: "FB protection settings",
+                                1: {12: {0: [48_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "Ucode load settings"}},
+                        [
+                            {
+                                0: "Ucode load settings",
+                                1: {12: {0: [50_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "PRI redirection setting"}},
+                        [
+                            {
+                                0: "PRI redirection settings",
+                                1: {12: {0: [52_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100 CC TCB Ucode"}},
+                        [
+                            {0: "GSP FMC Hash", 1: {12: {0: [54_0]}}},
+                            {0: "GSP EFMC Hash", 1: {12: {0: [45_0]}}},
+                            {0: "FECS ucode", 1: {12: {0: [56_0]}}},
+                            {0: "PMU ucode", 1: {12: {0: [63_0]}}},
+                            {0: "SEC2-FMC Hash", 1: {12: {0: [41_0]}}},
+                            {
+                                0: "SEC2_RTOS ucode",
+                                1: {12: {0: [40_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100 Compute Ucode"}},
+                        [
+                            {0: "GPCCS ucode", 1: {12: {0: [55_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100 GSP-RM ucode"}},
+                        [
+                            {
+                                0: "GSP-RM ucode Hash",
+                                1: {12: {0: [46_0]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "Nvdec0 ucode"}},
+                        [
+                            {0: "Nvdec0 ucode", 1: {12: {0: [61_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "Nvdec ucode"}},
+                        [
+                            {0: "Nvdec ucode", 1: {12: {0: [60_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "OFA ucode"}},
+                        [
+                            {0: "OFA ucode", 1: {12: {0: [59_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "NVJPG ucode"}},
+                        [
+                            {0: "NVJPG ucode", 1: {12: {0: [58_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "NVENC ucode"}},
+                        [
+                            {0: "NVENC ucode", 1: {12: {0: [57_0]}}},
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100 HW config"}},
+                        [
+                            {
+                                0: "FSP BootROM patches",
+                                1: {12: {0: [1]}},
+                            },
+                        ],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100CC Fuses"}},
+                        [{0: "CC Fuses", 1: {12: {0: [4]}}}],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100FSP FMC"}},
+                        [{0: "FSP FMC", 1: {12: {0: [2]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware microcodes (BootComplex reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [5]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware microcodes (FLR reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [11]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware microcodes (NVLink reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [19]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware ROM (BootComplex reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [6]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware ROM (FLR reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [12]}}}],
+                    ],
+                    [
+                        {
+                            0: {
+                                1: "NVIDIA",
+                                2: "GR100Firmware ROM (NVLink reset domain)",
+                            },
+                        },
+                        [{0: " ", 1: {12: {0: [16]}}}],
+                    ],
+                    [
+                        {0: {1: "NVIDIA", 2: "GR100Debug State"}},
+                        [
+                            {
+                                0: "JTAG Unlock Status",
+                                1: {12: {0: [17]}},
+                            },
+                        ],
+                    ],
+                ],
+            },
+        }),
+    ],
+    1: [
+        {
+            0: 32_0("https://rim.attestation.nvidia.com/v1/rim/NV_GPU_VBIOS_G153_0210_895_9802AF0001.corim"),
+        },
+        {
+            0: 32_0("https://rim.attestation.nvidia.com/v1/rim/NV_GPU_DRIVER_GR100_UNKNOWN.corim"),
+        },
+    ],
+})

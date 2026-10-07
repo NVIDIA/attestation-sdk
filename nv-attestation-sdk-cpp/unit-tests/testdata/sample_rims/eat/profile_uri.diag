@@ -1,0 +1,12 @@
+/ EAT claims-set whose eat_profile (265) is a URI text string rather than an
+  OID. RFC 9711 allows the profile claim to be either; the parser accepts both
+  and exposes the kind without rejecting on value. /
+{
+  / nonce / 10: h'0011223344556677',
+  / dbgstat / 263: 3,
+  / eat_profile as a URI / 265: "https://nvidia.example/eat-profile",
+  / measurements /
+  273: [
+    [ 10571, h'd9023ba100a1008182a100a2016a5465737456656e646f720269546573744d6f64656c81a101a102818201582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' ]
+  ]
+}

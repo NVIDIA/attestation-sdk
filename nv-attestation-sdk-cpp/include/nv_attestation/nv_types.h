@@ -23,6 +23,7 @@
 #include <xmlsec/xmldsig.h>
 #include <xmlsec/xmlsec.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/stack.h>
 #include <openssl/ocsp.h>
 #include <openssl/bio.h>
@@ -84,6 +85,7 @@ template<> struct DeleterOf<ASN1_TYPE> { void operator()(ASN1_TYPE* ptr) const {
 template<> struct DeleterOf<X509_EXTENSION> { void operator()(X509_EXTENSION* ptr) const { X509_EXTENSION_free(ptr);}};
 template<> struct DeleterOf<ASN1_OBJECT> { void operator()(ASN1_OBJECT* ptr) const { ASN1_OBJECT_free(ptr);}};
 template<> struct DeleterOf<ASN1_SEQUENCE_ANY> { void operator()(ASN1_SEQUENCE_ANY* ptr) const { sk_ASN1_TYPE_pop_free(ptr, ASN1_TYPE_free);}};
+template<> struct DeleterOf<GENERAL_NAMES> { void operator()(GENERAL_NAMES* ptr) const { GENERAL_NAMES_free(ptr);}};
 template<> struct DeleterOf<xmlSchema> { void operator()(xmlSchema* ptr) const { xmlSchemaFree(ptr);}};
 template<> struct DeleterOf<xmlSchemaParserCtxt> { void operator()(xmlSchemaParserCtxt* ptr) const { xmlSchemaFreeParserCtxt(ptr);}};
 template<> struct DeleterOf<xmlSchemaValidCtxt> { void operator()(xmlSchemaValidCtxt* ptr) const { xmlSchemaFreeValidCtxt(ptr);}};

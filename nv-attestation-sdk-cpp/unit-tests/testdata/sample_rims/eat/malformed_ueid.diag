@@ -1,0 +1,12 @@
+/ ueid (256) is declared bstr .size (7..33); a uint fails that, so the claim is
+  shadowed into the `* int => any` catch-all. The diagnostic must name it as
+  malformed rather than warn that an unknown claim key was tolerated. /
+{
+  / nonce / 10: h'0011223344556677',
+  / dbgstat = DisabledPermanently / 263: 3,
+  / eat_profile / 265: h'2b0601040182cc7f0103',
+  273: [
+    [ 10571, h'd9023ba100a1008182a100a2016a5465737456656e646f720269546573744d6f64656c81a101a102818201582000112233445566778899aabbccddeeff00112233445566778899aabbccddeeff' ]
+  ],
+  / ueid: uint instead of bstr / 256: 12345
+}

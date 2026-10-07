@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <cstring>
 #include <curl/urlapi.h>
 #include <iostream>
@@ -46,6 +47,7 @@
 #include "nv_attestation/nv_http.h"
 #include "nvat.h"
 #include "nv_attestation/nv_x509.h"
+#include "nv_attestation/dice_tcb_info.h"
 #include "nv_attestation/nv_types.h"
 #include "nv_attestation/error.h"
 #include "nv_attestation/log.h"
@@ -105,6 +107,29 @@ nv_unique_ptr<X509_STORE> create_trust_store(X509* trust_anchor_cert) {
     if(X509_STORE_add_cert(store.get(), trust_anchor_cert) != 1) {
         LOG_ERROR("Error: unable to add trust anchor to store: " << get_openssl_error());
         return nullptr;
+    }
+    return store;
+}
+
+nv_unique_ptr<X509_STORE> create_trust_store(const std::vector<X509*>& trust_anchor_certs) {
+    if (trust_anchor_certs.empty()) {
+        LOG_ERROR("Error: no trust anchor certificates provided.");
+        return nullptr;
+    }
+    nv_unique_ptr<X509_STORE> store(X509_STORE_new());
+    if (store == nullptr) {
+        LOG_ERROR("Error: unable to create X509_STORE: " << get_openssl_error());
+        return nullptr;
+    }
+    for (X509* anchor : trust_anchor_certs) {
+        if (anchor == nullptr) {
+            LOG_ERROR("Error: null trust anchor certificate.");
+            return nullptr;
+        }
+        if (X509_STORE_add_cert(store.get(), anchor) != 1) {
+            LOG_ERROR("Error: unable to add trust anchor to store: " << get_openssl_error());
+            return nullptr;
+        }
     }
     return store;
 }
@@ -185,18 +210,9 @@ Error X509CertChain::push_back(const std::string &cert_string) {
     return Error::Ok;
 }
 
-Error X509CertChain::verify_signature(
-    const std::vector<uint8_t>& data,
-    const std::vector<uint8_t>& signature,
-    const EVP_MD* md) {
-
+Error X509CertChain::get_leaf_public_key(nv_unique_ptr<EVP_PKEY>& out_pkey) const {
     if (m_certs.empty() || !m_certs[0]) {
         LOG_ERROR("Leaf certificate is null or chain is empty.");
-        return Error::InternalError;
-    }
-
-    if (md == nullptr) {
-        LOG_ERROR("Hash function is null.");
         return Error::InternalError;
     }
 
@@ -204,6 +220,26 @@ Error X509CertChain::verify_signature(
     if (!pkey) {
         LOG_ERROR("Failed to get public key from certificate: " << get_openssl_error());
         return Error::InternalError;
+    }
+
+    out_pkey = std::move(pkey);
+    return Error::Ok;
+}
+
+Error X509CertChain::verify_signature(
+    const std::vector<uint8_t>& data,
+    const std::vector<uint8_t>& signature,
+    const EVP_MD* md) {
+
+    if (md == nullptr) {
+        LOG_ERROR("Hash function is null.");
+        return Error::InternalError;
+    }
+
+    nv_unique_ptr<EVP_PKEY> pkey;
+    Error key_err = get_leaf_public_key(pkey);
+    if (key_err != Error::Ok) {
+        return key_err;
     }
 
     nv_unique_ptr<EVP_MD_CTX> md_ctx(EVP_MD_CTX_new());
@@ -306,7 +342,7 @@ Error X509CertChain::verify_signature_pkcs11(
     return error;
 }
 
-Error X509CertChain::verify() const {
+Error X509CertChain::verify(bool allow_partial_chain) const {
     // ref: https://docs.openssl.org/3.0/man1/openssl-verification-options/#certification-path-building
     // verification involves setting up the untrusted certs, the trust anchor, and then calling X509_verify_cert
     // with the target cert to be verified. the function will build a chain of certs from the target cert
@@ -354,9 +390,20 @@ Error X509CertChain::verify() const {
         return Error::InternalError;
     }
     
-    // Skip certificate expiration checks
+    // Skip certificate expiration checks; optionally accept non-self-signed trust anchors
     X509_VERIFY_PARAM* param = X509_STORE_CTX_get0_param(ctx.get());
-    X509_VERIFY_PARAM_set_flags(param, X509_V_FLAG_NO_CHECK_TIME);
+    if (param == nullptr) {
+        LOG_ERROR("Error: X509_STORE_CTX_get0_param returned null: " << get_openssl_error());
+        return Error::InternalError;
+    }
+    unsigned long flags = X509_V_FLAG_NO_CHECK_TIME;
+    if (allow_partial_chain) {
+        flags |= X509_V_FLAG_PARTIAL_CHAIN;
+    }
+    if (X509_VERIFY_PARAM_set_flags(param, flags) != 1) {
+        LOG_ERROR("Error: X509_VERIFY_PARAM_set_flags failed: " << get_openssl_error());
+        return Error::InternalError;
+    }
     
     int ret = X509_verify_cert(ctx.get());
     if(ret != 1) {
@@ -409,16 +456,11 @@ Error X509CertChain::calculate_min_expiration_time(time_t& out_min_expiration_ti
         return Error::InternalError;
     }
     
-    // If requested, convert min_expiration_time to ISO8601 format and return via the output parameter
     if (iso8601_time_out != nullptr) {
-        struct tm tm_iso;
-        gmtime_r(&min_expiration_time, &tm_iso);
-        
-        constexpr size_t BUF_SIZE = 25; // YYYY-MM-DDThh:mm:ssZ (20 chars) + null terminator + buffer
-        char iso8601_time[BUF_SIZE];
-        strftime(iso8601_time, sizeof(iso8601_time), "%Y-%m-%dT%H:%M:%SZ", &tm_iso);
-        
-        *iso8601_time_out = iso8601_time;
+        Error fmt_err = format_time(min_expiration_time, *iso8601_time_out);
+        if (fmt_err != Error::Ok) {
+            return fmt_err;
+        }
     }
     
     out_min_expiration_time = min_expiration_time;
@@ -462,57 +504,87 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
 }
 
 
-Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const { // NOLINT(readability-function-cognitive-complexity)
-    LOG_DEBUG("Generating OCSP claims");
-
-    // Use the member trust store
+Error X509CertChain::collect_ocsp_responses(const OcspVerifyOptions& options, IOcspHttpClient& client,
+                                             std::vector<std::pair<size_t, NvOcspResponse>>& out) const {
     if (!m_trust_store) {
-        LOG_ERROR("Trust store is not initialized. Cannot generate OCSP claims.");
+        LOG_ERROR("Trust store is not initialized. Cannot collect OCSP responses.");
         return Error::InternalError;
     }
-
-    out_ocsp_claims = OCSPClaims();
-    bool claims_initialized = false;
 
     int start_indx = 0;
     if (m_type == CertificateChainType::GPU_DEVICE_IDENTITY || m_type == CertificateChainType::NVSWITCH_DEVICE_IDENTITY) {
         start_indx = 1;
     }
 
-    // Stack for intermediate certificates for OCSP_basic_verify, built incrementally.
+    // Certs outside [start_indx, m_certs.size()-2] have no issuer in this
+    // chain to check them against (the root, and — for chain types that
+    // exclude it — the leaf). Emit a synthetic skipped response for each,
+    // so callers record them as NOT_CHECKED through the same path as a
+    // cert with no AIA responder, instead of leaving them silently absent.
+    for (size_t idx = 0; idx < m_certs.size(); ++idx) {
+        if (static_cast<int>(idx) >= start_indx &&
+            static_cast<int>(idx) <= static_cast<int>(m_certs.size()) - 2) {
+            continue;
+        }
+        NvOcspResponse not_applicable{};
+        not_applicable.skipped = true;
+        out.emplace_back(idx, not_applicable);
+    }
+
     nv_unique_ptr<STACK_OF(X509)> ocsp_verify_intermediates(sk_X509_new_null());
-    if(!ocsp_verify_intermediates) {
+    if (!ocsp_verify_intermediates) {
         LOG_ERROR("unable to create STACK_OF(X509) for ocsp_verify_intermediates: " << get_openssl_error());
         return Error::InternalError;
     }
 
-    // Loop from the certificate just before the root, down to the start_indx.
-    // The subject_idx refers to the certificate being checked for revocation.
-    // The issuer_idx refers to the issuer of subject_idx's certificate.
-    for(int subject_idx = (int)m_certs.size() - 2; subject_idx >= start_indx; --subject_idx) {
+    for (int subject_idx = (int)m_certs.size() - 2; subject_idx >= start_indx; --subject_idx) {
         LOG_DEBUG("Processing cert: subject_idx" << subject_idx << ". " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
         int issuer_idx = subject_idx + 1;
 
-        // The intermediate_certs stack for OCSP_basic_verify is ocsp_verify_intermediates,
-        // which is built incrementally across iterations.
-
         NvOcspResponse ocsp_resp;
-        Error error = ocsp_client.get_ocsp_response(m_certs[subject_idx], m_certs[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
+        Error error = client.get_ocsp_response(m_certs[subject_idx], m_certs[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
         if (error != Error::Ok) {
             return error;
+        }
+
+        out.emplace_back(static_cast<size_t>(subject_idx), ocsp_resp);
+
+        if (sk_X509_insert(ocsp_verify_intermediates.get(), m_certs[subject_idx].get(), 0) <= 0) {
+            LOG_ERROR("Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
+            return Error::InternalError;
+        }
+    }
+    return Error::Ok;
+}
+
+Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const { // NOLINT(readability-function-cognitive-complexity)
+    LOG_DEBUG("Generating OCSP claims");
+
+    out_ocsp_claims = OCSPClaims(OCSPStatus::UNDEFINED);
+    bool claims_initialized = false;
+
+    std::vector<std::pair<size_t, NvOcspResponse>> responses;
+    Error error = collect_ocsp_responses(ocsp_verify_options, ocsp_client, responses);
+    if (error != Error::Ok) {
+        return error;
+    }
+
+    for (const auto& entry : responses) {
+        const size_t subject_idx = entry.first;
+        const NvOcspResponse& ocsp_resp = entry.second;
+        if (ocsp_resp.skipped) {
+            continue;
         }
 
         if (!ocsp_resp.response_valid) {
             LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
         }
-        // response is invalid if its invalid for any cert in the chain
         if (!claims_initialized) {
             out_ocsp_claims.ocsp_response_valid = ocsp_resp.response_valid;
         } else {
             out_ocsp_claims.ocsp_response_valid = out_ocsp_claims.ocsp_response_valid && ocsp_resp.response_valid;
         }
 
-        // nonce match is true if its true for all certs in the chain, else it is false
         if (!claims_initialized) {
             out_ocsp_claims.nonce_matches = ocsp_resp.nonce_matches;
         } else {
@@ -524,7 +596,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
 
         LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
         OCSPStatus mapped_status = OCSPStatus::UNDEFINED;
-        switch(ocsp_resp.status) {
+        switch (ocsp_resp.status) {
             case V_OCSP_CERTSTATUS_REVOKED:
                 mapped_status = OCSPStatus::REVOKED;
                 break;
@@ -542,36 +614,199 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
         if (!claims_initialized) {
             out_ocsp_claims.status = mapped_status;
         } else {
-            // keep the highest cert ocsp status (which is "not good") in the chain i.e L1 > L2 > L3 > L4
             if (out_ocsp_claims.status == OCSPStatus::GOOD) {
                 if (mapped_status == OCSPStatus::REVOKED) {
-                    out_ocsp_claims.revocation_reason = std::make_shared<std::string>(OCSP_crl_reason_str(ocsp_resp.reason)); 
+                    out_ocsp_claims.revocation_reason = std::make_shared<std::string>(OCSP_crl_reason_str(ocsp_resp.reason));
                 }
                 out_ocsp_claims.status = mapped_status;
             }
         }
 
         LOG_DEBUG("Generating expiration time claim");
-        // The OCSP response expiration time is for this specific response.
-        // We should take the minimum expiration time of all OCSP responses in the chain.
         if (out_ocsp_claims.ocsp_resp_expiration_time == 0 || ocsp_resp.nextupd < out_ocsp_claims.ocsp_resp_expiration_time) {
             out_ocsp_claims.ocsp_resp_expiration_time = ocsp_resp.nextupd;
-        }
-        
-        // Prepare intermediates for the next iteration (which will process subject_idx-1).
-        // The current m_certs[subject_idx] becomes an intermediate for the next subject.
-        // sk_X509_insert does not increment ref count, which is fine as m_certs owns X509.
-        if (sk_X509_insert(ocsp_verify_intermediates.get(), m_certs[subject_idx].get(), 0) <= 0) {
-            LOG_ERROR("Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
-            return Error::InternalError;
         }
 
         claims_initialized = true;
     }
     return Error::Ok;
 }
+
+bool all_certs_trusted(const std::vector<PerCertStatus>& chain) {
+    // No ocsp data or NOT_CHECKED means not applicable. A genuinely failed
+    // query must be marked ERROR by the caller, not left null.
+    for (size_t i = 0; i < chain.size(); ++i) {
+        const auto& cert = chain[i];
+        if (cert.expired) {
+            return false;
+        }
+        if (!cert.ocsp || cert.ocsp->crl_status == OCSPStatus::NOT_CHECKED) {
+            continue;
+        }
+        if (cert.ocsp->crl_status != OCSPStatus::GOOD ||
+            !cert.ocsp->nonce_matches || !cert.ocsp->response_valid) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::shared_ptr<PerCertStatus::OcspInfo> X509CertChain::build_ocsp_info(const NvOcspResponse& resp, time_t now) {
+    auto info = std::make_shared<PerCertStatus::OcspInfo>();
+    info->response_valid = resp.response_valid;
+    info->nonce_matches = resp.nonce_matches;
+    info->response_expired = (resp.nextupd > 0 && resp.nextupd < now);
+    if (resp.nextupd > 0) {
+        if (format_time(resp.nextupd, info->response_expiration_date) != Error::Ok) {
+            LOG_WARN("Failed to format OCSP nextupd timestamp");
+            info->response_expired = false;
+        }
+    }
+    if (resp.producedat > 0) {
+        if (format_time(resp.producedat, info->response_produced_at) != Error::Ok) {
+            LOG_WARN("Failed to format OCSP producedat timestamp");
+        }
+    }
+
+    switch (resp.status) {
+        case V_OCSP_CERTSTATUS_GOOD:
+            info->crl_status = OCSPStatus::GOOD;
+            break;
+        case V_OCSP_CERTSTATUS_REVOKED:
+            info->crl_status = OCSPStatus::REVOKED;
+            info->revocation_reason = std::make_shared<std::string>(OCSP_crl_reason_str(resp.reason));
+            if (resp.revtime > 0 &&
+                format_time(resp.revtime, info->response_revoked_at) != Error::Ok) {
+                LOG_WARN("Failed to format OCSP revtime timestamp");
+            }
+            break;
+        case V_OCSP_CERTSTATUS_UNKNOWN:
+            info->crl_status = OCSPStatus::UNKOWN;
+            break;
+        default:
+            info->crl_status = OCSPStatus::UNDEFINED;
+            break;
+    }
+    return info;
+}
+
+Error X509CertChain::generate_per_cert_status(const OcspVerifyOptions& ocsp_options, IOcspHttpClient* ocsp_client,
+                                               std::vector<PerCertStatus>& out_statuses) const {
+    if (m_certs.empty()) {
+        LOG_ERROR("No certificates in chain");
+        return Error::InternalError;
+    }
+
+    time_t now = time(nullptr);
+    out_statuses.resize(m_certs.size());
+
+    for (size_t i = 0; i < m_certs.size(); ++i) {
+        if (!m_certs[i]) {
+            LOG_ERROR("Null certificate at index " << i);
+            return Error::InternalError;
+        }
+
+        const ASN1_TIME* not_after = X509_get0_notAfter(m_certs[i].get());
+        if (not_after == nullptr) {
+            LOG_ERROR("Could not get expiration time from certificate at index " << i);
+            return Error::InternalError;
+        }
+
+        struct tm tm_exp;
+        if (ASN1_TIME_to_tm(not_after, &tm_exp) != 1) {
+            LOG_ERROR("Failed to convert ASN1_TIME to tm: " << get_openssl_error());
+            return Error::InternalError;
+        }
+
+        time_t cert_expiration = timegm(&tm_exp);
+        if (format_time(cert_expiration, out_statuses[i].expiration_date) != Error::Ok) {
+            LOG_ERROR("Failed to format cert expiration time at index " << i);
+            return Error::InternalError;
+        }
+        out_statuses[i].expired = (cert_expiration < now);
+        out_statuses[i].cert_check_status = out_statuses[i].expired ? CertChainStatus::EXPIRED : CertChainStatus::VALID;
+    }
+
+    // Output is root-first (L1 = root, Ln = leaf).
+    std::reverse(out_statuses.begin(), out_statuses.end());
+
+    if (ocsp_client == nullptr) {
+        return Error::Ok;
+    }
+
+    std::vector<std::pair<size_t, NvOcspResponse>> responses;
+    Error error = collect_ocsp_responses(ocsp_options, *ocsp_client, responses);
+
+    for (const auto& entry : responses) {
+        const size_t idx = entry.first;
+        const NvOcspResponse& resp = entry.second;
+        if (resp.skipped) {
+            // Not applicable (e.g. cert has no AIA responder URL) — record
+            // as NOT_CHECKED rather than leaving ocsp null, so
+            // all_certs_trusted can tell this apart from a cert whose OCSP
+            // query actually failed.
+            auto skipped_info = std::make_shared<PerCertStatus::OcspInfo>();
+            skipped_info->crl_status = OCSPStatus::NOT_CHECKED;
+            out_statuses[m_certs.size() - 1 - idx].ocsp = std::move(skipped_info);
+            continue;
+        }
+
+        auto info = build_ocsp_info(resp, now);
+        if (resp.status == V_OCSP_CERTSTATUS_REVOKED) {
+            out_statuses[m_certs.size() - 1 - idx].cert_check_status = CertChainStatus::REVOKED;
+        }
+        out_statuses[m_certs.size() - 1 - idx].ocsp = std::move(info);
+    }
+
+    if (error != Error::Ok) {
+        // Query aborted partway (e.g. network error); mark every unreached
+        // cert ERROR instead of leaving it null, so null means only "not
+        // applicable" elsewhere.
+        for (size_t i = 0; i < out_statuses.size(); ++i) {
+            if (out_statuses[i].ocsp) {
+                continue;
+            }
+            auto error_info = std::make_shared<PerCertStatus::OcspInfo>();
+            error_info->crl_status = OCSPStatus::ERROR;
+            out_statuses[i].ocsp = std::move(error_info);
+        }
+        return error;
+    }
+
+    return Error::Ok;
+}
 size_t X509CertChain::size() const {
     return m_certs.size();
+}
+
+Error X509CertChain::append_pem_chain(const std::string& cert_chain) {
+    // Split PEM chain into individual certificates and add them to m_certs
+    const std::string delimiter = "-----END CERTIFICATE-----";
+    size_t start = 0;
+    while (true) {
+        size_t end = cert_chain.find(delimiter, start);
+        if (end == std::string::npos) {
+            break;
+        }
+        size_t cert_end = end + delimiter.length();
+        std::string cert_str = cert_chain.substr(start, cert_end - start);
+
+        Error error = push_back(cert_str);
+        if (error != Error::Ok) {
+            LOG_ERROR("Failed to add parsed certificate to chain");
+            return Error::InternalError;
+        }
+
+        start = cert_end;
+        while (start < cert_chain.size() && (cert_chain[start] == '\n' || cert_chain[start] == '\r')) {
+            ++start;
+        }
+    }
+    if (size() == 0) {
+            LOG_ERROR("No certificate chain available after parsing");
+            return Error::InternalError;
+    }
+    return Error::Ok;
 }
 
 Error X509CertChain::create_from_cert_chain_str(
@@ -586,39 +821,31 @@ Error X509CertChain::create_from_cert_chain_str(
         return Error::InternalError;
     }
 
-    Error error = X509CertChain::create(CertificateChainType::GPU_DEVICE_IDENTITY, root_cert_str, out_cert_chain);
+    Error error = X509CertChain::create(type, root_cert_str, out_cert_chain);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to create X509CertChain");
         return error;
     }
+    return out_cert_chain.append_pem_chain(cert_chain);
+}
 
-    // Split PEM chain into individual certificates and add them to m_certificate_chains
-    const std::string delimiter = "-----END CERTIFICATE-----";
-    size_t start = 0;
-    while (true) {
-        size_t end = cert_chain.find(delimiter, start);
-        if (end == std::string::npos) {
-            break;
-        }
-        size_t cert_end = end + delimiter.length();
-        std::string cert_str = cert_chain.substr(start, cert_end - start);
-
-        Error error = out_cert_chain.push_back(cert_str);
-        if (error != Error::Ok) {
-            LOG_ERROR("Failed to add parsed GPU certificate to chain");
-            return Error::InternalError;
-        }
-
-        start = cert_end;
-        while (start < cert_chain.size() && (cert_chain[start] == '\n' || cert_chain[start] == '\r')) {
-            ++start;
-        }
+Error X509CertChain::create_from_cert_chain_str(
+    CertificateChainType type,
+    nv_unique_ptr<X509_STORE> trust_store,
+    const std::string& cert_chain,
+    X509CertChain& out_cert_chain
+    )
+{
+    if (cert_chain.empty()) {
+        LOG_ERROR("Input PEM chain string is empty");
+        return Error::InternalError;
     }
-    if (out_cert_chain.size() == 0) {
-            LOG_ERROR("No certificate chain available after parsing");
-            return Error::InternalError;
+    if (!trust_store) {
+        LOG_ERROR("Provided trust store is null");
+        return Error::InternalError;
     }
-    return Error::Ok;
+    out_cert_chain = X509CertChain(type, std::move(trust_store));
+    return out_cert_chain.append_pem_chain(cert_chain);
 }
 
 Error X509CertChain::get_fwid(size_t cert_index, FWIDType fwid_type, std::vector<uint8_t>& out_fwid) const {
@@ -660,12 +887,13 @@ Error X509CertChain::get_fwid(size_t cert_index, FWIDType fwid_type, std::vector
     }
 
     const unsigned char* data = ASN1_STRING_get0_data(octet_str);
-    size_t length = ASN1_STRING_length(octet_str);
+    int length_int = ASN1_STRING_length(octet_str);
 
-    if (data == nullptr || length <= 0) {
+    if (data == nullptr || length_int <= 0) {
         LOG_ERROR("FWID extension data is empty or invalid.");
         return Error::InternalError;
     }
+    size_t length = static_cast<size_t>(length_int);
 
     if (length < X509CertChain::m_fwid_hash_length) {
         LOG_ERROR("FWID extension data is too short for SHA384 hash (need atleast " << X509CertChain::m_fwid_hash_length << " bytes, got " << length << " bytes).");
@@ -673,6 +901,24 @@ Error X509CertChain::get_fwid(size_t cert_index, FWIDType fwid_type, std::vector
     }
 
     if (fwid_type == FWIDType::FWID_2_23_133_5_4_1) {
+        // OID 2.23.133.5.4.1 is ambiguous: it may contain either a DiceTcbInfo structure
+        // (newer devices, 3rd-party) or the legacy CompositeDeviceID structure (Hopper/GH100).
+        // Try DiceTcbInfo first, then CompositeDeviceId, then raw tail-byte extraction.
+        Error err = get_fwid_2_23_133_5_4_1_1(data, length, out_fwid, /*silent=*/true);
+        if (err == Error::Ok) {
+            return Error::Ok;
+        }
+        LOG_DEBUG("OID 2.23.133.5.4.1 did not parse as DiceTcbInfo, trying CompositeDeviceId");
+        std::vector<uint8_t> der_vec(data, data + length);
+        CompositeDeviceId composite;
+        err = CompositeDeviceId::parse_from_der(der_vec, composite);
+        if (err == Error::Ok) {
+            out_fwid = composite.fwid().digest();
+            return Error::Ok;
+        }
+        // Final fallback: extract last m_fwid_hash_length bytes as raw digest.
+        // Some legacy devices and test certs store raw FWID bytes without proper ASN.1 wrapping.
+        LOG_DEBUG("OID 2.23.133.5.4.1 did not parse as CompositeDeviceId either, using raw tail bytes");
         if (X509CertChain::m_fwid_hash_length > length) {
             LOG_ERROR("FWID extension data is too short for SHA384 hash (need atleast " << X509CertChain::m_fwid_hash_length << " bytes, got " << length << " bytes).");
             return Error::InternalError;
@@ -684,96 +930,60 @@ Error X509CertChain::get_fwid(size_t cert_index, FWIDType fwid_type, std::vector
     return Error::Ok;
 }
 
-Error X509CertChain::get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_data, unsigned int length, std::vector<uint8_t>& out_fwid) {
-    nv_unique_ptr<ASN1_SEQUENCE_ANY> seq(d2i_ASN1_SEQUENCE_ANY(nullptr, &extension_data, length));
-    if (!seq) {
-        LOG_ERROR("Failed to parse ASN1_SEQUENCE_ANY from extension data.");
-        return Error::InternalError;
+Error X509CertChain::get_fwid_2_23_133_5_4_1_1(const unsigned char* extension_data, unsigned int length, std::vector<uint8_t>& out_fwid, bool silent) {
+    // Delegate to the DiceTcbInfo parser for proper ASN.1 parsing of the 2.23.133.5.4.1.1 extension
+    std::vector<uint8_t> der(extension_data, extension_data + length);
+    DiceTcbInfo info;
+    Error err = DiceTcbInfo::parse_from_der(der, info, silent);
+    if (err != Error::Ok) {
+        return err;
     }
-    // fwid list is the 7th element in the sequence according to the spec
-    // https://trustedcomputinggroup.org/wp-content/uploads/TCG_DICE_Attestation_Architecture_r22_02dec2020.pdf
-    // NOLINTNEXTLINE(readability-magic-numbers)
-    if (sk_ASN1_TYPE_num(seq.get()) <= 6) {
-        LOG_ERROR("Expected at least 7 elements in the FWID 2.23.133.5.4.1.1 extension");
-        return Error::InternalError;
-    }
+    return info.get_first_fwid_digest(out_fwid);
+}
 
-    ASN1_TYPE* fwid_list_asn = sk_ASN1_TYPE_value(seq.get(), 6);
-
-    if(fwid_list_asn == nullptr || fwid_list_asn->value.sequence == nullptr) {
-        LOG_ERROR("Expected a list of fwid elements");
-        return Error::InternalError;
+Error X509CertChain::get_dice_tcb_info(size_t cert_index, const std::string& oid, DiceTcbInfo& out_dice_tcb_info,
+                                       bool silent) const {
+    if (cert_index >= m_certs.size()) {
+        LOG_ERROR("Certificate index " << cert_index << " out of bounds. Chain size: " << m_certs.size());
+        return Error::CertNotFound;
     }
 
-    const unsigned char* fwid_list_data = ASN1_STRING_get0_data(fwid_list_asn->value.sequence);
-    int fwid_list_length = ASN1_STRING_length(fwid_list_asn->value.sequence);
-    LOG_DEBUG("fwid_list_data: " << to_hex_string(std::vector<uint8_t>(fwid_list_data, fwid_list_data + fwid_list_length)));
-    std::vector<uint8_t> fwid_list_data_vec(fwid_list_data, fwid_list_data + fwid_list_length);
-    /*
-    the fwid list structure: 
-
-    echo "3081b180064e5649444941810d4742313030204130312047535082023031830101840100850100a67e303d06096086480165030402020430d090cab1b6e6ffddca83d1781e25b3f040fa1f3c7608230cb5f41b1c1b99f5f748349e59d0ef8eb830c9bc79ccf77502303d06096086480165030402020430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000870500800000018801c0890100" | xxd -r -p | openssl asn1parse -inform DER -i
-    0:d=0  hl=3 l= 177 cons: SEQUENCE          
-    3:d=1  hl=2 l=   6 prim:  cont [ 0 ]        
-   11:d=1  hl=2 l=  13 prim:  cont [ 1 ]        
-   26:d=1  hl=2 l=   2 prim:  cont [ 2 ]        
-   30:d=1  hl=2 l=   1 prim:  cont [ 3 ]        
-   33:d=1  hl=2 l=   1 prim:  cont [ 4 ]        
-   36:d=1  hl=2 l=   1 prim:  cont [ 5 ]        
-   39:d=1  hl=2 l= 126 cons:  cont [ 6 ]   <- this is the fwid list    
-   41:d=2  hl=2 l=  61 cons:   SEQUENCE          
-   43:d=3  hl=2 l=   9 prim:    OBJECT            :sha384
-   54:d=3  hl=2 l=  48 prim:    OCTET STRING      [HEX DUMP]:D090CAB1B6E6FFDDCA83D1781E25B3F040FA1F3C7608230CB5F41B1C1B99F5F748349E59D0EF8EB830C9BC79CCF77502
-  104:d=2  hl=2 l=  61 cons:   SEQUENCE          
-  106:d=3  hl=2 l=   9 prim:    OBJECT            :sha384
-  117:d=3  hl=2 l=  48 prim:    OCTET STRING      [HEX DUMP]:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-  167:d=1  hl=2 l=   5 prim:  cont [ 7 ]        
-  174:d=1  hl=2 l=   1 prim:  cont [ 8 ]        
-  177:d=1  hl=2 l=   1 prim:  cont [ 9 ]
-    */
-
-    int offset = 2; // skip the context-specific tag and length bytes
-
-    std::vector<std::vector<uint8_t>> fwid_list;
-    while (offset < fwid_list_length) {
-        offset += 2; // skip the sequence tag and length bytes
-
-        offset += 1; // skip hash algorithm tag
-        if(!can_read_buffer(fwid_list_data_vec, offset, 1, "hash algorithm length")) {
-            return Error::InternalError;
-        }
-        int hash_alg_len = fwid_list_data_vec[offset];
-        offset += 1;  // for hash algo length
-        offset += hash_alg_len; // skip reading the hash algorithm
-
-        offset += 1; // skip fwid tag
-        if(!can_read_buffer(fwid_list_data_vec, offset, 1, "fwid length")) {
-            return Error::InternalError;
-        }
-        int fwid_len = fwid_list_data_vec[offset];
-        offset += 1;
-
-        if(!can_read_buffer(fwid_list_data_vec, offset, fwid_len, "fwid")) {
-            return Error::InternalError;
-        }
-        std::vector<uint8_t> fwid_vec(fwid_list_data_vec.begin() + offset, fwid_list_data_vec.begin() + offset + fwid_len);
-        offset += fwid_len;
-
-        fwid_list.push_back(fwid_vec);
+    const X509* cert = m_certs[cert_index].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index " << cert_index << " is null.");
+        return Error::CertNotFound;
     }
 
-    if (offset != fwid_list_length) {
-        LOG_ERROR("fwid list data is not fully parsed");
-        return Error::InternalError;
+    return DiceTcbInfo::parse_from_x509_extension(cert, oid, out_dice_tcb_info, silent);
+}
+
+Error X509CertChain::get_multi_dice_tcb_info(size_t cert_index, MultiDiceTcbInfo& out_multi_dice_tcb_info,
+                                             bool silent) const {
+    if (cert_index >= m_certs.size()) {
+        LOG_ERROR("Certificate index " << cert_index << " out of bounds. Chain size: " << m_certs.size());
+        return Error::CertNotFound;
     }
 
-    if (fwid_list.empty()) {
-        LOG_ERROR("fwid list is empty");
-        return Error::InternalError;
+    const X509* cert = m_certs[cert_index].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index " << cert_index << " is null.");
+        return Error::CertNotFound;
     }
 
-    out_fwid = fwid_list[0]; // use only the first fwid
-    return Error::Ok;
+    return MultiDiceTcbInfo::parse_from_x509_extension(cert, out_multi_dice_tcb_info, silent);
+}
+
+Error X509CertChain::get_dice_ueid(size_t cert_index, std::vector<uint8_t>& out_ueid, bool silent) const {
+    if (cert_index >= m_certs.size()) {
+        LOG_ERROR("Certificate index " << cert_index << " out of bounds. Chain size: " << m_certs.size());
+        return Error::CertFwidNotFound;
+    }
+    const X509* cert = m_certs[cert_index].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index " << cert_index << " is null.");
+        return Error::CertFwidNotFound;
+    }
+    return parse_dice_ueid_from_x509_extension(cert, out_ueid, silent);
 }
 
 Error X509CertChain::get_hwmodel(std::string& out_hwmodel) const {
@@ -825,26 +1035,77 @@ Error X509CertChain::get_hwmodel(std::string& out_hwmodel) const {
 
     // Store the common name in the output parameter
     out_hwmodel = std::string(reinterpret_cast<const char*>(cn_data), cn_length);
-    
+
     return Error::Ok;
 }
 
-Error X509CertChain::get_ueid(std::string& out_ueid) const {
-    if (m_certs.empty()) {
-        LOG_ERROR("Certificate index 0 is out of bounds. Chain size: " << m_certs.size());
+Error X509CertChain::get_subject_cn(std::size_t cert_index, std::string& out_cn) const {
+    if (cert_index >= m_certs.size()) {
+        LOG_ERROR("Certificate index " << cert_index << " out of bounds. Chain size: " << m_certs.size());
         return Error::CertNotFound;
     }
 
-    const X509* cert = m_certs[0].get();
+    const X509* cert = m_certs[cert_index].get();
     if (cert == nullptr) {
-        LOG_ERROR("Certificate at index 0 is null.");
+        LOG_ERROR("Certificate at index " << cert_index << " is null.");
+        return Error::CertNotFound;
+    }
+
+    X509_NAME* subject_name = X509_get_subject_name(cert);
+    if (subject_name == nullptr) {
+        LOG_ERROR("Failed to get subject name from certificate at index " << cert_index << ": " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    int lastpos = -1;
+    int cn_index = X509_NAME_get_index_by_NID(subject_name, NID_commonName, lastpos);
+    if (cn_index < 0) {
+        LOG_ERROR("Common name (CN) not found in certificate at index " << cert_index);
+        return Error::InternalError;
+    }
+
+    X509_NAME_ENTRY* cn_entry = X509_NAME_get_entry(subject_name, cn_index);
+    if (cn_entry == nullptr) {
+        LOG_ERROR("Failed to get common name entry from certificate at index " << cert_index << ": " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    ASN1_STRING* cn_asn1_string = X509_NAME_ENTRY_get_data(cn_entry);
+    if (cn_asn1_string == nullptr) {
+        LOG_ERROR("Failed to get ASN1_STRING from common name entry: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    const unsigned char* cn_data = ASN1_STRING_get0_data(cn_asn1_string);
+    int cn_length = ASN1_STRING_length(cn_asn1_string);
+
+    if (cn_data == nullptr || cn_length <= 0) {
+        LOG_ERROR("Common name data is empty or invalid");
+        return Error::InternalError;
+    }
+
+    out_cn = std::string(reinterpret_cast<const char*>(cn_data), cn_length);
+    return Error::Ok;
+}
+
+Error X509CertChain::get_cert_serial(size_t cert_index, std::string& out_serial) const {
+    if (cert_index >= m_certs.size()) {
+        LOG_ERROR("Certificate index " << cert_index
+                  << " is out of bounds. Chain size: " << m_certs.size());
+        return Error::CertNotFound;
+    }
+
+    const X509* cert = m_certs[cert_index].get();
+    if (cert == nullptr) {
+        LOG_ERROR("Certificate at index " << cert_index << " is null.");
         return Error::CertNotFound;
     }
 
     // Get the serial number from the certificate
     const ASN1_INTEGER* serial_asn1 = X509_get0_serialNumber(cert);
     if (serial_asn1 == nullptr) {
-        LOG_ERROR("Failed to get serial number from certificate at index 0: " << get_openssl_error());
+        LOG_ERROR("Failed to get serial number from certificate at index "
+                  << cert_index << ": " << get_openssl_error());
         return Error::InternalError;
     }
 
@@ -863,11 +1124,132 @@ Error X509CertChain::get_ueid(std::string& out_ueid) const {
     }
 
     // Store the serial number as decimal string in the output parameter
-    out_ueid = std::string(dec_str);
-    
+    out_serial = std::string(dec_str);
+
     // Free the allocated string from OpenSSL
     OPENSSL_free(dec_str);
-    
+
+    return Error::Ok;
+}
+
+Error X509CertChain::get_end_entity_serial(std::string& out_serial) const {
+    return get_cert_serial(0, out_serial);
+}
+
+// DMTF device-info otherName; the SPDM device certificate profile carries
+// "<manufacturer>:<product>:<serial>" under this OID.
+static const char* const kDmtfDeviceInfoOid = "1.3.6.1.4.1.412.274.1";
+
+Error parse_dmtf_device_info(const std::string& device_info,
+                             DmtfDeviceInfo& out_info) {
+    const size_t kDmtfFieldSeparators = 2;
+    if (std::count(device_info.begin(), device_info.end(), ':') !=
+        static_cast<long>(kDmtfFieldSeparators)) {
+        LOG_ERROR("DMTF device info is not <manufacturer>:<product>:<serial>");
+        return Error::BadArgument;
+    }
+    const size_t first = device_info.find(':');
+    const size_t last = device_info.rfind(':');
+    DmtfDeviceInfo info;
+    info.manufacturer = device_info.substr(0, first);
+    info.product = device_info.substr(first + 1, last - first - 1);
+    info.serial = device_info.substr(last + 1);
+    if (info.serial.empty()) {
+        LOG_ERROR("DMTF device info carries an empty serial");
+        return Error::BadArgument;
+    }
+    out_info = std::move(info);
+    return Error::Ok;
+}
+
+Error X509CertChain::get_end_entity_dmtf_device_info(DmtfDeviceInfo& out_info) const {
+    if (m_certs.empty() || !m_certs[0]) {
+        LOG_ERROR("Leaf certificate is null or chain is empty.");
+        return Error::CertNotFound;
+    }
+
+    nv_unique_ptr<GENERAL_NAMES> names(static_cast<GENERAL_NAMES*>(
+        X509_get_ext_d2i(m_certs[0].get(), NID_subject_alt_name, nullptr, nullptr)));
+    if (!names) {
+        LOG_DEBUG("End-entity certificate has no SubjectAlternativeName");
+        return Error::CertNotFound;
+    }
+
+    const int name_count = sk_GENERAL_NAME_num(names.get());
+    for (int i = 0; i < name_count; ++i) {
+        const GENERAL_NAME* gen_name = sk_GENERAL_NAME_value(names.get(), i);
+        if (gen_name == nullptr || gen_name->type != GEN_OTHERNAME ||
+            gen_name->d.otherName == nullptr) {
+            continue;
+        }
+
+        const size_t oid_buf_len = 128;
+        char oid[oid_buf_len] = {0};
+        if (OBJ_obj2txt(oid, oid_buf_len, gen_name->d.otherName->type_id,
+                        /*no_name=*/1) <= 0) {
+            continue;
+        }
+        if (std::string(oid) != kDmtfDeviceInfoOid) {
+            continue;
+        }
+
+        const ASN1_TYPE* value = gen_name->d.otherName->value;
+        if (value == nullptr) {
+            continue;
+        }
+        // ASN1_TYPE::value is a union; for a non-string type it holds an int,
+        // which would be read as a pointer below.
+        if (value->type != V_ASN1_UTF8STRING &&
+            value->type != V_ASN1_IA5STRING &&
+            value->type != V_ASN1_PRINTABLESTRING) {
+            LOG_DEBUG("DMTF otherName is not a string type");
+            continue;
+        }
+        if (value->value.asn1_string == nullptr) {
+            continue;
+        }
+        const ASN1_STRING* str = value->value.asn1_string;
+        const unsigned char* data = ASN1_STRING_get0_data(str);
+        const int len = ASN1_STRING_length(str);
+        if (data == nullptr || len <= 0) {
+            continue;
+        }
+        const std::string device_info(reinterpret_cast<const char*>(data),
+                                      static_cast<size_t>(len));
+
+        // DSP0274 §330 fixes the layout; anything else is malformed.
+        return parse_dmtf_device_info(device_info, out_info);
+    }
+
+    LOG_DEBUG("End-entity certificate has no DMTF otherName");
+    return Error::CertNotFound;
+}
+
+Error X509CertChain::get_end_entity_public_key_pem(std::string& out_pem) const {
+    nv_unique_ptr<EVP_PKEY> pkey;
+    Error key_err = get_leaf_public_key(pkey);
+    if (key_err != Error::Ok) {
+        return key_err;
+    }
+
+    nv_unique_ptr<BIO> bio(BIO_new(BIO_s_mem()));
+    if (!bio) {
+        LOG_ERROR("Failed to create BIO: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    if (PEM_write_bio_PUBKEY(bio.get(), pkey.get()) != 1) {
+        LOG_ERROR("Failed to write public key to PEM: " << get_openssl_error());
+        return Error::InternalError;
+    }
+
+    BUF_MEM* bptr = nullptr;
+    BIO_get_mem_ptr(bio.get(), &bptr);
+    if (bptr == nullptr || bptr->data == nullptr) {
+        LOG_ERROR("Failed to read PEM public key from BIO");
+        return Error::InternalError;
+    }
+    out_pem = std::string(bptr->data, bptr->length);
     return Error::Ok;
 }
 

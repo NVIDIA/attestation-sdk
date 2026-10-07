@@ -36,6 +36,22 @@ namespace nvattestation {
 static const uint8_t NVDEC_STATUS_ENABLED = 0xAA;   // NVDEC0 hardware enabled - validate MSR 35
 static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled - skip MSR 35 validation
 
+// rmDataValueType for an NVDAOD minSvn entry (opaque-data.html ns3:minSvn)
+static const uint16_t MIN_SVN_OPAQUE_VALUE_TYPE = 0x87U;
+
+static const uint32_t BITS_PER_BYTE = 8U;
+
+static Error check_evidence_arch_verifiable(const std::vector<std::shared_ptr<GpuEvidence>>& evidence) {
+    for (const auto& cur_evidence : evidence) {
+        GpuArchitecture arch = cur_evidence->get_gpu_architecture();
+        if (arch != GpuArchitecture::Hopper && arch != GpuArchitecture::Blackwell) {
+            LOG_ERROR("Verifier does not support architecture: " << to_string(arch));
+            return Error::GpuArchitectureNotSupported;
+        }
+    }
+    return Error::Ok;
+}
+
     Error LocalGpuVerifier::create(LocalGpuVerifier& out_verifier, const std::shared_ptr<IRimStore>& rim_store, const std::shared_ptr<IOcspHttpClient>& ocsp_http_client, const DetachedEATOptions& detached_eat_options) {
         if (rim_store == nullptr) {
             LOG_ERROR("rim_store is null");
@@ -52,13 +68,22 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
     }
 
     Error LocalGpuVerifier::verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) {
-        if (evidence_policy.gpu_claims_version == GpuClaimsVersion::V3) {
-            return generate_claims_v3(evidence, evidence_policy, out_detached_eat, out_claims);
+        if (evidence.empty()) {
+            LOG_ERROR("No GPU evidence provided");
+            return Error::BadArgument;
         }
-        return Error::Ok;
+        Error error = check_evidence_arch_verifiable(evidence);
+        if (error != Error::Ok) {
+            return error;
+        }
+        if (evidence_policy.gpu_claims_version == GpuClaimsVersion::V4) {
+            return generate_claims_v4(evidence, evidence_policy, out_detached_eat, out_claims);
+        }
+        LOG_ERROR("Unsupported gpu claims version requested");
+        return Error::BadArgument;
     }
 
-    Error LocalGpuVerifier::generate_claims_v3(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, std::string* out_detached_eat, ClaimsCollection& out_claims) const {
+    Error LocalGpuVerifier::generate_claims_v4(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& policy, std::string* out_detached_eat, ClaimsCollection& out_claims) const {
         for (const auto& cur_evidence : evidence) {
             GpuEvidence::AttestationReport attestation_report;
             Error error = cur_evidence->get_parsed_attestation_report(attestation_report);
@@ -71,7 +96,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             if (error != Error::Ok) {
                 return error;
             }
-            std::shared_ptr<SerializableGpuClaimsV3> serializable_claims = std::make_shared<SerializableGpuClaimsV3>();
+            std::shared_ptr<SerializableGpuClaimsV4> serializable_claims = std::make_shared<SerializableGpuClaimsV4>();
             serializable_claims->m_nonce = to_hex_string(cur_evidence->get_nonce());
             error = set_gpu_evidence_claims(gpu_evidence_claims, policy, *serializable_claims);
             if (error != Error::Ok) {
@@ -156,6 +181,28 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
                 return error;
             }
 
+            OpaqueRimRecords driver_opaque_records;
+            error = driver_rim_document.get_opaque_records(driver_opaque_records);
+            if (error != Error::Ok) {
+                return error;
+            }
+            OpaqueRimRecords vbios_opaque_records;
+            error = vbios_rim_document.get_opaque_records(vbios_opaque_records);
+            if (error != Error::Ok) {
+                return error;
+            }
+
+            error = check_opaque_records_conflict(driver_opaque_records, vbios_opaque_records);
+            if (error != Error::Ok) {
+                return error;
+            }
+
+            OpaqueRimRecords merged_opaque_records = driver_opaque_records;
+            for (const auto& rec : vbios_opaque_records.all()) {
+                merged_opaque_records.add_record(rec);
+            }
+            compare_opaque_data(attestation_report.get_opaque_data_parser(), merged_opaque_records, *serializable_claims);
+
             out_claims.append(serializable_claims);
         }
 
@@ -166,7 +213,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const {
+    Error LocalGpuVerifier::set_driver_rim_claims(const RimDocument& driver_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) const {
         RimClaims driver_rim_claims;
         out_serializable_claims.m_driver_rim_fetched = true;
         LOG_DEBUG("Generating driver RIM claims");
@@ -174,7 +221,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         if (error != Error::Ok) {
             return error;
         }
-        
+
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_expiration_date = driver_rim_claims.m_cert_chain_claims.expiration_date;
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_status = to_string(driver_rim_claims.m_cert_chain_claims.status);
         out_serializable_claims.m_driver_rim_cert_chain.m_cert_ocsp_status = to_string(driver_rim_claims.m_cert_chain_claims.ocsp_claims.status);
@@ -183,7 +230,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         out_serializable_claims.m_driver_rim_cert_chain.m_ocsp_nonce_matches = driver_rim_claims.m_cert_chain_claims.ocsp_claims.nonce_matches;
         out_serializable_claims.m_driver_rim_cert_chain.m_ocsp_response_valid = driver_rim_claims.m_cert_chain_claims.ocsp_claims.ocsp_response_valid;
 
-        std::string oemid; 
+        std::string oemid;
         error = driver_rim_document.get_manufacturer_id(oemid);
         if (error != Error::Ok) {
             return error;
@@ -193,7 +240,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) const {
+    Error LocalGpuVerifier::set_vbios_rim_claims(const RimDocument& vbios_rim_document, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) const {
         out_serializable_claims.m_vbios_rim_fetched = true;
         LOG_DEBUG("Generating VBIOS RIM claims");
 
@@ -202,7 +249,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         if (error != Error::Ok) {
             return error;
         }
-        
+
         out_serializable_claims.m_vbios_rim_cert_chain.m_cert_expiration_date = vbios_rim_claims.m_cert_chain_claims.expiration_date;
         out_serializable_claims.m_vbios_rim_cert_chain.m_cert_status = to_string(vbios_rim_claims.m_cert_chain_claims.status);
         out_serializable_claims.m_vbios_rim_cert_chain.m_cert_ocsp_status = to_string(vbios_rim_claims.m_cert_chain_claims.ocsp_claims.status);
@@ -214,7 +261,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::set_gpu_evidence_claims(const GpuEvidenceClaims& gpu_evidence_claims, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) {
+    Error LocalGpuVerifier::set_gpu_evidence_claims(const GpuEvidenceClaims& gpu_evidence_claims, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) {
         out_serializable_claims.m_gpu_arch_match = gpu_evidence_claims.m_gpu_ar_arch_match;
         out_serializable_claims.m_driver_version = gpu_evidence_claims.m_driver_version;
         out_serializable_claims.m_vbios_version = gpu_evidence_claims.m_vbios_version;
@@ -237,23 +284,23 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::generate_set_measurement_claims(const Measurements& golden_driver_measurements, const Measurements& golden_vbios_measurements, const GpuEvidence::AttestationReport& attestation_report, const EvidencePolicy& policy, SerializableGpuClaimsV3& out_serializable_claims) {
-        
+    Error LocalGpuVerifier::generate_set_measurement_claims(const Measurements& golden_driver_measurements, const Measurements& golden_vbios_measurements, const GpuEvidence::AttestationReport& attestation_report, const EvidencePolicy& policy, SerializableGpuClaimsV4& out_serializable_claims) {
+
         // make sure there is no index conflict between driver and vbios measurements
 
         // Get all indices from both measurement collections
         std::vector<int> driver_indices = golden_driver_measurements.get_all_indices();
         std::vector<int> vbios_indices = golden_vbios_measurements.get_all_indices();
-        
+
         // Create a set of all unique indices
         std::set<int> all_indices;
         all_indices.insert(driver_indices.begin(), driver_indices.end());
         all_indices.insert(vbios_indices.begin(), vbios_indices.end());
-        
+
         for (int index : all_indices) {
             bool has_driver = golden_driver_measurements.has_measurement_at_index(index);
             bool has_vbios = golden_vbios_measurements.has_measurement_at_index(index);
-            
+
             if (has_driver && has_vbios) {
                 out_serializable_claims.m_vbios_index_no_conflict = false;
                 out_serializable_claims.m_measurements_matching = SerializableMeasresClaim::Failure;
@@ -262,30 +309,30 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         }
 
         out_serializable_claims.m_vbios_index_no_conflict = true;
-        
+
         // Determine MSR 35 validation flag based on NVDEC0 status
         bool is_msr_35_valid = true;
-        
+
         uint8_t nvdec0_status = 0;
         Error error = attestation_report.get_nvdec0_status(nvdec0_status);
         if (error != Error::Ok) {
             return error;
         }
-                        
+
         if (nvdec0_status == NVDEC_STATUS_DISABLED) {
             is_msr_35_valid = false;
-            LOG_DEBUG("NVDEC0 disabled (status: 0x" << std::hex << static_cast<int>(nvdec0_status) 
+            LOG_DEBUG("NVDEC0 disabled (status: 0x" << std::hex << static_cast<int>(nvdec0_status)
                                         << "), skipping MSR 35 validation");
         } else if (nvdec0_status == NVDEC_STATUS_ENABLED) {
             is_msr_35_valid = true;
-            LOG_DEBUG("NVDEC0 enabled (status: 0x" << std::hex << static_cast<int>(nvdec0_status) 
+            LOG_DEBUG("NVDEC0 enabled (status: 0x" << std::hex << static_cast<int>(nvdec0_status)
                                         << "), validating MSR 35");
         } else {
-            LOG_DEBUG("Unknown NVDEC0 status (0x" << std::hex << static_cast<int>(nvdec0_status) 
-                                        << "), defaulting to validate MSR 35");
+            LOG_ERROR("Unknown NVDEC0 status (0x" << std::hex << static_cast<int>(nvdec0_status)
+                                        << "), failing measurement claims generation");
             return Error::InternalError;
         }
-        
+
         // Get measurements from attestation report (i.e runt)
         std::unordered_map<int, std::vector<uint8_t>> runtime_measurements;
         error = attestation_report.get_measurements(runtime_measurements);
@@ -293,7 +340,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             LOG_ERROR("Failed to get measurements from attestation report");
             return error;
         }
-        
+
         // Track overall match status
         bool all_measurements_match = true;
 
@@ -311,7 +358,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
                 return;
             }
 
-            bool found_match_in_alternatives = false;            
+            bool found_match_in_alternatives = false;
             const std::vector<uint8_t>& runtime_value = runtime_measurements_it->second;
             for (const std::vector<uint8_t>& golden_alternative : golden_alternatives) {
                 if (runtime_value.size() == golden_alternative.size() && std::equal(runtime_value.begin(), runtime_value.end(), golden_alternative.begin())) {
@@ -319,7 +366,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
                     break;
                 }
             }
-            
+
             if (!found_match_in_alternatives) {
                 LOG_DEBUG("Golden measurement at index " << index << " does not match runtime measurement (at the same index)");
                 LOG_DEBUG("Runtime measurement: " << to_hex_string(runtime_value));
@@ -375,7 +422,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             out_serializable_claims.m_measurements_matching = SerializableMeasresClaim::Failure;
             out_serializable_claims.m_secure_boot = nullptr;
             out_serializable_claims.m_debug_status = nullptr;
-            // sanity check 
+            // sanity check
             if (mismatched_measurements.empty()) {
                 LOG_ERROR("Golden measurements (either driver or vbios) do not match runtime measurements, but mismatched records are empty");
                 return Error::InternalError;
@@ -386,7 +433,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         return Error::Ok;
     }
 
-    Error LocalGpuVerifier::add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV3& out_serializable_claims) {
+    Error LocalGpuVerifier::add_gpu_mode_claim(const GpuEvidence::AttestationReport& attestation_report, SerializableGpuClaimsV4& out_serializable_claims) {
         uint64_t opaque_data_version = 0;
         Error error = attestation_report.get_opaque_data_version(opaque_data_version);
         if (error == Error::SpdmFieldNotFound) {
@@ -396,7 +443,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         if (error != Error::Ok) {
             return error;
         }
-        // todo (p2): check if there were any hopper drivers which supported multiple modes but did not have this feature flag 
+        // todo (p2): check if there were any hopper drivers which supported multiple modes but did not have this feature flag
         // if not, we can assign a default value for the gpu mode claim to make it easier to write rp policy
         if (opaque_data_version < MIN_OPAQUE_DATA_VERSION_FOR_FEATURE_FLAG) {
             LOG_DEBUG("Opaque data version is less than minimum supported version for feature flag, will not add gpu mode claim");
@@ -409,6 +456,91 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         }
         out_serializable_claims.m_mode = to_string(feature_flag);
         return Error::Ok;
+    }
+
+    static bool read_opaque_u16(const GpuOpaqueDataParser& parser,
+                                uint16_t type_id, uint64_t& out_val, uint16_t& out_value_type) {
+        const GpuParsedOpaqueFieldData* field = nullptr;
+        if (parser.get_field(type_id, field) != Error::Ok) {
+            return false;
+        }
+        const std::vector<uint8_t>* bytes = nullptr;
+        if (field->get_byte_vector(bytes) != Error::Ok || bytes->size() != 2U) {
+            return false;
+        }
+        out_val = static_cast<uint64_t>((*bytes)[0]) |
+                  (static_cast<uint64_t>((*bytes)[1]) << BITS_PER_BYTE);
+        out_value_type = field->get_value_type();
+        return true;
+    }
+
+    Error LocalGpuVerifier::check_opaque_records_conflict(
+        const OpaqueRimRecords& driver_opaque_records,
+        const OpaqueRimRecords& vbios_opaque_records)
+    {
+        std::set<uint16_t> driver_opaque_type_ids;
+        std::set<std::string> driver_opaque_names;
+        for (const auto& rec : driver_opaque_records.all()) {
+            driver_opaque_type_ids.insert(rec.type_id);
+            driver_opaque_names.insert(rec.name);
+        }
+        for (const auto& rec : vbios_opaque_records.all()) {
+            if (driver_opaque_type_ids.count(rec.type_id) > 0 ||
+                driver_opaque_names.count(rec.name) > 0) {
+                LOG_ERROR("Opaque record type_id " << rec.type_id << " or name " << rec.name
+                           << " present in both driver and vbios RIM");
+                return Error::RimMeasurementConflict;
+            }
+        }
+        return Error::Ok;
+    }
+
+    void LocalGpuVerifier::compare_opaque_data(
+        const GpuOpaqueDataParser& opaque_parser,
+        const OpaqueRimRecords& rim_records,
+        SerializableGpuClaimsV4& out_claims)
+    {
+        if (rim_records.size() == 0U) {
+            return;
+        }
+
+        std::vector<SerializableOpaqueDataMismatch> mismatches;
+
+        for (const auto& rim_rec : rim_records.all()) {
+            uint64_t runtime_val = 0;
+            uint16_t runtime_value_type = 0;
+            bool has_field = read_opaque_u16(opaque_parser, rim_rec.type_id, runtime_val, runtime_value_type);
+            bool type_matches = has_field && runtime_value_type == MIN_SVN_OPAQUE_VALUE_TYPE;
+
+            if (rim_rec.include_in_result && type_matches) {
+                out_claims.m_attester_claims[rim_rec.name] = runtime_val;
+            }
+
+            if (!type_matches) {
+                SerializableOpaqueDataMismatch mm;
+                mm.opaque_data_id = rim_rec.type_id;
+                mm.name           = rim_rec.name;
+                mm.golden_value   = rim_rec.min_svn;
+                mismatches.push_back(mm);
+                continue;
+            }
+
+            if (runtime_val < rim_rec.min_svn) {
+                SerializableOpaqueDataMismatch mm;
+                mm.opaque_data_id = rim_rec.type_id;
+                mm.name           = rim_rec.name;
+                mm.golden_value   = rim_rec.min_svn;
+                mm.runtime_type   = std::make_shared<std::string>("MIN_SVN");
+                mm.runtime_value  = std::make_shared<uint64_t>(runtime_val);
+                mismatches.push_back(mm);
+            }
+        }
+
+        if (!mismatches.empty()) {
+            out_claims.m_mismatched_opaque_records =
+                std::make_shared<std::vector<SerializableOpaqueDataMismatch>>(std::move(mismatches));
+            out_claims.m_measurements_matching = SerializableMeasresClaim::Failure;
+        }
     }
 
     Error NvRemoteGpuVerifier::init_from_env(NvRemoteGpuVerifier& out_verifier, const char* nras_url, const std::string& service_key, const HttpOptions& http_options) {
@@ -429,13 +561,13 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         // TODO(p1): JwkStore should be shared across thread and between verifiers
         std::string jwks_url = nras_url_str + "/.well-known/jwks.json";
-        out_verifier.m_jwk_store = std::make_shared<JwkStore>();
-        err = JwkStore::init_from_env(out_verifier.m_jwk_store, jwks_url, service_key, http_options);
+        err = JwkStore::create_from_issuer(
+            out_verifier.m_jwk_store, nras_url_str, service_key, http_options);
         if (err != Error::Ok) {
             return err;
         }
 
-        LOG_TRACE("Create remote gpu verifier with nras url: " << out_verifier.m_nras_url << 
+        LOG_TRACE("Create remote gpu verifier with nras url: " << out_verifier.m_nras_url <<
         " and jwks url: " << jwks_url <<
         " using service key: " << (service_key.empty() ? "none" : "provided")
         );
@@ -445,16 +577,16 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
     Error NvRemoteGpuVerifier::verify_evidence(const std::vector<std::shared_ptr<GpuEvidence>>& evidence, const EvidencePolicy& evidence_policy, std::string* out_detached_eat, ClaimsCollection& out_claims) {
         if (evidence.empty()) {
-            LOG_ERROR("No evidence provided");
+            LOG_ERROR("No GPU evidence provided");
             return Error::BadArgument;
         }
         Error error = Error::InternalError;
 
         NRASAttestRequestV4 attest_request;
-        
+
         attest_request.nonce = to_hex_string(evidence[0]->get_nonce());
         attest_request.arch = to_string(evidence[0]->get_gpu_architecture());
-        attest_request.claims_version = to_string(GpuClaimsVersion::V3); 
+        attest_request.claims_version = to_string(evidence_policy.gpu_claims_version);
         std::vector<std::pair<std::string, std::string>> evidence_list;
         for (const auto& evidence_item : evidence) {
             std::string evidence_b64;
@@ -506,7 +638,11 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         std::vector<uint8_t> eat_nonce;
         std::unordered_map<std::string, std::string> claims;
         bool overall_result = true;
-        error = validate_and_decode_EAT(attest_response, m_jwk_store, m_eat_issuer, m_http_client, eat_nonce, claims, overall_result);
+        const JwtValidationOptions jwt_options;
+        error = validate_and_decode_EAT(attest_response, m_jwk_store,
+                                        m_eat_issuer, m_http_client,
+                                        jwt_options, eat_nonce, claims,
+                                        overall_result);
         if (error != Error::Ok) {
             return error;
         }
@@ -518,7 +654,7 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
 
         out_claims = std::vector<std::shared_ptr<Claims>>();
         for (const auto &item : claims) {
-           
+
             nlohmann::json nras_claims;
             Error error = deserialize_from_json(item.second, nras_claims);
             if (error != Error::Ok) {
@@ -529,13 +665,13 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
             if (error != Error::Ok) {
                 return error;
             }
-            SerializableGpuClaimsV3 claims_obj;
+            SerializableGpuClaimsV4 claims_obj;
             error = deserialize_from_json_object(nras_claims, claims_obj);
             if (error != Error::Ok) {
                 LOG_ERROR("Failed to deserialize NRAS claims");
                 return error;
             }
-            out_claims.append(std::make_shared<SerializableGpuClaimsV3>(claims_obj));
+            out_claims.append(std::make_shared<SerializableGpuClaimsV4>(claims_obj));
         }
 
         if (out_detached_eat != nullptr) {
@@ -549,6 +685,6 @@ static const uint8_t NVDEC_STATUS_DISABLED = 0x55;  // NVDEC0 hardware disabled 
         }
 
         return Error::Ok;
-    
+
     }
 }

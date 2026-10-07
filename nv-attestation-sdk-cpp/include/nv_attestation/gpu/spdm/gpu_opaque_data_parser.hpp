@@ -63,10 +63,6 @@ enum class GpuOpaqueDataType : uint16_t {
     UNKNOWN                         = 0 // Placeholder for types not explicitly listed or successfully parsed. Using 0 as it's less likely to collide.
 };
 
-inline bool is_valid_gpu_opaque_data_type(uint16_t data_type_val_raw) {
-    return (1 <= data_type_val_raw) && (data_type_val_raw <= 36);
-}
-
 // Function to convert GpuOpaqueDataType to string (for debugging/logging)
 std::string to_string(GpuOpaqueDataType type);
 
@@ -114,29 +110,37 @@ public:
 
     Error get_pdi_vector(const std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>*& out_data) const;
 
+    // rmDataValueType from the NVDAOD TLV entry; 0 (placeholder) for fields parsed from the legacy format.
+    uint16_t get_value_type() const;
+    void set_value_type(uint16_t value_type);
+
 private:
     GpuParsedFieldType m_active_type;
     std::vector<uint8_t> m_byte_data;
     std::vector<uint32_t> m_uint32_data;
     std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>> m_pdi_data;
+    uint16_t m_value_type = 0;
 };
 
 class GpuOpaqueDataParser {
     public:
-        static Error create(const std::vector<ParsedOpaqueFieldData>& opaque_fields, GpuOpaqueDataParser& out_parser);
+        static Error create(const std::vector<ParsedOpaqueFieldData>& opaque_fields,
+                            const OpaqueDataFormatVersion& format_version,
+                            GpuOpaqueDataParser& out_parser);
 
+        Error get_field(uint16_t type_id, const GpuParsedOpaqueFieldData*& out_field) const;
         Error get_field(GpuOpaqueDataType type, const GpuParsedOpaqueFieldData*& out_field) const;
-        const std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData>& get_all_fields() const;
+        const std::map<uint16_t, GpuParsedOpaqueFieldData>& get_all_fields() const;
         uint64_t get_opaque_data_version() const;
     private:
-        static constexpr const size_t MAX_OPAQUE_DATA_VERSION_SIZE = 8;
-        static constexpr const uint64_t MAX_OPAQUE_DATA_VERSION = 1; // max known version we can parse
+        static constexpr size_t MAX_OPAQUE_DATA_VERSION_SIZE = 8;
+        static constexpr uint64_t MAX_OPAQUE_DATA_VERSION = 2U;
 
         static Error parse_msr_count_internal(const std::vector<uint8_t>& data_bytes, std::vector<uint32_t>& out_msr_counts);
         static Error parse_switch_pdis_internal(const std::vector<uint8_t>& data_bytes, std::vector<std::array<uint8_t, GpuOpaqueFieldSizes::PDI_DATA_SIZE>>& out_switch_pdis);
         static Error parse_opaque_data_version(const std::vector<uint8_t>& data_bytes, uint64_t& out_version);
 
-        std::map<GpuOpaqueDataType, GpuParsedOpaqueFieldData> m_fields;
+        std::map<uint16_t, GpuParsedOpaqueFieldData> m_fields;
         uint64_t m_opaque_data_version = 0;
 };
 
@@ -171,9 +175,7 @@ inline GpuParsedFieldType get_gpu_opaque_field_type(GpuOpaqueDataType source_typ
         {GpuOpaqueDataType::SYS_ENABLE_STATUS, GpuParsedFieldType::BYTE_VECTOR},
         {GpuOpaqueDataType::OPAQUE_DATA_VERSION, GpuParsedFieldType::BYTE_VECTOR},
         {GpuOpaqueDataType::CHIP_INFO, GpuParsedFieldType::BYTE_VECTOR},
-        {GpuOpaqueDataType::FEATURE_FLAG, GpuParsedFieldType::BYTE_VECTOR}
-        // GpuOpaqueDataType::INVALID and GpuOpaqueDataType::UNKNOWN are not explicitly mapped,
-        // they will default to BYTE_VECTOR if encountered during parsing and data is present.
+        {GpuOpaqueDataType::FEATURE_FLAG, GpuParsedFieldType::BYTE_VECTOR},
     };
     auto it = expected_type_map.find(source_type);
     if (it == expected_type_map.end()) {

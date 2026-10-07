@@ -1,0 +1,28 @@
+/ rim-locators (key 1) is present but is a tstr rather than the required     /
+/ [ 1*8 corim-locator-map ]. Without an explicit check this decodes as       /
+/ "absent" and silently yields zero RIM URLs.                                /
+570({
+  / tagged-evidence / 0: [
+    571({
+      / ev-triples / 0: {
+        / evidence-triples / 0: [
+          [
+            / environment-map / {
+              / class / 0: { / vendor / 1: "TestVendor", / model / 2: "TestModel" }
+            },
+            [
+              {
+                / mval / 1: {
+                  / digests / 2: [
+                    [1, h'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff']
+                  ]
+                }
+              }
+            ]
+          ]
+        ]
+      }
+    })
+  ],
+  / rim-locators / 1: "not-a-locator-array"
+})

@@ -1,0 +1,14 @@
+501_1({
+    0: "test-corim-multi-entity",
+    1: [
+        506_1(h'a201a10070746573742d636f6d69642d6d756c746904a1008182a100a1016b56656e646f724d756c746981a101a10101'),
+    ],
+    5: [
+        {
+            0: "First Entity",
+            1: 32_0("http://example.test/first"),
+            2: [1],
+        },
+        {0: "Second Entity", 2: [1, 2]},
+    ],
+})

@@ -64,17 +64,21 @@ public:
      * @param response_data The raw byte vector containing the SPDM response message.
      * @param signature_length The expected length of the signature in the message.
      * @param out_message Reference to the SpdmMeasurementResponseMessage11 object to populate.
+     * @param parse_opaque_data Whether to decode the OpaqueData TLV field. Callers that never
+     *        read opaque data (e.g. the CoRIM verifier) should pass false to avoid failing on
+     *        an OpaqueData format they don't need.
      * @return Error::Ok if parsing was successful, specific error code otherwise.
      */
-    static Error create(const std::vector<uint8_t>& response_data, size_t signature_length, SpdmMeasurementResponseMessage11& out_message);
+    static Error create(const std::vector<uint8_t>& response_data, size_t signature_length, SpdmMeasurementResponseMessage11& out_message, bool parse_opaque_data = true);
 
     /**
      * @brief Parses the raw response data to populate the message fields.
      * @param response_data The raw byte vector containing the SPDM response message.
      * @param signature_length The expected length of the signature in the message.
+     * @param parse_opaque_data Whether to decode the OpaqueData TLV field.
      * @return Error::Ok if parsing was successful, specific error code otherwise.
      */
-    Error parse(const std::vector<uint8_t>& response_data, size_t signature_length);
+    Error parse(const std::vector<uint8_t>& response_data, size_t signature_length, bool parse_opaque_data = true);
 
     // Getter methods
     /** @brief Gets the SPDM version from the message. */
@@ -99,7 +103,7 @@ public:
     uint16_t get_opaque_data_length() const { return m_opaque_data_length; }
     /** @brief Gets the opaque data. Vector of bytes*/
     const std::vector<uint8_t>& get_opaque_data() const { return m_opaque_data; }
-    /** @brief Gets the parsed opaque data fields. 
+    /** @brief Gets the parsed opaque data fields.
      *  @param out_parsed_opaque_data Reference to a pointer that will be set to point to the OpaqueDataParser if parsing was successful and opaque data was present.
      *  @return Error::Ok if successful, Error::SpdmFieldNotFound if opaque data was not parsed or not available.
      */
