@@ -39,6 +39,8 @@ function(add_fuzz_target TARGET_NAME SOURCE_FILE)
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${regorus_SOURCE_DIR}/bindings/ffi
+  )
+  target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
   )

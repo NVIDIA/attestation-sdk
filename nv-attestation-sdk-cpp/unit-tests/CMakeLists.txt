@@ -204,9 +204,11 @@ target_link_libraries(nv-attestation-unit-tests PRIVATE
 target_include_directories(nv-attestation-unit-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${GENERATED_DIR}
+)
+target_include_directories(nv-attestation-unit-tests SYSTEM PRIVATE
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
-    ${GENERATED_DIR}
 )
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
