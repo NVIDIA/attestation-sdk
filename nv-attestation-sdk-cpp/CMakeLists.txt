@@ -453,6 +453,9 @@ else()
       --without-libidn2
       --without-librtmp
       --without-libpsl
+      --with-ca-fallback
+      --without-ca-bundle
+      --without-ca-path
       --disable-ldap
       --disable-shared
       --enable-static
