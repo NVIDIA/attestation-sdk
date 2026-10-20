@@ -93,6 +93,7 @@ add_executable(nv-attestation-unit-tests
     dice_tcb_info_test.cpp
     test_dice_tcb_info_to_ect.cpp
     test_nv_ocsp.cpp
+    verified_path_test.cpp
 )
 
 target_include_directories(nv-attestation-unit-tests PRIVATE

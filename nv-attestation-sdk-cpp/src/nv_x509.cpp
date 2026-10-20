@@ -343,6 +343,12 @@ Error X509CertChain::verify_signature_pkcs11(
 }
 
 Error X509CertChain::verify(bool allow_partial_chain) const {
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    return verify(verified_path, allow_partial_chain);
+}
+
+Error X509CertChain::verify(std::vector<nv_unique_ptr<X509>>& out_verified_path, bool allow_partial_chain) const {
+    out_verified_path.clear();
     // ref: https://docs.openssl.org/3.0/man1/openssl-verification-options/#certification-path-building
     // verification involves setting up the untrusted certs, the trust anchor, and then calling X509_verify_cert
     // with the target cert to be verified. the function will build a chain of certs from the target cert
@@ -412,7 +418,44 @@ Error X509CertChain::verify(bool allow_partial_chain) const {
                 << X509_verify_cert_error_string(err));
         return Error::CertChainVerificationFailure;
     } 
-    
+
+    // OpenSSL builds its own path from the untrusted pool and ignores
+    // certificates it does not need. Revocation coverage must follow the
+    // path that was verified, so the presented chain has to be an ordered,
+    // byte-identical prefix of that path. Certificates the trust store
+    // supplied (such as the root) may be omitted.
+    STACK_OF(X509)* verified_chain = X509_STORE_CTX_get0_chain(ctx.get());
+    if (verified_chain == nullptr) {
+        LOG_ERROR("Certificate chain verification returned no verified path");
+        return Error::CertChainVerificationFailure;
+    }
+    int verified_count = sk_X509_num(verified_chain);
+    if (verified_count < 0 || static_cast<size_t>(verified_count) < m_certs.size()) {
+        LOG_ERROR("Presented certificate chain is not a prefix of the verified path: presented "
+                << m_certs.size() << " certificates, verified " << verified_count);
+        return Error::CertChainVerificationFailure;
+    }
+    std::vector<nv_unique_ptr<X509>> verified_path;
+    verified_path.reserve(static_cast<size_t>(verified_count));
+    for (int i = 0; i < verified_count; i++) {
+        X509* verified_cert = sk_X509_value(verified_chain, i);
+        if (verified_cert == nullptr) {
+            LOG_ERROR("Verified path has no certificate at index " << i);
+            return Error::CertChainVerificationFailure;
+        }
+        size_t idx = static_cast<size_t>(i);
+        if (idx < m_certs.size() && (m_certs[idx] == nullptr || X509_cmp(verified_cert, m_certs[idx].get()) != 0)) {
+            LOG_ERROR("Presented certificate chain is not a prefix of the verified path at index " << i);
+            return Error::CertChainVerificationFailure;
+        }
+        // The verified stack is owned by ctx; keep our own reference.
+        if (X509_up_ref(verified_cert) != 1) {
+            LOG_ERROR("Unable to retain verified certificate: " << get_openssl_error());
+            return Error::InternalError;
+        }
+        verified_path.emplace_back(verified_cert);
+    }
+    out_verified_path = std::move(verified_path);
     return Error::Ok;
 }
 
@@ -505,25 +548,34 @@ Error X509CertChain::generate_cert_chain_claims(const OcspVerifyOptions& ocsp_ve
 
 
 Error X509CertChain::collect_ocsp_responses(const OcspVerifyOptions& options, IOcspHttpClient& client,
+                                             std::vector<nv_unique_ptr<X509>>& out_verified_path,
                                              std::vector<std::pair<size_t, NvOcspResponse>>& out) const {
     if (!m_trust_store) {
         LOG_ERROR("Trust store is not initialized. Cannot collect OCSP responses.");
         return Error::InternalError;
     }
 
+    // Coverage comes from the verified path, whoever the caller is, so each
+    // status request names the certificate that actually issued the subject.
+    Error verify_error = verify(out_verified_path);
+    if (verify_error != Error::Ok) {
+        return verify_error;
+    }
+    const std::vector<nv_unique_ptr<X509>>& path = out_verified_path;
+
     int start_indx = 0;
     if (m_type == CertificateChainType::GPU_DEVICE_IDENTITY || m_type == CertificateChainType::NVSWITCH_DEVICE_IDENTITY) {
         start_indx = 1;
     }
 
-    // Certs outside [start_indx, m_certs.size()-2] have no issuer in this
+    // Certs outside [start_indx, path.size()-2] have no issuer in this
     // chain to check them against (the root, and — for chain types that
     // exclude it — the leaf). Emit a synthetic skipped response for each,
     // so callers record them as NOT_CHECKED through the same path as a
     // cert with no AIA responder, instead of leaving them silently absent.
-    for (size_t idx = 0; idx < m_certs.size(); ++idx) {
+    for (size_t idx = 0; idx < path.size(); ++idx) {
         if (static_cast<int>(idx) >= start_indx &&
-            static_cast<int>(idx) <= static_cast<int>(m_certs.size()) - 2) {
+            static_cast<int>(idx) <= static_cast<int>(path.size()) - 2) {
             continue;
         }
         NvOcspResponse not_applicable{};
@@ -537,19 +589,19 @@ Error X509CertChain::collect_ocsp_responses(const OcspVerifyOptions& options, IO
         return Error::InternalError;
     }
 
-    for (int subject_idx = (int)m_certs.size() - 2; subject_idx >= start_indx; --subject_idx) {
-        LOG_DEBUG("Processing cert: subject_idx" << subject_idx << ". " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+    for (int subject_idx = (int)path.size() - 2; subject_idx >= start_indx; --subject_idx) {
+        LOG_DEBUG("Processing cert: subject_idx" << subject_idx << ". " << get_cert_subject_issuer_str(path[subject_idx].get()));
         int issuer_idx = subject_idx + 1;
 
         NvOcspResponse ocsp_resp;
-        Error error = client.get_ocsp_response(m_certs[subject_idx], m_certs[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
+        Error error = client.get_ocsp_response(path[subject_idx], path[issuer_idx], ocsp_verify_intermediates, m_trust_store, ocsp_resp);
         if (error != Error::Ok) {
             return error;
         }
 
         out.emplace_back(static_cast<size_t>(subject_idx), ocsp_resp);
 
-        if (sk_X509_insert(ocsp_verify_intermediates.get(), m_certs[subject_idx].get(), 0) <= 0) {
+        if (sk_X509_insert(ocsp_verify_intermediates.get(), path[subject_idx].get(), 0) <= 0) {
             LOG_ERROR("Failed to prepend certificate to intermediate stack for OCSP: " << get_openssl_error());
             return Error::InternalError;
         }
@@ -563,8 +615,9 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
     out_ocsp_claims = OCSPClaims(OCSPStatus::UNDEFINED);
     bool claims_initialized = false;
 
+    std::vector<nv_unique_ptr<X509>> verified_path;
     std::vector<std::pair<size_t, NvOcspResponse>> responses;
-    Error error = collect_ocsp_responses(ocsp_verify_options, ocsp_client, responses);
+    Error error = collect_ocsp_responses(ocsp_verify_options, ocsp_client, verified_path, responses);
     if (error != Error::Ok) {
         return error;
     }
@@ -577,7 +630,7 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
         }
 
         if (!ocsp_resp.response_valid) {
-            LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+            LOG_WARN("OCSP response is invalid for cert: " << get_cert_subject_issuer_str(verified_path[subject_idx].get()));
         }
         if (!claims_initialized) {
             out_ocsp_claims.ocsp_response_valid = ocsp_resp.response_valid;
@@ -591,10 +644,10 @@ Error X509CertChain::generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_o
             out_ocsp_claims.nonce_matches = out_ocsp_claims.nonce_matches && ocsp_resp.nonce_matches;
         }
         if (!ocsp_resp.nonce_matches) {
-            LOG_WARN("OCSP nonce mismatch for cert: " << subject_idx << ": " << get_cert_subject_issuer_str(m_certs[subject_idx].get()));
+            LOG_WARN("OCSP nonce mismatch for cert: " << subject_idx << ": " << get_cert_subject_issuer_str(verified_path[subject_idx].get()));
         }
 
-        LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(m_certs[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
+        LOG_DEBUG("OCSP status for cert: " << get_cert_subject_issuer_str(verified_path[subject_idx].get()) << " is: " << OCSP_cert_status_str(ocsp_resp.status));
         OCSPStatus mapped_status = OCSPStatus::UNDEFINED;
         switch (ocsp_resp.status) {
             case V_OCSP_CERTSTATUS_REVOKED:
@@ -734,12 +787,20 @@ Error X509CertChain::generate_per_cert_status(const OcspVerifyOptions& ocsp_opti
         return Error::Ok;
     }
 
+    std::vector<nv_unique_ptr<X509>> verified_path;
     std::vector<std::pair<size_t, NvOcspResponse>> responses;
-    Error error = collect_ocsp_responses(ocsp_options, *ocsp_client, responses);
+    Error error = collect_ocsp_responses(ocsp_options, *ocsp_client, verified_path, responses);
 
     for (const auto& entry : responses) {
         const size_t idx = entry.first;
         const NvOcspResponse& resp = entry.second;
+        // The presented chain is a prefix of the verified path, so path
+        // indices below m_certs.size() name the same certificates. Beyond
+        // that are certificates the trust store supplied (the root when it
+        // was omitted), which have no entry in this per-cert output.
+        if (idx >= m_certs.size()) {
+            continue;
+        }
         if (resp.skipped) {
             // Not applicable (e.g. cert has no AIA responder URL) — record
             // as NOT_CHECKED rather than leaving ocsp null, so

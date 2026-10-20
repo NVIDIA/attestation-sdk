@@ -208,7 +208,8 @@ TEST_F(RimDocumentFixture, OcspServerError) {
     EXPECT_EQ(error, Error::InternalError);
 }
 
-// ocsp error test: incorrect rim root cert (ocsp invalid response)
+// ocsp error test: incorrect rim root cert. The chain no longer verifies,
+// so no OCSP request is made.
 TEST_F(RimDocumentFixture, OcspInvalidResponse) {
     X509CertChain cert_chain;
     Error error = m_rim_document.get_cert_chain(cert_chain);
@@ -217,13 +218,36 @@ TEST_F(RimDocumentFixture, OcspInvalidResponse) {
     EXPECT_NE(incorrect_root_cert, nullptr);
     error = cert_chain.set_root_cert(std::move(incorrect_root_cert));
     EXPECT_EQ(error, Error::Ok);
+    MockOcspHttpClient mock_ocsp_client;
+    EXPECT_CALL(mock_ocsp_client, get_ocsp_response(_, _, _, _, _)).Times(0);
     OCSPClaims ocsp_claims;
-    NvHttpOcspClient ocsp_client;
-    Error ocsp_error = NvHttpOcspClient::create(ocsp_client, "http://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
-    ASSERT_EQ(ocsp_error, Error::Ok);
     OcspVerifyOptions ocsp_verify_options;
-    error = cert_chain.generate_ocsp_claims(ocsp_verify_options, ocsp_client, ocsp_claims);
-    EXPECT_EQ(error, Error::Ok); 
+    error = cert_chain.generate_ocsp_claims(ocsp_verify_options, mock_ocsp_client, ocsp_claims);
+    EXPECT_EQ(error, Error::CertChainVerificationFailure);
+}
+
+// ocsp error test: valid chain, invalid OCSP response
+TEST_F(RimDocumentFixture, OcspInvalidResponseOnValidChain) {
+    X509CertChain cert_chain;
+    Error error = m_rim_document.get_cert_chain(cert_chain);
+    EXPECT_EQ(error, Error::Ok);
+    ASSERT_EQ(cert_chain.verify(), Error::Ok);
+    MockOcspHttpClient mock_ocsp_client;
+    EXPECT_CALL(mock_ocsp_client, get_ocsp_response(_, _, _, _, _))
+        .Times(::testing::AtLeast(1))
+        .WillRepeatedly(Invoke([](const nv_unique_ptr<X509>&, const nv_unique_ptr<X509>&, const nv_unique_ptr<stack_st_X509>&, const nv_unique_ptr<X509_STORE>&, NvOcspResponse& out_ocsp_response) -> Error {
+            out_ocsp_response = NvOcspResponse{};
+            out_ocsp_response.status = V_OCSP_CERTSTATUS_GOOD;
+            out_ocsp_response.reason = -1;
+            out_ocsp_response.nonce_matches = true;
+            out_ocsp_response.response_valid = false;
+            out_ocsp_response.nextupd = time(nullptr) + 86400;
+            return Error::Ok;
+        }));
+    OCSPClaims ocsp_claims;
+    OcspVerifyOptions ocsp_verify_options;
+    error = cert_chain.generate_ocsp_claims(ocsp_verify_options, mock_ocsp_client, ocsp_claims);
+    EXPECT_EQ(error, Error::Ok);
     EXPECT_EQ(ocsp_claims.ocsp_response_valid, false);
 }
 

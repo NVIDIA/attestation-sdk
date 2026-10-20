@@ -216,7 +216,10 @@ class X509CertChain{
         // so the exported key is the one signatures are checked against.
         Error get_leaf_public_key(nv_unique_ptr<EVP_PKEY>& out_pkey) const;
         // Raw per-cert OCSP collection shared by generate_ocsp_claims and generate_per_cert_status.
+        // Verifies the chain and pairs each subject with its issuer on the verified path; the
+        // returned indices are positions on that path.
         Error collect_ocsp_responses(const OcspVerifyOptions& options, IOcspHttpClient& client,
+                                     std::vector<nv_unique_ptr<X509>>& out_verified_path,
                                      std::vector<std::pair<size_t, NvOcspResponse>>& out) const;
         // Maps one cert's raw OCSP response into its PerCertStatus::OcspInfo.
         static std::shared_ptr<PerCertStatus::OcspInfo> build_ocsp_info(const NvOcspResponse& resp, time_t now);
@@ -236,6 +239,18 @@ class X509CertChain{
         Error push_back(const std::string &cert_string);
         
         Error verify(bool allow_partial_chain = false) const;
+        /**
+         * @brief Verifies the chain and returns the path OpenSSL verified,
+         * leaf first, ending at the trust anchor.
+         *
+         * The presented certificates must be an ordered, byte-identical
+         * prefix of the verified path. A chain that omits certificates
+         * supplied through the trust store (such as the root) is accepted;
+         * extra, reordered or duplicate certificates are rejected.
+         * Revocation coverage is derived from this path, never from the
+         * order in which certificates were presented.
+         */
+        Error verify(std::vector<nv_unique_ptr<X509>>& out_verified_path, bool allow_partial_chain = false) const;
         Error generate_cert_chain_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, CertChainClaims& out_cert_chain_claims) const;
         Error generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const;
         Error generate_per_cert_status(const OcspVerifyOptions& ocsp_options, IOcspHttpClient* ocsp_client,
