@@ -23,6 +23,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include <nlohmann/json.hpp>
@@ -680,6 +681,59 @@ TEST_F(VerifyAttestationResultServerTest, TamperedSignatureRejected) {
     nvat_claims_collection_t claims = nullptr;
     nvat_rc_t rc = nvat_verify_attestation_result(tampered.c_str(), m_base_url.c_str(), /*service_key=*/nullptr, /*nonce=*/nullptr, http, /*jwt_validation_options=*/nullptr, &claims);
     EXPECT_EQ(rc, NVAT_RC_NRAS_TOKEN_INVALID);
+
+    nvat_claims_collection_free(&claims);
+    nvat_http_options_free(&http);
+}
+
+// A token that is not a detached EAT envelope has an invalid structure. That is
+// a property of the caller's input, so it is reported as NRAS_TOKEN_INVALID and
+// not as an internal error.
+TEST_F(VerifyAttestationResultServerTest, MalformedDetachedEatRejectedAsInvalidToken) {
+    if (!m_setup_ok) GTEST_SKIP() << "JWKS test server not available";
+
+    nvat_http_options_t http = make_http_options();
+    ASSERT_NE(http, nullptr) << "make_http_options() failed";
+    const std::vector<std::string> malformed_eats = {
+        "not json",
+        "{}",
+        "[]",
+        R"([["JWT"]])",
+        R"([["JWT", 1], {}])",
+    };
+    for (const std::string& eat : malformed_eats) {
+        SCOPED_TRACE(eat);
+        nvat_claims_collection_t claims = nullptr;
+        const nvat_rc_t rc = nvat_verify_attestation_result(eat.c_str(), m_base_url.c_str(), /*service_key=*/nullptr, /*nonce=*/nullptr, http, /*jwt_validation_options=*/nullptr, &claims);
+        EXPECT_EQ(rc, NVAT_RC_NRAS_TOKEN_INVALID);
+        EXPECT_EQ(claims, nullptr);
+        nvat_claims_collection_free(&claims);
+    }
+
+    nvat_http_options_free(&http);
+}
+
+// A correctly signed overall JWT whose payload lacks the overall EAT claims is
+// also structurally invalid.
+TEST_F(VerifyAttestationResultServerTest, OverallTokenWithoutEatClaimsRejectedAsInvalidToken) {
+    if (!m_setup_ok) GTEST_SKIP() << "JWKS test server not available";
+
+    const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    nlohmann::json detached = nlohmann::json::parse(m_detached_eat);
+    nlohmann::json overall_payload = nlohmann::json::parse(
+        jwt::decode<jwt::traits::nlohmann_json>(
+            detached.at(0).at(1).get<std::string>()).get_payload());
+    overall_payload.erase("submods");
+    detached[0][1] = sign_with_times(overall_payload, now, now, now + 3600);
+    const std::string eat = detached.dump();
+
+    nvat_http_options_t http = make_http_options();
+    ASSERT_NE(http, nullptr) << "make_http_options() failed";
+    nvat_claims_collection_t claims = nullptr;
+    const nvat_rc_t rc = nvat_verify_attestation_result(eat.c_str(), m_base_url.c_str(), /*service_key=*/nullptr, /*nonce=*/nullptr, http, /*jwt_validation_options=*/nullptr, &claims);
+    EXPECT_EQ(rc, NVAT_RC_NRAS_TOKEN_INVALID);
+    EXPECT_EQ(claims, nullptr);
 
     nvat_claims_collection_free(&claims);
     nvat_http_options_free(&http);
