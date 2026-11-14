@@ -51,10 +51,10 @@ class GpuVerifierTest : public ::testing::Test {
 
 TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
     auto rim_store = std::make_shared<NvRemoteRimStoreImpl>();
-    Error error = NvRemoteRimStoreImpl::init_from_env(*rim_store, "https://rim-internal.attestation.nvidia.com/internal", g_env->service_key, HttpOptions());
+    Error error = NvRemoteRimStoreImpl::init_from_env(*rim_store, nullptr, g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     auto ocsp_client = std::make_shared<NvHttpOcspClient>();
-    error = NvHttpOcspClient::create(*ocsp_client, "https://ocsp.ndis-stg.nvidia.com", g_env->service_key, HttpOptions());
+    error = NvHttpOcspClient::init_from_env(*ocsp_client, nullptr, g_env->service_key, HttpOptions());
     ASSERT_EQ(error, Error::Ok);
     LocalGpuVerifier verifier;
     error = LocalGpuVerifier::create(verifier, rim_store, ocsp_client, DetachedEATOptions());
@@ -89,7 +89,7 @@ TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidence) {
 
 TEST_F(GpuVerifierTest, SuccessfullyVerifyGpuEvidenceRemoteVerifier) {
     NvRemoteGpuVerifier verifier;
-    Error error = NvRemoteGpuVerifier::init_from_env(verifier, "https://nras.attestation-stg.nvidia.com", g_env->service_key.c_str(), HttpOptions());
+    Error error = NvRemoteGpuVerifier::init_from_env(verifier, nullptr, g_env->service_key.c_str(), HttpOptions());
     ASSERT_EQ(error, Error::Ok);
 
     std::vector<std::shared_ptr<GpuEvidence>> evidence_list;
