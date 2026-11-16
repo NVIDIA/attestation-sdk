@@ -1,4 +1,4 @@
-name: SDK smoke tests
+name: SDK tests
 
 on:
   pull_request:
@@ -13,14 +13,34 @@ concurrency:
 
 jobs:
   sdk-tests:
+    name: SDK ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: normal
+            sanitizer: "OFF"
+            build-type: Release
+          - name: asan
+            sanitizer: address
+            build-type: Debug
+          - name: tsan
+            sanitizer: thread
+            build-type: Debug
+          - name: ubsan
+            sanitizer: undefined
+            build-type: Debug
     env:
-      CC: clang
-      CXX: clang++
+      CC: clang-18
+      CXX: clang++-18
       RUSTUP_TOOLCHAIN: stable
       NVAT_TEST_REQUIRE_SERVICE_KEY: "0"
       TEST_MODE: unit
+      ASAN_OPTIONS: detect_leaks=1:detect_stack_use_after_return=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
     steps:
       - name: Check out source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -31,27 +51,68 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build clang pkg-config \
+            ninja-build clang-18 llvm-18 libclang-rt-18-dev pkg-config \
             libssl-dev libcurl4-openssl-dev libxml2-dev \
             libxmlsec1-dev libxmlsec1-openssl zlib1g-dev python3-venv
+          python3 -m venv "$RUNNER_TEMP/sdk-cmake"
+          "$RUNNER_TEMP/sdk-cmake/bin/pip" install cmake==3.31.10
+          echo "$RUNNER_TEMP/sdk-cmake/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
           rustup toolchain install stable --profile minimal
           cargo install cbor-diag-cli --version 0.1.8 --locked
+
+      # Wide address randomization can conflict with sanitizer shadow memory.
+      - name: Configure sanitizer address space
+        if: matrix.sanitizer == 'address' || matrix.sanitizer == 'thread'
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
 
       # Use CMake directly so test.env is not loaded. Absent URL overrides use
       # the SDK's production service defaults.
       - name: Configure SDK and tests
         run: >-
           cmake -S nv-attestation-sdk-cpp -B build/sdk -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_BUILD_TYPE=${{ matrix.build-type }}
+          -DSANITIZER=${{ matrix.sanitizer }}
           -DUSE_SYSTEM_DEPS=ON
           -DBUILD_TESTING=ON
           -DBUILD_EXAMPLES=OFF
+          -DBUILD_FUZZ_TESTS=OFF
 
       - name: Build SDK and tests
         run: cmake --build build/sdk --target nv-attestation-unit-tests --parallel 2
 
-      # Keep an explicit allowlist: other tests may depend on staging services.
+      # CTest ignores unknown manifest names; reject them before selecting tests.
+      - name: Validate test manifest
+        run: |
+          ctest --test-dir build/sdk --show-only=json-v1 > build/sdk/discovered-tests.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          names = Path(".github/sdk-tests.txt").read_text().splitlines()
+          if not names or any(not name or name != name.strip() for name in names):
+              raise SystemExit("Test manifest must contain one exact test name per line")
+          if len(names) != len(set(names)):
+              raise SystemExit("Test manifest contains duplicate names")
+          discovered = json.loads(Path("build/sdk/discovered-tests.json").read_text())
+          missing = set(names) - {test["name"] for test in discovered["tests"]}
+          if missing:
+              raise SystemExit("Unknown tests in manifest: " + ", ".join(sorted(missing)))
+          print(f"Selected {len(names)} existing SDK tests")
+          PY
+
       - name: Run selected SDK tests
         run: >-
           ctest --test-dir build/sdk --output-on-failure --no-tests=error --timeout 180
-          -R '^(ErrorTest\.(ErrorEnumValuesAreUnique|EnumValuesHaveAToString)|UtilsTest\.(ToHexStringUppercase|GenerateValidNonceLengths)|ParseUriTest\.(HttpUrls|HttpsUrls)|GpuVerifierTest\.(SuccessfullyVerifyGpuEvidence|SuccessfullyVerifyGpuEvidenceRemoteVerifier)|LocalCorimVerifierTest\.(VerifyCmwBlackwellAnchorsAndVerifiesSignature|VerifyCmwRubinTocMatchesUnsignedFixtureRims)|CApiCorimVerifierTest\.(VerifyCmwBlackwellNoTocSucceeds|VerifyCmwRubinTocMatchesRewrittenRims))$'
+          --tests-from-file "$GITHUB_WORKSPACE/.github/sdk-tests.txt"
+          --output-junit "$GITHUB_WORKSPACE/build/sdk/test-results.xml"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-${{ matrix.name }}-results
+          if-no-files-found: ignore
+          path: |
+            build/sdk/test-results.xml
+            build/sdk/Testing/Temporary/LastTest.log
