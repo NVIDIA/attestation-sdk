@@ -17,6 +17,7 @@
 
 #include "gtest/gtest.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -164,6 +165,52 @@ TEST(DiceTcbInfoToEct, KnownHashOidsMapToIanaNiInt) {
         EXPECT_TRUE(digests[0].getAlgorithm(alg_int)) << "OID " << tc.oid;
         EXPECT_FALSE(digests[0].getAlgorithm(alg_str)) << "OID " << tc.oid;
         EXPECT_EQ(alg_int, tc.expected_ni) << "OID " << tc.oid;
+    }
+}
+
+TEST(DiceTcbInfoToEct, Sha256AndSha384FwidsCompareAgainstReference) {
+    struct Case {
+        const char *oid;
+        int32_t reference_algorithm;
+        const char *digest_hex;
+    };
+    // SHA-256 and SHA-384 digests of the bytes "abc".
+    const Case cases[] = {
+        {"2.16.840.1.101.3.4.2.1", 1,
+         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        {"2.16.840.1.101.3.4.2.2", 7,
+         "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed"
+         "8086072ba1e7cc2358baeca134c825a7"},
+    };
+    for (const auto &tc : cases) {
+        SCOPED_TRACE(tc.oid);
+        const auto digest = hex_string_to_bytes(tc.digest_hex);
+        MeasurementValues reference(
+            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            {Digest(tc.reference_algorithm, ByteString(digest))});
+
+        DiceTcbInfo dti = make_minimal_dti();
+        dti.set_fwids({FWID(tc.oid, digest)});
+        Ect ect;
+        ASSERT_EQ(dice_tcb_info_to_ect(dti, nullptr, ect), Error::Ok);
+        ASSERT_EQ(ect.getClaims().size(), 1u);
+        EXPECT_FALSE(match_measurement_values(
+                         reference, ect.getClaims()[0].getValues()).any());
+
+        for (std::size_t changed_byte : {std::size_t{0}, digest.size() - 1}) {
+            SCOPED_TRACE(changed_byte);
+            auto changed_digest = digest;
+            changed_digest[changed_byte] ^= 0x01;
+            dti.set_fwids({FWID(tc.oid, changed_digest)});
+            Ect changed_ect;
+            ASSERT_EQ(dice_tcb_info_to_ect(dti, nullptr, changed_ect), Error::Ok);
+            ASSERT_EQ(changed_ect.getClaims().size(), 1u);
+            const auto mismatch = match_measurement_values(
+                reference, changed_ect.getClaims()[0].getValues());
+            ASSERT_EQ(mismatch.digests.size(), 1u);
+            EXPECT_EQ(mismatch.digests[0].reason,
+                      DigestMatchEntry::Reason::kValueDiffers);
+        }
     }
 }
 

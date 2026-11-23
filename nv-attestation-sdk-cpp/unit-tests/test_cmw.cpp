@@ -111,14 +111,14 @@ TEST(CmwParseTest, RejectsMalformedHintsRecord) {
     nlohmann::json root = valid_root();
     root["gpu_0"]["hints"] = nlohmann::json::array({123, 456});
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwRecordInvalid);
 }
 
 TEST(CmwParseTest, RejectsHintsWithWrongMediaType) {
     nlohmann::json root = valid_root();
     root["gpu_0"]["hints"] = record(kCmwMediaOctetStream, filler(24, 9));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwMediaTypeUnsupported);
 }
 
 TEST(CmwParseTest, HintsSlotOptional) {
@@ -168,7 +168,7 @@ TEST(CmwParseTest, RejectsAppraisalSettingsWithWrongMediaType) {
     root["appraisal-settings"] =
         record(kCmwMediaOctetStream, bytes({0x7B, 0x7D}));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwMediaTypeUnsupported);
 }
 
 TEST(CmwParseTest, MultipleEvidenceItems) {
@@ -191,7 +191,7 @@ TEST(CmwParseTest, RejectsMalformedJson) {
     EXPECT_EQ(CmwCollection::parse(
                   reinterpret_cast<const uint8_t *>(junk.data()), junk.size(),
                   CmwFormat::kJson, cmw),
-              Error::EvidenceMalformed);
+              Error::CmwJsonInvalid);
 }
 
 TEST(CmwParseTest, RejectsNonObjectRoot) {
@@ -200,14 +200,59 @@ TEST(CmwParseTest, RejectsNonObjectRoot) {
     EXPECT_EQ(CmwCollection::parse(
                   reinterpret_cast<const uint8_t *>(arr.data()), arr.size(),
                   CmwFormat::kJson, cmw),
-              Error::EvidenceMalformed);
+              Error::CmwStructureInvalid);
 }
 
 TEST(CmwParseTest, RejectsWrongRootProfile) {
     nlohmann::json root = valid_root();
     root["__cmwc_t"] = "tag:nvidia.com,2026:wrong/v1";
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwProfileInvalid);
+}
+
+TEST(CmwParseTest, RejectsMissingOrNonStringProfiles) {
+    for (const bool item_profile : {false, true}) {
+        for (const bool missing : {false, true}) {
+            nlohmann::json root = valid_root();
+            auto &node = item_profile ? root["gpu_0"] : root;
+            if (missing) {
+                node.erase("__cmwc_t");
+            } else {
+                node["__cmwc_t"] = 123;
+            }
+            CmwCollection cmw;
+            EXPECT_EQ(parse_root(root, cmw), Error::CmwProfileInvalid);
+        }
+    }
+}
+
+TEST(CmwParseTest, RejectsInvalidEncodingInAllRecords) {
+    for (const char *field : {"nonce", "appraisal-settings", "evidence",
+                             "certificate", "hints", "item nonce"}) {
+        SCOPED_TRACE(field);
+        nlohmann::json root = valid_root();
+        const auto invalid = nlohmann::json::array({kCmwMediaOctetStream, "!"});
+        const std::string name(field);
+        if (name == "nonce" || name == "appraisal-settings") {
+            root[name] = invalid;
+        } else {
+            root["gpu_0"][name == "item nonce" ? "nonce" : name] = invalid;
+        }
+        CmwCollection cmw;
+        EXPECT_EQ(parse_root(root, cmw), Error::CmwEncodingInvalid);
+    }
+}
+
+TEST(CmwParseTest, FailedParsePreservesExistingCollection) {
+    CmwCollection cmw;
+    ASSERT_EQ(parse_root(valid_root(), cmw), Error::Ok);
+    nlohmann::json invalid = valid_root();
+    invalid["nonce"] = record(kCmwMediaOctetStream, filler(32, 10));
+    invalid["gpu_0"].erase("evidence");
+    EXPECT_EQ(parse_root(invalid, cmw), Error::CmwEvidenceMissing);
+    EXPECT_EQ(cmw.nonce(), filler(32));
+    ASSERT_EQ(cmw.evidence_items().size(), 1u);
+    EXPECT_EQ(cmw.evidence_items()[0].second.evidence.value, filler(64));
 }
 
 TEST(CmwParseTest, AcceptsMissingNonce) {
@@ -222,14 +267,14 @@ TEST(CmwParseTest, RejectsShortNonce) {
     nlohmann::json root = valid_root();
     root["nonce"] = record(kCmwMediaOctetStream, filler(31));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwNonceInvalid);
 }
 
 TEST(CmwParseTest, RejectsWrongNonceMediaType) {
     nlohmann::json root = valid_root();
     root["nonce"] = record(kCmwMediaJson, filler(32));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwMediaTypeUnsupported);
 }
 
 TEST(CmwParseTest, RejectsRecordNotTwoElements) {
@@ -239,28 +284,28 @@ TEST(CmwParseTest, RejectsRecordNotTwoElements) {
     root["nonce"] =
         nlohmann::json::array({kCmwMediaOctetStream, encoded, 0});
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwRecordInvalid);
 }
 
 TEST(CmwParseTest, RejectsRecordNonStringEntries) {
     nlohmann::json root = valid_root();
     root["nonce"] = nlohmann::json::array({123, 456});
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwRecordInvalid);
 }
 
 TEST(CmwParseTest, RejectsEvidenceItemWrongProfile) {
     nlohmann::json root = valid_root();
     root["gpu_0"]["__cmwc_t"] = "tag:nvidia.com,2026:wrong-item/v1";
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwProfileInvalid);
 }
 
 TEST(CmwParseTest, RejectsEvidenceItemMissingEvidence) {
     nlohmann::json root = valid_root();
     root["gpu_0"].erase("evidence");
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwEvidenceMissing);
 }
 
 TEST(CmwParseTest, AcceptsEvidenceItemMissingNonce) {
@@ -276,14 +321,14 @@ TEST(CmwParseTest, RejectsShortEvidenceItemNonce) {
     nlohmann::json root = valid_root();
     root["gpu_0"]["nonce"] = record(kCmwMediaOctetStream, filler(31));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwNonceInvalid);
 }
 
 TEST(CmwParseTest, RejectsEvidenceItemNotObject) {
     nlohmann::json root = valid_root();
     root["gpu_0"] = "not an object";
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwStructureInvalid);
 }
 
 TEST(CmwParseTest, AcceptsUnknownEvidenceMediaType) {
@@ -303,7 +348,7 @@ TEST(CmwParseTest, RejectsUnsupportedCertificateMediaType) {
     nlohmann::json root = valid_root();
     root["gpu_0"]["certificate"] = record(kCmwMediaJson, filler(16));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwMediaTypeUnsupported);
 }
 
 TEST(CmwParseTest, RejectsNoEvidenceItems) {
@@ -311,7 +356,7 @@ TEST(CmwParseTest, RejectsNoEvidenceItems) {
     root["__cmwc_t"] = kCmwInputProfile;
     root["nonce"] = record(kCmwMediaOctetStream, filler(32));
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwEvidenceMissing);
 }
 
 TEST(CmwParseTest, RejectsNoncePayloadWithPadding) {
@@ -319,7 +364,7 @@ TEST(CmwParseTest, RejectsNoncePayloadWithPadding) {
     // Hand-craft a padded (thus invalid) base64url value.
     root["nonce"] = nlohmann::json::array({kCmwMediaOctetStream, "QQ=="});
     CmwCollection cmw;
-    EXPECT_EQ(parse_root(root, cmw), Error::EvidenceMalformed);
+    EXPECT_EQ(parse_root(root, cmw), Error::CmwEncodingInvalid);
 }
 
 TEST(CmwSerializeTest, RoundTrips) {

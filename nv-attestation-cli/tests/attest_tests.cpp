@@ -45,6 +45,9 @@ TEST_F(CliTest, GPULocal) { //integration + unit
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
+    }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
     std::string gpu_evidence_path = "../../../common-test-data/serialized_test_evidence/hopper_evidence.json";
@@ -72,6 +75,9 @@ TEST_F(CliTest, GPULocalWithRelyingPartyPolicy) { //integration + unit
     RecordProperty("description", "Verify GPU evidence locally with relying party policy");
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
+    }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
     }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
@@ -102,6 +108,9 @@ TEST_F(CliTest, GPULocalWithServiceKey) { //integration + unit
     RecordProperty("description", "Verify GPU evidence locally with service key");
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
+    }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
     }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
@@ -134,6 +143,9 @@ TEST_F(CliTest, GPURemote) { //integration + unit
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
     }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
+    }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
     std::string gpu_evidence_path = "../../../common-test-data/serialized_test_evidence/hopper_evidence.json";
@@ -163,6 +175,9 @@ TEST_F(CliTest, GPURemoteWithRelyingPartyPolicy) { //integration + unit
     RecordProperty("description", "Verify GPU evidence using remote verifier with relying party policy");
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
+    }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
     }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
@@ -194,6 +209,9 @@ TEST_F(CliTest, GPURemoteWithServiceKey) { //integration + unit
     RecordProperty("description", "Verify GPU evidence using remote verifier with service key");
     if (g_cli_env->test_mode == "integration" && !g_cli_env->test_device_gpu) {
         GTEST_SKIP() << "Skipping GPU Integration tests";
+    }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU attestation: this run uses the v2 API";
     }
     std::string nvattest_bin = g_cli_env->nvattest_bin;
 
@@ -629,12 +647,10 @@ TEST(ClaimsParity, GPULocalVsRemote) { // integration + unit
     if (g_cli_env->test_label == "rubin-nvml" ||
         g_cli_env->test_label == "hopper-nvml" ||
         g_cli_env->test_label == "blackwell-nvml") {
-        GTEST_SKIP() << "Skipping: architecture-specific run";
-        /*
-            These runs attest the machine's live GPU to exercise attest-v2.
-            The v1 verifier only supports Hopper and Blackwell, so this would
-            fail on Rubin, and it adds nothing to the other two runs.
-        */
+        GTEST_SKIP() << "Skipping v1 GPU claims parity: architecture-specific v2 run";
+    }
+    if (g_cli_env->expects_gpu_v2_attestation()) {
+        GTEST_SKIP() << "Skipping v1 GPU claims parity: this run uses the v2 API";
     }
     RecordProperty("description", "Verify local and remote GPU claims match for same evidence");
 

@@ -81,6 +81,7 @@ namespace nvattestation {
         }
         if (m_cache[key].m_expiry_time <= time(nullptr)) {
             LOG_DEBUG("Cache object expired for key: " << key);
+            remove_helper(key);
             return Error::CacheObjectNotFound;
         }
         out_value = m_cache[key].m_value;

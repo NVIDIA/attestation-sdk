@@ -71,16 +71,37 @@ Error validate_firmware_version_hint(const std::string &fw) {
     return Error::Ok;
 }
 
-bool is_blackwell_fsp_responder(const X509CertChain &validated_chain,
-                                 const std::string &hw_model) {
-    if (!is_valid_blackwell_hw_model(hw_model)) {
-        return false;
-    }
+static bool is_fsp_leaf(const X509CertChain &validated_chain) {
     std::string cn;
     if (validated_chain.get_subject_cn(0, cn) != Error::Ok) {
         return false;
     }
     return cn.find("FSP") != std::string::npos;
+}
+
+bool is_blackwell_fsp_responder(const X509CertChain &validated_chain,
+                                 const std::string &hw_model) {
+    return is_valid_blackwell_hw_model(hw_model) && is_fsp_leaf(validated_chain);
+}
+
+void correct_gb20x_hwmodel_for_fsp(const X509CertChain &validated_chain,
+                                   std::string &hw_model) {
+    if (hw_model != "GB20X" || !is_fsp_leaf(validated_chain)) {
+        return;
+    }
+    static const std::regex kRealSku(R"(\bGB20[23]\b)");
+    for (std::size_t i = 1; i < validated_chain.size(); ++i) {
+        std::string cn;
+        if (validated_chain.get_subject_cn(i, cn) != Error::Ok) {
+            continue;
+        }
+        std::smatch match;
+        if (std::regex_search(cn, match, kRealSku)) {
+            hw_model = match.str();
+            return;
+        }
+    }
+    // No match: leave hw_model as "GB20X", failing safe.
 }
 
 Error build_vbios_rim_locator(const std::string &hw_model,

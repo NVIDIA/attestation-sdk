@@ -22,7 +22,7 @@
 
 #include "spdlog/spdlog.h"
 
-#include "ear_status.h"
+#include "relying_party_policy_v2.h"
 #include "nvat.h"
 #include "nvattest_types.h"
 #include "utils.h"
@@ -83,7 +83,22 @@ namespace nvattest {
             "Expected nonce in hex; if set, the token's eat_nonce must match")
             ->default_str("");
 
-        add_evidence_verification_options(subcommand, verification_options);
+        add_evidence_verification_options(subcommand, verification_options, true);
+        subcommand->parse_complete_callback([&options, &verification_options]() {
+            const auto& selector = verification_options.relying_party_policy;
+            const auto kind = resolve_relying_party_policy_v2_selector(selector).kind;
+            if (options.token_type == "ear" && kind == RelyingPartyPolicyV2SelectorKind::kMissing) {
+                throw CLI::ValidationError("--relying-party-policy",
+                    "required for EAR tokens. Run 'nvattest show-policy' to list built-in policies, "
+                    "or provide a Rego file.");
+            }
+            if (options.token_type != "ear" &&
+                kind != RelyingPartyPolicyV2SelectorKind::kFile &&
+                kind != RelyingPartyPolicyV2SelectorKind::kMissing) {
+                throw CLI::ValidationError("--relying-party-policy",
+                    "built-in policies are only available for EAR tokens");
+            }
+        });
 
         return subcommand;
     }
@@ -121,6 +136,16 @@ namespace nvattest {
                 ? VerifyTokenOutput::from_ear(rc, "", false)
                 : VerifyTokenOutput(rc);
         };
+        const auto& selector = verification_options.relying_party_policy;
+        const auto kind = resolve_relying_party_policy_v2_selector(selector).kind;
+        if ((options.token_type == "ear" &&
+             kind != RelyingPartyPolicyV2SelectorKind::kFile &&
+             kind != RelyingPartyPolicyV2SelectorKind::kBuiltin) ||
+            (options.token_type != "ear" &&
+             kind != RelyingPartyPolicyV2SelectorKind::kMissing &&
+             kind != RelyingPartyPolicyV2SelectorKind::kFile)) {
+            return emit_and_exit(error_output(NVAT_RC_BAD_ARGUMENT));
+        }
 
         // Read the EAT from --token-file or stdin.
         std::string eat;
@@ -214,29 +239,16 @@ namespace nvattest {
                 }
 
                 const std::string ear_json(ear_data);
-                const nlohmann::json parsed =
-                    nlohmann::json::parse(ear_json, nullptr, false);
-                nvat_rc_t final_rc =
-                    !parsed.is_discarded() && ear_is_affirming(parsed)
-                    ? NVAT_RC_OK
-                    : NVAT_RC_OVERALL_RESULT_FALSE;
-                if (!verification_options.relying_party_policy.empty()) {
-                    nvat_relying_party_policy_t rp_raw = nullptr;
-                    ear_err = load_relying_party_policy(
-                        verification_options.relying_party_policy, rp_raw);
-                    if (ear_err != NVAT_RC_OK) {
-                        return VerifyTokenOutput::from_ear(ear_err, ear_json, true);
-                    }
-                    nv_unique_ptr<nvat_relying_party_policy_t> rp;
-                    rp.reset(&rp_raw);
-                    const nvat_rc_t policy_rc =
-                        nvat_apply_relying_party_policy_to_ear(
-                        rp_raw, ear_json.c_str());
-                    if (policy_rc != NVAT_RC_OK) {
-                        final_rc = policy_rc;
-                    }
+                nvat_relying_party_policy_t rp_raw = nullptr;
+                ear_err = load_relying_party_policy_v2(selector, rp_raw);
+                if (ear_err != NVAT_RC_OK) {
+                    return VerifyTokenOutput::from_ear(ear_err, ear_json, true);
                 }
-                return VerifyTokenOutput::from_ear(final_rc, ear_json, true);
+                nv_unique_ptr<nvat_relying_party_policy_t> rp;
+                rp.reset(&rp_raw);
+                const nvat_rc_t policy_rc =
+                    nvat_apply_relying_party_policy_to_ear(rp_raw, ear_json.c_str());
+                return VerifyTokenOutput::from_ear(policy_rc, ear_json, true);
             }();
             nvat_sdk_shutdown();
             return emit_and_exit(output);

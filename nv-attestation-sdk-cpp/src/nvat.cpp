@@ -47,6 +47,7 @@
 #include "nv_attestation/gpu/evidence.h"
 #include "nv_attestation/switch/evidence.h"
 #include "nv_attestation/nv_ocsp.h"
+#include "nv_attestation/request_id.h"
 #include "nvat.h.in"
 
 using namespace nvattestation;
@@ -58,6 +59,7 @@ extern "C" {
 NVAT_PTR_CONVERSION_FUNCTIONS(ocsp_client_options, OcspClientOptions);
 NVAT_PTR_CONVERSION_FUNCTIONS(jwt_validation_options, JwtValidationOptions);
 NVAT_FREE_FUNCTION(logger, std::shared_ptr<ILogger>);
+NVAT_FREE_FUNCTION(observer, Observer);
 NVAT_FREE_FUNCTION(sdk_opts, std::shared_ptr<SdkOptions>);
 NVAT_FREE_FUNCTION(nonce, std::vector<uint8_t>);
 NVAT_FREE_FUNCTION(gpu_evidence, std::shared_ptr<GpuEvidence>);
@@ -87,6 +89,7 @@ NVAT_FREE_FUNCTION(detached_eat_options, DetachedEATOptions);
 NVAT_FREE_FUNCTION(cmw_collection, CmwCollection);
 NVAT_FREE_FUNCTION(corim_store, CorimStore);
 NVAT_FREE_FUNCTION(local_corim_verifier, LocalCorimVerifier);
+NVAT_FREE_FUNCTION(verify_cmw_options, VerifyCmwOptions);
 
 // === Core SDK ===
 
@@ -136,6 +139,46 @@ void nvat_sdk_opts_set_logger(nvat_sdk_opts_t opts, nvat_logger_t logger) {
     std::shared_ptr<SdkOptions> cpp_opts = *nvat_sdk_opts_to_cpp(opts);
     std::shared_ptr<ILogger> cpp_logger = *nvat_logger_to_cpp(logger);
     cpp_opts->logger = cpp_logger;
+    NVAT_C_API_END_VOID
+}
+
+void nvat_sdk_opts_set_observer(nvat_sdk_opts_t opts, nvat_observer_t observer) {
+    NVAT_C_API_BEGIN
+    if (opts == nullptr || observer == nullptr) {
+        return;
+    }
+    std::shared_ptr<SdkOptions> cpp_opts = *nvat_sdk_opts_to_cpp(opts);
+    cpp_opts->observer = *nvat_observer_to_cpp(observer);
+    NVAT_C_API_END_VOID
+}
+
+nvat_rc_t nvat_observer_create(nvat_observer_t* out_observer, void* user_data) {
+    NVAT_C_API_BEGIN
+    if (out_observer == nullptr) {
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    auto cpp_observer = make_unique<Observer>();
+    cpp_observer->user_data = user_data;
+    *out_observer = nvat_observer_from_cpp(cpp_observer.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+void nvat_observer_set_http_call_callback(nvat_observer_t observer, nvat_http_call_callback_t callback) {
+    NVAT_C_API_BEGIN
+    if (observer == nullptr) {
+        return;
+    }
+    nvat_observer_to_cpp(observer)->http_call_callback = callback;
+    NVAT_C_API_END_VOID
+}
+
+void nvat_observer_set_cache_lookup_callback(nvat_observer_t observer, nvat_cache_lookup_callback_t callback) {
+    NVAT_C_API_BEGIN
+    if (observer == nullptr) {
+        return;
+    }
+    nvat_observer_to_cpp(observer)->cache_lookup_callback = callback;
     NVAT_C_API_END_VOID
 }
 
@@ -2199,6 +2242,28 @@ nvat_rc_t nvat_corim_store_enable_in_memory_cache(
     NVAT_C_API_END
 }
 
+nvat_rc_t nvat_corim_store_enable_negative_cache(nvat_corim_store_t store,
+                                                 uint64_t max_size_bytes,
+                                                 time_t ttl_seconds) {
+    NVAT_C_API_BEGIN
+    if (store == nullptr) {
+        LOG_ERROR("store is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (max_size_bytes == 0) {
+        LOG_ERROR("max_size_bytes must be > 0");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    if (ttl_seconds < 0) {
+        LOG_ERROR("ttl_seconds must be >= 0");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    nvat_corim_store_to_cpp(store)->enable_negative_cache(max_size_bytes,
+                                                          ttl_seconds);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_local_corim_verifier_create(
     nvat_local_corim_verifier_t* out_verifier,
     nvat_corim_store_t* corim_store,
@@ -2221,12 +2286,66 @@ nvat_rc_t nvat_local_corim_verifier_create(
     NVAT_C_API_END
 }
 
+nvat_rc_t nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+    nvat_local_corim_verifier_t verifier, const char* root_cert_pem) {
+    NVAT_C_API_BEGIN
+    if (verifier == nullptr || root_cert_pem == nullptr) {
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    return nvat_rc_from_cpp(nvat_local_corim_verifier_to_cpp(verifier)
+                                ->add_device_identity_trust_root_pem(root_cert_pem));
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+    nvat_local_corim_verifier_t verifier, const char* root_cert_pem) {
+    NVAT_C_API_BEGIN
+    if (verifier == nullptr || root_cert_pem == nullptr) {
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    return nvat_rc_from_cpp(nvat_local_corim_verifier_to_cpp(verifier)
+                                ->add_rim_signing_trust_root_pem(root_cert_pem));
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_verify_cmw_options_create(nvat_verify_cmw_options_t* out_options) {
+    NVAT_C_API_BEGIN
+    if (out_options == nullptr) {
+        LOG_ERROR("out_options is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    auto cpp_options = make_unique<VerifyCmwOptions>();
+    *out_options = nvat_verify_cmw_options_from_cpp(cpp_options.release());
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
+nvat_rc_t nvat_verify_cmw_options_set_request_id(
+    nvat_verify_cmw_options_t options,
+    const char* request_id
+) {
+    NVAT_C_API_BEGIN
+    if (options == nullptr || request_id == nullptr) {
+        LOG_ERROR("options or request_id is null");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    std::string id(request_id);
+    if (!is_valid_request_id(id)) {
+        LOG_ERROR("request_id must be 1-" << MAX_REQUEST_ID_LEN << " printable ASCII characters without spaces");
+        return NVAT_RC_BAD_ARGUMENT;
+    }
+    nvat_verify_cmw_options_to_cpp(options)->request_id = std::move(id);
+    return NVAT_RC_OK;
+    NVAT_C_API_END
+}
+
 nvat_rc_t nvat_local_corim_verifier_verify_cmw(
     const nvat_local_corim_verifier_t verifier,
     const uint8_t* cmw_data,
     size_t cmw_len,
     nvat_cmw_format_t format,
     nvat_ear_signing_options_t ear_signing_options,
+    nvat_verify_cmw_options_t verify_cmw_options,
     nvat_str_t* out_ear_jwt,
     nvat_str_t* out_ear_json
 ) {
@@ -2250,6 +2369,13 @@ nvat_rc_t nvat_local_corim_verifier_verify_cmw(
     if (ear_signing_options != nullptr) {
         cpp_options_ptr = nvat_detached_eat_options_to_cpp(ear_signing_options);
     }
+
+    // Set before any work so RIM/OCSP requests and logs carry it.
+    std::string request_id;
+    if (verify_cmw_options != nullptr) {
+        request_id = nvat_verify_cmw_options_to_cpp(verify_cmw_options)->request_id;
+    }
+    RequestIdScope request_id_scope(std::move(request_id));
 
     CorimAttestationResult result{};
     std::string ear_jwt;

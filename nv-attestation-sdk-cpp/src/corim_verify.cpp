@@ -45,7 +45,24 @@
 #include <utility>
 #include <vector>
 
+#include <openssl/x509v3.h>
+
 namespace nvattestation {
+
+void TextClaimValue::toJson(nlohmann::json &json_out) const {
+    json_out = m_value;
+}
+
+void RawClaimValue::toJson(nlohmann::json &json_out) const {
+    std::string encoded;
+    // Cannot fail in practice: encode_base64 sizes EVP_EncodeBlock's output
+    // buffer exactly, so OpenSSL has no failure path for in-memory claim
+    // bytes. Should it ever fail (logged by encode_base64), the claim is left
+    // null, matching how eat_nonce encoding failures are handled.
+    if (encode_base64url(m_value.bytes(), encoded) == Error::Ok) {
+        json_out = std::move(encoded);
+    }
+}
 
 MismatchReason MismatchReason::noEvidence() {
     MismatchReason out;
@@ -246,6 +263,7 @@ FieldMismatchInfo compare_flags(const FlagsMap *ref, const FlagsMap *ev) {
         {"immutable",               &FlagsMap::getImmutable},
         {"tcb",                     &FlagsMap::getTcb},
         {"confidentiality_protected", &FlagsMap::getConfidentialityProtected},
+        {"runtime_updatable",       &FlagsMap::getRuntimeUpdatable},
     };
     nlohmann::json ref_diffs = nlohmann::json::object();
     nlohmann::json ev_diffs = nlohmann::json::object();
@@ -627,7 +645,7 @@ std::vector<MkeyMismatch> compare_ects(const Ect &rv_ect, const Ect &ev_ect) {
 
 struct EvidenceClaim {
     std::string key;
-    std::string value;
+    std::unique_ptr<EvidenceClaimValue> value;
 };
 
 // dump() throws on invalid UTF-8; reused as the validator (no extra dep).
@@ -642,7 +660,7 @@ bool is_valid_utf8(const std::string &value) {
 
 // Extract the single claim, or false if the ECT is malformed (not one
 // string-keyed measurement with exactly one of name/raw-value/version).
-// Raw-value is taken as UTF-8; version uses Version::getValue() verbatim.
+// Raw-value keeps its bytes; version uses Version::getValue() verbatim.
 bool extract_evidence_claim(const Ect &ect, EvidenceClaim &out) {
     const std::vector<MeasurementMap> &claims = ect.getClaims();
     if (claims.size() != 1) {
@@ -663,14 +681,64 @@ bool extract_evidence_claim(const Ect &ect, EvidenceClaim &out) {
     }
     out.key = mkey.str_value;
     if (name != nullptr) {
-        out.value = *name;
+        out.value = std::make_unique<TextClaimValue>(*name);
     } else if (raw != nullptr) {
-        out.value.assign(reinterpret_cast<const char *>(raw->data()),
-                         raw->size());
+        out.value = std::make_unique<RawClaimValue>(*raw);
     } else {
-        out.value = ver->getValue();
+        out.value = std::make_unique<TextClaimValue>(ver->getValue());
     }
     return true;
+}
+
+/**
+ * @brief Add one self-signed X.509v3 root CA to a trust store.
+ *
+ * Invalid input leaves the store unchanged. Adding a duplicate returns Ok.
+ */
+Error add_trust_root_pem(std::vector<std::string> &roots, std::string pem,
+                         const std::string *primary_root = nullptr) {
+    constexpr char kBegin[] = "-----BEGIN CERTIFICATE-----";
+    constexpr char kEnd[] = "-----END CERTIFICATE-----";
+    const auto first = pem.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || pem.compare(first, sizeof(kBegin) - 1, kBegin) != 0) {
+        LOG_ERROR("Trust root PEM must start with a certificate");
+        return Error::BadArgument;
+    }
+    const auto end_marker = pem.find(kEnd, first);
+    if (end_marker == std::string::npos ||
+        pem.find_first_not_of(" \t\r\n", end_marker + sizeof(kEnd) - 1) !=
+            std::string::npos) {
+        LOG_ERROR("Trust root PEM must contain exactly one certificate");
+        return Error::BadArgument;
+    }
+    nv_unique_ptr<X509> cert = x509_from_cert_string(pem);
+    if (!cert) {
+        LOG_ERROR("Trust root PEM could not be parsed as a certificate");
+        return Error::BadArgument;
+    }
+    if (X509_check_ca(cert.get()) != 1) {
+        LOG_ERROR("Trust root certificate must be an X.509v3 CA");
+        return Error::BadArgument;
+    }
+    if (X509_check_issued(cert.get(), cert.get()) != X509_V_OK) {
+        LOG_ERROR("Trust root certificate must be self-issued");
+        return Error::BadArgument;
+    }
+    nv_unique_ptr<EVP_PKEY> public_key(X509_get_pubkey(cert.get()));
+    if (!public_key || X509_verify(cert.get(), public_key.get()) != 1) {
+        LOG_ERROR("Trust root certificate must have a valid self-signature");
+        return Error::BadArgument;
+    }
+    const auto same_cert = [&cert](const std::string &existing_pem) {
+        nv_unique_ptr<X509> existing = x509_from_cert_string(existing_pem);
+        return existing && X509_cmp(existing.get(), cert.get()) == 0;
+    };
+    if ((primary_root != nullptr && same_cert(*primary_root)) ||
+        std::any_of(roots.begin(), roots.end(), same_cert)) {
+        return Error::Ok;
+    }
+    roots.push_back(std::move(pem));
+    return Error::Ok;
 }
 
 } // namespace
@@ -963,8 +1031,8 @@ VerificationResult verify(const std::vector<Ect> &reference,
 
     // Corroboration reuses each env's outcome: a passing attempt means
     // corroborated. Maps commit after the loop so a malformed env aborts clean.
-    std::map<std::string, std::string> corroborated;
-    std::map<std::string, std::string> uncorroborated;
+    EvidenceClaimMap corroborated;
+    EvidenceClaimMap uncorroborated;
     for (const auto &ev_ect : evidence) {
         const EnvironmentMap &env = ev_ect.getEnvironment();
         if (!is_claims_from_evidence_env(env)) {
@@ -976,7 +1044,9 @@ VerificationResult verify(const std::vector<Ect> &reference,
                 Diagnostic::malformedClaimsFromEvidenceEnv(env));
             return result;
         }
-        if (!is_valid_utf8(claim.value)) {
+        // Raw values are bytes; only text claims must be UTF-8.
+        const auto *text = dynamic_cast<const TextClaimValue *>(claim.value.get());
+        if (text != nullptr && !is_valid_utf8(text->value())) {
             result.diagnostics.push_back(Diagnostic::nonUtf8EvidenceClaim(env));
             return result;
         }
@@ -998,9 +1068,9 @@ VerificationResult verify(const std::vector<Ect> &reference,
             }
         }
         if (is_corroborated) {
-            corroborated[claim.key] = claim.value;
+            corroborated[claim.key] = std::move(claim.value);
         } else {
-            uncorroborated[claim.key] = claim.value;
+            uncorroborated[claim.key] = std::move(claim.value);
         }
     }
     result.corroborated_evidence_claims = std::move(corroborated);
@@ -1240,6 +1310,17 @@ void to_json(nlohmann::json &json_out, const EnvOutcome &outcome) {
     }
 }
 
+void to_json(nlohmann::json &json_out, const EvidenceClaimValue &value) {
+    value.toJson(json_out);
+}
+
+void to_json(nlohmann::json &json_out, const EvidenceClaimMap &claims) {
+    json_out = nlohmann::json::object();
+    for (const auto &claim : claims) {
+        json_out[claim.first] = *claim.second;
+    }
+}
+
 void to_json(nlohmann::json &json_out, const VerificationResult &result) {
     json_out = nlohmann::json::object();
     if (!result.diagnostics.empty()) {
@@ -1286,7 +1367,12 @@ Error LocalCorimVerifier::anchor_device_chain(const std::string &chain_pem,
     if (build != Error::Ok) {
         return build;
     }
-    return out_chain.verify();
+    const CertificateKeySizeMinimums minimums;
+    Error verified = out_chain.verify(false, &minimums, true, true);
+    if (verified != Error::Ok) {
+        return verified;
+    }
+    return out_chain.verify_end_entity_eku(OID_TCG_DICE_KP_ATTEST_LOC, false);
 }
 
 Error LocalCorimVerifier::verify_coev_signature(
@@ -1296,6 +1382,7 @@ Error LocalCorimVerifier::verify_coev_signature(
     std::vector<PerCertStatus> &out_cert_claims) const {
     CoseSign1VerifyOptions cose_opts;
     cose_opts.root_cert_pem = m_rim_signing_root;
+    cose_opts.additional_root_cert_pems = m_rim_signing_additional_roots;
     cose_opts.verify_ocsp = (ocsp_client != nullptr);
     NvHttpOcspClient ocsp_placeholder;
     IOcspHttpClient &ocsp_ref =
@@ -1324,12 +1411,12 @@ LocalCorimVerifier::LocalCorimVerifier(
 }
 
 Error LocalCorimVerifier::add_device_identity_trust_root_pem(std::string pem) {
-    if (pem.empty()) {
-        LOG_ERROR("device-identity trust root PEM is empty");
-        return Error::BadArgument;
-    }
-    m_device_identity_roots.push_back(std::move(pem));
-    return Error::Ok;
+    return add_trust_root_pem(m_device_identity_roots, std::move(pem));
+}
+
+Error LocalCorimVerifier::add_rim_signing_trust_root_pem(std::string pem) {
+    return add_trust_root_pem(m_rim_signing_additional_roots, std::move(pem),
+                              &m_rim_signing_root);
 }
 
 void LocalCorimVerifier::set_verify_revocation(bool enabled) {
@@ -1493,6 +1580,36 @@ void to_json(nlohmann::json &json_out, const CorimAttestationResult &result) {
 }
 
 namespace {
+// Names the first cert that makes a chain untrusted, for the EAR entry. The
+// full per-cert status is already published alongside it.
+std::string describe_untrusted_cert(const std::vector<PerCertStatus> &chain) {
+    for (size_t i = 0; i < chain.size(); ++i) {
+        const auto &cert = chain[i];
+        if (cert.expired) {
+            return "certificate " + std::to_string(i) + ": expired";
+        }
+        if (!cert.ocsp || cert.ocsp->crl_status == OCSPStatus::NOT_CHECKED) {
+            continue;
+        }
+        if (cert.ocsp->crl_status != OCSPStatus::GOOD) {
+            std::string detail = "certificate " + std::to_string(i) + ": " +
+                                 to_string(cert.ocsp->crl_status);
+            if (cert.ocsp->revocation_reason &&
+                !cert.ocsp->revocation_reason->empty()) {
+                detail += " (" + *cert.ocsp->revocation_reason + ")";
+            }
+            return detail;
+        }
+        if (!cert.ocsp->response_valid) {
+            return "certificate " + std::to_string(i) + ": OCSP response invalid";
+        }
+        if (!cert.ocsp->nonce_matches) {
+            return "certificate " + std::to_string(i) + ": OCSP nonce mismatch";
+        }
+    }
+    return "";
+}
+
 std::vector<PerCertStatus>
 collect_per_cert_status(const X509CertChain &chain,
                         const std::shared_ptr<IOcspHttpClient> &ocsp_client) {
@@ -1648,12 +1765,12 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
         if (anchor != Error::Ok) {
             if (m_evidence_handler_settings.m_verify_evidence_signature) {
                 appraisal.stage_error = {Error::CertChainVerificationFailure,
-                                         "cert chain does not anchor to a known root", ""};
+                                         "device certificate chain validation failed", ""};
                 LOG_ERROR("[" << label << "] " << appraisal.stage_error.message);
                 return appraisal;
             }
-            LOG_WARN("[" << label << "] cert chain does not anchor to a known "
-                         "root; continuing because evidence-signature "
+            LOG_WARN("[" << label << "] device certificate chain validation "
+                         "failed; continuing because evidence-signature "
                          "verification is disabled");
         } else {
             chain_anchored = true;
@@ -1667,6 +1784,7 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
                 appraisal.evidence.spdm_end_entity_othername_serial =
                     device_info.serial;
                 appraisal.hwmodel = device_info.product;
+                correct_gb20x_hwmodel_for_fsp(device_chain, appraisal.hwmodel);
             } else {
                 LOG_DEBUG("[" << label
                               << "] no DMTF otherName in end-entity cert");
@@ -1772,7 +1890,7 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
                              "could not build a RIM locator for FSP responder: " +
                                  locator_failure_reason,
                              ""}
-                : StageError{Error::RimNotFound,
+                : StageError{Error::RimLocatorUnavailable,
                              "no RIM locator available for FSP responder", ""};
         CorimResult cr;
         cr.error = appraisal.stage_error;
@@ -1878,6 +1996,7 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
         if (m_verify_rim_signature) {
             CoseSign1VerifyOptions cose_opts;
             cose_opts.root_cert_pem = m_rim_signing_root;
+            cose_opts.additional_root_cert_pems = m_rim_signing_additional_roots;
             cose_opts.verify_ocsp = (ocsp_client != nullptr);
             // parse_signed_corim takes the client by reference; when OCSP is
             // off, verify_ocsp is false and this stand-in is never consulted.
@@ -1902,6 +2021,11 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
                 continue;
             }
             cr.signature_verified = true;
+            if (cr.cert_chain && !all_certs_trusted(*cr.cert_chain)) {
+                cr.error = {Error::CertChainVerificationFailure,
+                            "RIM signing chain is not trusted",
+                            describe_untrusted_cert(*cr.cert_chain)};
+            }
         } else {
             std::vector<uint8_t> cose_payload;
             const std::vector<uint8_t>& corim_payload =
@@ -1938,6 +2062,14 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
                 }
                 if (coev_err == Error::Ok) {
                     cr.coev_signature_verified = true;
+                    // First finding wins: RIM and CoEV normally share a
+                    // signing chain, and only cert_chain reaches the EAR.
+                    if (!cr.error.has_error() && cr.coev_cert_chain &&
+                        !all_certs_trusted(*cr.coev_cert_chain)) {
+                        cr.error = {Error::CertChainVerificationFailure,
+                                    "CoEV signing chain is not trusted",
+                                    describe_untrusted_cert(*cr.coev_cert_chain)};
+                    }
                 } else {
                     coev_stage = "signature verification";
                 }
@@ -2006,11 +2138,14 @@ EvidenceItemAppraisal LocalCorimVerifier::appraise_item(
         LOG_ERROR("[" << label << "] " << appraisal.stage_error.message);
         return appraisal;
     }
-    // No reference values reached appraisal: either the evidence named no RIM
-    // locators, or every CoRIM parsed but carried none.
+    // Missing locator information is not a fetch-not-found result: an RP may
+    // tolerate unpublished RIMs without tolerating an undiscoverable RIM.
     if (reference_ects.empty()) {
-        appraisal.stage_error = {Error::RimMeasurementNotFound,
-                                 "no RIM reference values to appraise against", ""};
+        appraisal.stage_error = rim_locator_urls.empty()
+            ? StageError{Error::RimLocatorUnavailable,
+                         "no RIM locator available", ""}
+            : StageError{Error::RimMeasurementNotFound,
+                         "no RIM reference values to appraise against", ""};
         LOG_ERROR("[" << label << "] " << appraisal.stage_error.message);
         return appraisal;
     }
@@ -2184,7 +2319,12 @@ Error LocalCorimVerifier::verify_cmw(const uint8_t *cmw_data,
         }
 
         if (out_ear_json != nullptr) {
-            *out_ear_json = ear_json.dump();
+            try {
+                *out_ear_json = ear_json.dump();
+            } catch (const nlohmann::json::type_error &e) {
+                LOG_ERROR("Failed to serialize EAR JSON: " << e.what());
+                return Error::JsonSerializationError;
+            }
         }
 
         if (out_ear_jwt != nullptr) {

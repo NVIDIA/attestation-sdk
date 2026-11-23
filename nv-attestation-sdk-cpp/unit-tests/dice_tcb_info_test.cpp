@@ -24,6 +24,7 @@
 
 #include "nv_attestation/dice_tcb_info.h"
 #include "nv_attestation/error.h"
+#include "nv_attestation/nv_x509.h"
 #include "nv_attestation/utils.h"
 
 using namespace nvattestation;
@@ -137,6 +138,45 @@ TEST(DiceTcbInfoTest, GetFirstFwidDigest) {
 }
 
 // --- DiceTcbInfo DER Parsing Tests ---
+
+TEST(DiceTcbInfoTest, RejectsMalformedFieldsRegardlessOfExtensionCriticality) {
+    const std::vector<std::vector<uint8_t>> malformed = {
+        {0x30, 0x03, 0x83, 0x01, 0x01, 0x00},  // trailing data
+        {0x30, 0x03, 0xA3, 0x01, 0x01},        // constructed svn
+        {0x30, 0x02, 0x86, 0x00},              // primitive FWID list
+        {0x30, 0x06, 0x80, 0x01, 'a', 0x80, 0x01, 'b'}, // duplicate vendor
+        {0x30, 0x03, 0x9E, 0x01, 0x00},        // unknown field
+        {0x30, 0x03, 0x01, 0x01, 0x01},        // universal field
+        {0x30, 0x0D, 0xA6, 0x0B, 0x30, 0x09, 0x06, 0x02,
+         0x2A, 0x03, 0x04, 0x01, 0xAA, 0x05, 0x00}, // extra FWID element
+        {0x30, 0x0D, 0xA6, 0x0B, 0x30, 0x07, 0x06, 0x02,
+         0x2A, 0x03, 0x04, 0x01, 0xAA, 0x05, 0x00}, // FWID trailing data
+    };
+    for (const auto& der : malformed) {
+        SCOPED_TRACE(::testing::PrintToString(der));
+        DiceTcbInfo info;
+        EXPECT_NE(DiceTcbInfo::parse_from_der(der, info), Error::Ok);
+    }
+}
+
+TEST(DiceTcbInfoTest, RejectsNonminimalDerLengths) {
+    const std::vector<std::vector<uint8_t>> malformed = {
+        {0x30, 0x81, 0x03, 0x83, 0x01, 0x01},
+        {0x30, 0x82, 0x00, 0x03, 0x83, 0x01, 0x01},
+        {0x30, 0x04, 0x83, 0x81, 0x01, 0x01},
+    };
+    for (const auto& der : malformed) {
+        SCOPED_TRACE(::testing::PrintToString(der));
+        DiceTcbInfo info;
+        EXPECT_NE(DiceTcbInfo::parse_from_der(der, info), Error::Ok);
+    }
+}
+
+TEST(DiceTcbInfoTest, RejectsEmptyIntegrityRegisterList) {
+    const std::vector<uint8_t> der = {0x30, 0x02, 0xAB, 0x00};
+    DiceTcbInfo info;
+    EXPECT_NE(DiceTcbInfo::parse_from_der(der, info), Error::Ok);
+}
 
 TEST(DiceTcbInfoTest, ParseFromDerBlackwell) {
     // Known-good hex from nv_x509.cpp:715 comment — a real Blackwell DiceTcbInfo extension
@@ -532,6 +572,27 @@ TEST(CompositeDeviceIdTest, ParseFromDer) {
     EXPECT_EQ(cdi.fwid().digest()[0], 0xAA);
 }
 
+TEST(CompositeDeviceIdTest, ParsesDirectValueInHopperCertificate) {
+    auto cert = x509_from_cert_path(
+        "testdata/sample_attestation_data/gpu/hopperCertChain.txt");
+    ASSERT_NE(cert, nullptr);
+
+    CompositeDeviceId composite;
+    ASSERT_EQ(CompositeDeviceId::parse_from_x509_extension(cert.get(), composite),
+              Error::Ok);
+    EXPECT_EQ(composite.version(), 1);
+    EXPECT_EQ(composite.fwid().digest().size(), 48u);
+}
+
+TEST(CompositeDeviceIdTest, RejectsExtraFwidElement) {
+    const std::vector<uint8_t> der = {
+        0x30, 0x10, 0x02, 0x01, 0x00, 0x30, 0x00,
+        0x30, 0x09, 0x06, 0x02, 0x2A, 0x03,
+        0x04, 0x01, 0xAA, 0x05, 0x00};
+    CompositeDeviceId composite;
+    EXPECT_NE(CompositeDeviceId::parse_from_der(der, composite), Error::Ok);
+}
+
 TEST(CompositeDeviceIdTest, ParseFromDerEmpty) {
     std::vector<uint8_t> empty;
     CompositeDeviceId cdi;
@@ -758,6 +819,19 @@ TEST(DiceTcbInfoTest, ParseFromDerWithIntegrityRegisters) {
     ASSERT_EQ(reg.register_digests().size(), 1u);
     EXPECT_EQ(reg.register_digests()[0].hash_alg_oid(), "2.16.840.1.101.3.4.2.1");
     EXPECT_EQ(reg.register_digests()[0].digest(), std::vector<uint8_t>({0xAA, 0xBB}));
+}
+
+TEST(DiceTcbInfoTest, RejectsMalformedIntegrityRegisterFields) {
+    const std::vector<std::string> malformed = {
+        "3026ab20301e8002523080025231810100a211300f06096086480165030402010402aabb",
+        "301eab1c301aa0025230810100a211300f06096086480165030402010402aabb",
+        "301eab1c301a83025230810100a211300f06096086480165030402010402aabb",
+    };
+    for (const auto& hex : malformed) {
+        SCOPED_TRACE(hex);
+        DiceTcbInfo info;
+        EXPECT_NE(DiceTcbInfo::parse_from_der(hex_string_to_bytes(hex), info), Error::Ok);
+    }
 }
 
 // --- Error path coverage for helper functions (LOG_AT_LEVEL changed lines) ---

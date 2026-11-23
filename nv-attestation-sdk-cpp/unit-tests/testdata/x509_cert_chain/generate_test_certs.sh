@@ -12,7 +12,7 @@ EXPECTED_OUTPUTS=(
     ec_p384_private.pem ec_p384_public.pem
     valid_signature.sig signed_data.txt
     cose_signing_root.crt cose_signing_root_key.pem
-    cose_signing_leaf.crt cose_signing_leaf_key.pem
+    cose_signing_leaf.crt cose_signing_leaf_key.pem cose_signing_leaf_missing_eku.crt
     eat_jwks_leaf_key.pem eat_jwks_leaf
     eat_jwks_ca_key.pem eat_jwks_ca eat_jwks_chain_leaf_key.pem eat_jwks_chain_leaf
     eat_jwks_root eat_jwks_int eat_jwks_int_leaf_key.pem eat_jwks_int_leaf
@@ -356,6 +356,7 @@ generate_cose_signing_chain() {
     COSE_LEAF_CSR="${CERT_DIR}/cose_signing_leaf.csr"
     COSE_LEAF_CSR_CNF="${CERT_DIR}/cose_signing_leaf_csr.cnf"
     COSE_LEAF_SIGN_CNF="${CERT_DIR}/cose_signing_leaf_sign.cnf"
+    COSE_LEAF_NO_EKU_CNF="${CERT_DIR}/cose_signing_leaf_no_eku.cnf"
 
     cat > "${COSE_ROOT_CNF}" <<EOF
 [ req ]
@@ -393,6 +394,15 @@ EOF
 [ v3_leaf ]
 basicConstraints = CA:FALSE
 keyUsage = digitalSignature
+extendedKeyUsage = 1.3.6.1.4.1.5703.1200.1.1.1
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+EOF
+
+    cat > "${COSE_LEAF_NO_EKU_CNF}" <<EOF
+[ v3_leaf ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always
 EOF
@@ -404,9 +414,14 @@ EOF
         -CA "${COSE_SIGNING_ROOT_CERT}" -CAkey "${COSE_SIGNING_ROOT_KEY}" -CAcreateserial \
         -out "${COSE_SIGNING_LEAF_CERT}" -days ${DAYS_VALID} -sha384 \
         -extfile "${COSE_LEAF_SIGN_CNF}" -extensions v3_leaf
+    openssl x509 -req -in "${COSE_LEAF_CSR}" \
+        -CA "${COSE_SIGNING_ROOT_CERT}" -CAkey "${COSE_SIGNING_ROOT_KEY}" -CAcreateserial \
+        -out "${CERT_DIR}/cose_signing_leaf_missing_eku.crt" -days ${DAYS_VALID} -sha384 \
+        -extfile "${COSE_LEAF_NO_EKU_CNF}" -extensions v3_leaf
 
     rm -f "${COSE_ROOT_CNF}" "${COSE_LEAF_CSR}" "${COSE_LEAF_CSR_CNF}" \
-          "${COSE_LEAF_SIGN_CNF}" "${CERT_DIR}/cose_signing_root.srl"
+          "${COSE_LEAF_SIGN_CNF}" "${COSE_LEAF_NO_EKU_CNF}" \
+          "${CERT_DIR}/cose_signing_root.srl"
 }
 
 generate_fsp_gsp_responder_leaf_certs() {

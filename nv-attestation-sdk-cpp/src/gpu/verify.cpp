@@ -23,6 +23,7 @@
 #include "nv_attestation/nv_jwt.h"
 #include "nv_attestation/verify.h"
 #include "nv_attestation/nv_http.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/utils.h"
 #include "internal/debug.hpp"
 
@@ -554,7 +555,7 @@ static Error check_evidence_arch_verifiable(const std::vector<std::shared_ptr<Gp
         out_verifier.m_nras_url = nras_url_str + "/v4/attest/gpu";
         out_verifier.m_eat_issuer = nras_url_str;
 
-        Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options);
+        Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options, kServiceNras);
         if (err != Error::Ok) {
             return err;
         }

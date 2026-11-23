@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 #include "nv_attestation/nv_jwt.h"
 #include "nv_attestation/nv_http.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/utils.h"
 #include "nv_attestation/nv_x509.h"
@@ -178,7 +179,7 @@ namespace nvattestation {
         jwk_store->m_jwks_url = jwks_url;
         jwk_store->m_last_update_unix_ms = 0;
         jwk_store->m_cache_duration_ms = cache_duration_ms;
-        Error err = NvHttpClient::create(jwk_store->m_http_client, service_key, http_options);
+        Error err = NvHttpClient::create(jwk_store->m_http_client, service_key, http_options, kServiceJwks);
         if (err != Error::Ok) {
             return err;
         }

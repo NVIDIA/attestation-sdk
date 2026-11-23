@@ -30,6 +30,11 @@ Error validate_firmware_version_hint(const std::string &fw);
 bool is_blackwell_fsp_responder(const X509CertChain &validated_chain,
                                  const std::string &hw_model);
 
+// GB202/GB203 BROMs misreport "GB20X" in the leaf's SAN otherName; for an
+// FSP leaf, scans the rest of the chain for the real SKU to correct it.
+void correct_gb20x_hwmodel_for_fsp(const X509CertChain &validated_chain,
+                                   std::string &hw_model);
+
 // out_reason names which input was unusable, so a caller can report it rather
 // than leaving the cause in the log.
 Error build_vbios_rim_locator(const std::string &hw_model,

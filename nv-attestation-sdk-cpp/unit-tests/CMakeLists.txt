@@ -71,6 +71,7 @@ add_executable(nv-attestation-unit-tests
     gpu/spdm/spdm_req_test.cpp
     gpu/spdm/spdm_resp_test.cpp
     nv_x509_test.cpp
+    test_certificate_validation.cpp
     error_test.cpp
     gpu/evidence_test.cpp
     gpu/verifier_test.cpp
@@ -90,6 +91,7 @@ add_executable(nv-attestation-unit-tests
     verify_eat_test.cpp
     verify_ear_test.cpp
     nv_cache_test.cpp
+    observer_test.cpp
     dice_tcb_info_test.cpp
     test_dice_tcb_info_to_ect.cpp
     test_nv_ocsp.cpp
@@ -224,8 +226,10 @@ else()
     )
 endif()
 
+# .cbor is build output; a stale copy in the source tree must not land here.
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/testdata
-        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+        DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
+        PATTERN "*.cbor" EXCLUDE)
 
 # Materialise unit-test fixtures (certs, .diag->.cbor, signed CoRIM) before the
 # test binary runs. Always runs; the underlying script is idempotent. Also

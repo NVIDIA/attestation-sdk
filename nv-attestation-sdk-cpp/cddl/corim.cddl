@@ -159,6 +159,7 @@ flags-map = {
   ? is-immutable: 7 => bool,
   ? is-tcb: 8 => bool,
   ? is-confidentiality-protected: 9 => bool,
+  ? is-runtime-updatable: 10 => bool,
   ; * extension-key => any
 }
 

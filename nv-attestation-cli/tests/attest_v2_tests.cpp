@@ -29,6 +29,7 @@
 #include <nlohmann/json.hpp>
 
 #include "environment.h"
+#include "relying_party_policy_v2.h"
 #include "nvat.h"
 #include "test_utils.h"
 
@@ -40,10 +41,14 @@ namespace {
 const std::string kBlackwellCmw =
     "../../../common-test-data/cmw/blackwell_evidence.cmw.json";
 
-std::string base_verify_cmd_no_revocation_flag() {
+std::string base_verify_cmd_no_policy() {
     return g_cli_env->nvattest_bin +
            " attest-v2 --evidence-source file --evidence-file " +
            kBlackwellCmw;
+}
+
+std::string base_verify_cmd_no_revocation_flag() {
+    return base_verify_cmd_no_policy() + " --relying-party-policy builtin:cc-bounce-buffer";
 }
 
 std::string base_verify_cmd() {
@@ -100,6 +105,49 @@ std::string to_hex(const std::string &bytes) {
 }
 
 } // namespace
+TEST(ShowPolicy, PrintsExactBuiltinSources) {
+    for (const char* name : {"cc-bounce-buffer", "cc-tdisp"}) {
+        int exit_code = -1;
+        const auto source = exec_and_capture_output(
+            g_cli_env->nvattest_bin + " show-policy " + name, exit_code, false);
+        EXPECT_EQ(exit_code, 0) << name;
+        EXPECT_EQ(source, nvattest::builtin_relying_party_policy_v2(name));
+    }
+    int exit_code = -1;
+    const auto names = exec_and_capture_output(
+        g_cli_env->nvattest_bin + " show-policy", exit_code, false);
+    EXPECT_EQ(exit_code, 0);
+    EXPECT_EQ(names, "cc-bounce-buffer\ncc-tdisp\n");
+}
+
+TEST(AttestV2Cli, RubinCcMptFixtureAcceptsBuiltinPolicy) {
+    const std::string root = CLI_SDK_TESTDATA_DIR;
+    const std::string rim_dir = root + "/sample_rims/corim/";
+    const std::string vbios = rim_dir + "rubin_vbios_example.cbor";
+    const std::string driver = rim_dir + "rubin_driver_example.cbor";
+
+    char vbios_path[PATH_MAX], driver_path[PATH_MAX];
+    ASSERT_NE(::realpath(vbios.c_str(), vbios_path), nullptr);
+    ASSERT_NE(::realpath(driver.c_str(), driver_path), nullptr);
+    const std::string url = "https://rim.attestation.nvidia.com/v1/rim/";
+    int exit_code = -1;
+    const auto result = run_and_parse(
+        g_cli_env->nvattest_bin +
+        " attest-v2 --evidence-source file --evidence-file " +
+        root + "/sample_attestation_data/rubin_evidence.cmw.json" +
+        " --relying-party-policy builtin:cc-bounce-buffer --no-verify-rim-signatures"
+        " --no-verify-revocation --format json"
+        " --rim-url-rewrite " + url + "GR100_081D_9900230000 file://" + vbios_path +
+        " --rim-url-rewrite " + url + "NV_GPU_DRIVER_GR100_620.54 file://" + driver_path,
+        exit_code);
+    ASSERT_EQ(exit_code, 0) << result.dump(2);
+    ASSERT_FALSE(result.is_discarded());
+    EXPECT_EQ(result.at("submods").at("gpu_0").at("ear_nvidia_purpose"), "CC MPT");
+    EXPECT_EQ(result.at("submods").at("gpu_0").at("ear_status"), "affirming");
+    EXPECT_EQ(result.at("submods").at("gpu_0").at("ear_verifier_claims")
+                  .at("ear_nvidia_evidence").at("nonce_match"), true);
+}
+
 
 TEST(AttestV2Cli, VerifyBlackwellJsonProducesResult) {
     int exit_code = 0;
@@ -118,8 +166,8 @@ TEST(AttestV2Cli, RelyingPartyPolicyCanAcceptContraindicatedBlackwellEar) {
 
     int exit_code = 0;
     nlohmann::json response = run_and_parse(
-        base_verify_cmd() + " --relying-party-policy " + policy_path +
-        " --format json",
+        base_verify_cmd_no_policy() + " --no-verify-revocation"
+        " --relying-party-policy " + policy_path + " --format json",
         exit_code);
     std::remove(policy_path.c_str());
 
@@ -158,7 +206,7 @@ TEST(AttestV2Cli, MalformedCmwReportsError) {
     const std::string cmd =
         g_cli_env->nvattest_bin +
         " attest-v2 --evidence-source file --evidence-file " + tmp_path +
-        " --no-verify-revocation --format json";
+        " --relying-party-policy builtin:cc-bounce-buffer --no-verify-revocation --format json";
     nlohmann::json response = run_and_parse(cmd, exit_code);
     std::remove(tmp_path.c_str());
 
@@ -176,7 +224,7 @@ TEST(AttestV2Cli, MalformedCmwTextModePrintsErrorHelp) {
     const std::string cmd =
         g_cli_env->nvattest_bin +
         " attest-v2 --evidence-source file --evidence-file " + tmp_path +
-        " --no-verify-revocation --format text";
+        " --relying-party-policy builtin:cc-bounce-buffer --no-verify-revocation --format text";
     std::string output = exec_and_capture_output(cmd, exit_code);
     std::remove(tmp_path.c_str());
 
@@ -220,12 +268,32 @@ TEST(AttestV2Cli, OddRimUrlRewriteIsRejected) {
     EXPECT_NE(exit_code, 0);
 }
 
+TEST(AttestV2Cli, MissingAdditionalTrustRootFileIsRejected) {
+    int exit_code = 0;
+    const auto output = exec_and_capture_output(
+        base_verify_cmd() +
+            " --device-identity-root-ca-file /no/such/device-root.pem"
+            " --rim-root-ca-file /no/such/rim-root.pem",
+        exit_code);
+    EXPECT_NE(exit_code, 0) << output;
+    EXPECT_NE(output.find("device-identity-root-ca-file"), std::string::npos)
+        << output;
+}
+
 TEST(AttestV2Cli, FileSourceWithoutFileIsRejected) {
     int exit_code = 0;
     const std::string cmd = g_cli_env->nvattest_bin +
                             " attest-v2 --evidence-source file --format json";
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+    const auto missing_policy = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << missing_policy;
+    EXPECT_NE(missing_policy.find("required for EAR appraisal. Run 'nvattest show-policy'"),
+              std::string::npos) << missing_policy;
+
+    const auto missing_file = exec_and_capture_output(
+        cmd + " --rp builtin:cc-bounce-buffer", exit_code);
+    EXPECT_EQ(exit_code, 105) << missing_file;
+    EXPECT_NE(missing_file.find("--evidence-file must be provided"), std::string::npos)
+        << missing_file;
 }
 
 TEST(AttestV2Cli, NonexistentFileIsRejected) {
@@ -233,15 +301,17 @@ TEST(AttestV2Cli, NonexistentFileIsRejected) {
     const std::string cmd =
         g_cli_env->nvattest_bin +
         " attest-v2 --evidence-source file --evidence-file "
-        "/nonexistent/does_not_exist.cmw.json --format json";
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+        "/nonexistent/does_not_exist.cmw.json --format json"
+        " --relying-party-policy builtin:cc-bounce-buffer";
+    const auto output = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << output;
+    EXPECT_NE(output.find("/nonexistent/does_not_exist.cmw.json"), std::string::npos) << output;
 }
 
 TEST(AttestV2Cli, NonexistentRelyingPartyPolicyIsRejected) {
     int exit_code = 0;
     const std::string output = exec_and_capture_output(
-        base_verify_cmd() +
+        base_verify_cmd_no_policy() +
         " --relying-party-policy /nonexistent/does_not_exist.rego --format json",
         exit_code);
 
@@ -255,7 +325,8 @@ TEST(AttestV2Cli, NonexistentRelyingPartyPolicyIsRejected) {
 TEST(AttestV2Cli, NvmlSourceReportsErrorWithoutGpu) {
     int exit_code = 0;
     const std::string cmd = g_cli_env->nvattest_bin +
-                            " attest-v2 --evidence-source nvml --format json";
+                            " attest-v2 --evidence-source nvml --format json"
+                            " --relying-party-policy builtin:cc-bounce-buffer";
     exec_and_capture_output(cmd, exit_code);
     EXPECT_NE(exit_code, 0);
 }
@@ -263,9 +334,12 @@ TEST(AttestV2Cli, NvmlSourceReportsErrorWithoutGpu) {
 TEST(AttestV2Cli, SpdmFilesSourceWithoutTranscriptIsRejected) {
     int exit_code = 0;
     const std::string cmd = g_cli_env->nvattest_bin +
-                            " attest-v2 --evidence-source spdm-files";
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+                            " attest-v2 --evidence-source spdm-files"
+                            " --relying-party-policy builtin:cc-bounce-buffer";
+    const auto output = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << output;
+    EXPECT_NE(output.find("--spdm-transcript-file must be provided"), std::string::npos)
+        << output;
 }
 
 TEST(AttestV2Cli, SpdmFilesSourceWithoutCertChainIsRejected) {
@@ -273,33 +347,39 @@ TEST(AttestV2Cli, SpdmFilesSourceWithoutCertChainIsRejected) {
     const std::string cmd =
         g_cli_env->nvattest_bin +
         " attest-v2 --evidence-source spdm-files --spdm-transcript-file " +
-        kBlackwellCmw;
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+        kBlackwellCmw + " --relying-party-policy builtin:cc-bounce-buffer";
+    const auto output = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << output;
+    EXPECT_NE(output.find("--cert-chain-file must be provided"), std::string::npos) << output;
 }
 
 TEST(AttestV2Cli, EatFileSourceWithoutFileIsRejected) {
     int exit_code = 0;
     const std::string cmd = g_cli_env->nvattest_bin +
-                            " attest-v2 --evidence-source eat-file";
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+                            " attest-v2 --evidence-source eat-file"
+                            " --relying-party-policy builtin:cc-bounce-buffer";
+    const auto output = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << output;
+    EXPECT_NE(output.find("--eat-file must be provided"), std::string::npos) << output;
 }
 
 TEST(AttestV2Cli, EatFileSourceWithNonexistentFileIsRejected) {
     int exit_code = 0;
     const std::string cmd = g_cli_env->nvattest_bin +
                             " attest-v2 --evidence-source eat-file --eat-file "
-                            "/nonexistent/does_not_exist.eat.cbor";
-    exec_and_capture_output(cmd, exit_code);
-    EXPECT_NE(exit_code, 0);
+                            "/nonexistent/does_not_exist.eat.cbor"
+                            " --relying-party-policy builtin:cc-bounce-buffer";
+    const auto output = exec_and_capture_output(cmd, exit_code);
+    EXPECT_EQ(exit_code, 105) << output;
+    EXPECT_NE(output.find("/nonexistent/does_not_exist.eat.cbor"), std::string::npos) << output;
 }
 
 TEST(AttestV2Cli, EatFileSourceDoesNotRequireNonce) {
     int exit_code = 0;
     const std::string cmd =
         g_cli_env->nvattest_bin +
-        " attest-v2 --evidence-source eat-file --eat-file " + kBlackwellCmw;
+        " attest-v2 --evidence-source eat-file --eat-file " + kBlackwellCmw +
+        " --relying-party-policy builtin:cc-bounce-buffer";
     const std::string output = exec_and_capture_output(cmd, exit_code);
 
     EXPECT_NE(exit_code, 0);
@@ -371,8 +451,8 @@ const std::string kMatchingCorimHex =
     "cab1b6e6ffddca83d1781e25b3f040fa1f3c7608230cb5f41b1c1b99f5f748349e59d0ef8eb"
     "830c9bc79ccf77502";
 
-// The only case in the suite where attestation affirms: the fixture carries no
-// CoEV, so a backup locator supplies the CoRIM that its cert-chain ECT matches.
+// A backup locator supplies a CoRIM matching the fixture's cert-chain ECT.
+// A custom policy accepts this Blackwell appraisal without Rubin CC-purpose claims.
 TEST(AttestV2Cli, MatchingCorimAffirms) {
     const std::string tmp_path = "attest_v2_matching.corim";
     {
@@ -389,14 +469,23 @@ TEST(AttestV2Cli, MatchingCorimAffirms) {
     ASSERT_NE(::realpath(tmp_path.c_str(), resolved), nullptr);
     const std::string dir = std::string(resolved).substr(
         0, std::string(resolved).find_last_of('/') + 1);
+    const std::string policy_path = "attest_v2_blackwell_affirming.rego";
+    write_file(policy_path,
+        "package policy\n"
+        "nv_match := true {\n"
+        "    input.submods.gpu_0.ear_status == \"affirming\"\n"
+        "}\n");
 
     int exit_code = 0;
     nlohmann::json response = run_and_parse(
-        base_verify_cmd() + " --no-verify-rim-signatures --format json"
+        base_verify_cmd_no_policy() + " --no-verify-revocation"
+        " --relying-party-policy " + policy_path +
+        " --no-verify-rim-signatures --format json"
         " --backup-rim-locator https://rim.attestation.nvidia.com/v1/rim/" + tmp_path +
         " --rim-url-rewrite https://rim.attestation.nvidia.com/v1/rim/ file://" + dir,
         exit_code);
     std::remove(tmp_path.c_str());
+    std::remove(policy_path.c_str());
 
     EXPECT_EQ(exit_code, 0) << response.dump(2);
     ASSERT_TRUE(response.contains("submods")) << response.dump(2);
@@ -472,7 +561,8 @@ class AttestV2SpdmFiles : public ::testing::Test {
         return g_cli_env->nvattest_bin +
                " attest-v2 --evidence-source spdm-files"
                " --spdm-transcript-file " + transcript_path +
-               " --cert-chain-file " + cert_path + " --no-verify-revocation";
+               " --cert-chain-file " + cert_path +
+               " --relying-party-policy builtin:cc-bounce-buffer --no-verify-revocation";
     }
 };
 

@@ -568,6 +568,10 @@ struct flags_map_is_confidentiality_protected_r {
 	bool flags_map_is_confidentiality_protected;
 };
 
+struct flags_map_is_runtime_updatable_r {
+	bool flags_map_is_runtime_updatable;
+};
+
 struct flags_map {
 	struct flags_map_is_configured_r flags_map_is_configured;
 	bool flags_map_is_configured_present;
@@ -589,6 +593,8 @@ struct flags_map {
 	bool flags_map_is_tcb_present;
 	struct flags_map_is_confidentiality_protected_r flags_map_is_confidentiality_protected;
 	bool flags_map_is_confidentiality_protected_present;
+	struct flags_map_is_runtime_updatable_r flags_map_is_runtime_updatable;
+	bool flags_map_is_runtime_updatable_present;
 };
 
 struct measurement_values_map_flags_r {

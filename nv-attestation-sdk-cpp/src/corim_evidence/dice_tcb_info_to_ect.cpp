@@ -266,33 +266,70 @@ Error multi_dice_tcb_info_to_ect_list(const MultiDiceTcbInfo &multi,
 
 namespace {
 
-// A UEID carried by the certificate itself takes precedence over the
-// chain-level fallback.
-const std::vector<uint8_t> *resolve_cert_ueid(const X509CertChain &chain,
-                                              size_t index,
-                                              const std::vector<uint8_t> *fallback,
-                                              std::vector<uint8_t> &storage) {
-    if (chain.get_dice_ueid(index, storage, /*silent=*/true) == Error::Ok) {
-        return &storage;
+// Use a certificate's UEID when present. Use the chain-level fallback only
+// when the extension is absent; a malformed UEID must fail conversion.
+Error resolve_cert_ueid(const X509CertChain &chain, size_t index,
+                        const std::vector<uint8_t> *fallback,
+                        std::vector<uint8_t> &storage,
+                        const std::vector<uint8_t> *&out) {
+    Error error = chain.get_dice_ueid(index, storage, /*silent=*/true);
+    if (error == Error::Ok) {
+        out = &storage;
+        return Error::Ok;
     }
-    return fallback;
+    if (error != Error::CertFwidNotFound) {
+        return error;
+    }
+    out = fallback;
+    return Error::Ok;
 }
 
-// Appends the ECTs derived from one certificate's DiceTcbInfo. out_appended
-// stays false when the certificate carries no such extension.
+// Parse all supported DICE values before selecting MultiDiceTcbInfo, the alias,
+// or DiceTcbInfo for ECT conversion. A malformed value fails even if another
+// extension on the same certificate could otherwise supply an ECT. A legacy
+// CompositeDeviceID under the shared OID is valid but produces no ECT here.
+// out_appended stays false when no TCB value is available.
 Error cert_to_evidence_ects(const X509CertChain &chain, size_t index,
                             const std::vector<uint8_t> *ueid_fallback,
                             std::vector<Ect> &out, bool &out_appended) {
     out_appended = false;
     std::vector<uint8_t> per_cert_ueid;
-    const std::vector<uint8_t> *cert_ueid =
-        resolve_cert_ueid(chain, index, ueid_fallback, per_cert_ueid);
+    const std::vector<uint8_t> *cert_ueid = nullptr;
+    Error err = resolve_cert_ueid(chain, index, ueid_fallback,
+                                  per_cert_ueid, cert_ueid);
+    if (err != Error::Ok) {
+        return err;
+    }
 
     MultiDiceTcbInfo multi;
-    if (chain.get_multi_dice_tcb_info(index, multi, /*silent=*/true) ==
-        Error::Ok) {
+    err = chain.get_multi_dice_tcb_info(index, multi, /*silent=*/true);
+    const bool has_multi = err == Error::Ok;
+    if (!has_multi && err != Error::CertFwidNotFound) {
+        return err;
+    }
+
+    DiceTcbInfo alias;
+    err = chain.get_dice_tcb_info(index, OID_TCG_DICE_TCB_INFO_ALIAS,
+                                  alias, /*silent=*/true);
+    const bool has_alias = err == Error::Ok;
+    if (!has_alias && err != Error::CertFwidNotFound) {
+        return err;
+    }
+
+    DiceTcbInfo primary;
+    err = chain.get_dice_tcb_info(index, OID_TCG_DICE_TCB_INFO,
+                                  primary, /*silent=*/true);
+    const bool has_primary = err == Error::Ok;
+    if (!has_primary && err != Error::CertFwidNotFound) {
+        CompositeDeviceId composite;
+        if (chain.get_composite_device_id(index, composite) != Error::Ok) {
+            return err;
+        }
+    }
+
+    if (has_multi) {
         std::vector<Ect> ects;
-        Error err = multi_dice_tcb_info_to_ect_list(multi, cert_ueid, ects);
+        err = multi_dice_tcb_info_to_ect_list(multi, cert_ueid, ects);
         if (err != Error::Ok) {
             return err;
         }
@@ -302,16 +339,10 @@ Error cert_to_evidence_ects(const X509CertChain &chain, size_t index,
         out_appended = true;
         return Error::Ok;
     }
-
-    for (const std::string *oid :
-         {&OID_TCG_DICE_TCB_INFO_ALIAS, &OID_TCG_DICE_TCB_INFO}) {
-        DiceTcbInfo dti;
-        if (chain.get_dice_tcb_info(index, *oid, dti, /*silent=*/true) !=
-            Error::Ok) {
-            continue;
-        }
+    const DiceTcbInfo* dti = has_alias ? &alias : (has_primary ? &primary : nullptr);
+    if (dti != nullptr) {
         Ect ect;
-        Error err = dice_tcb_info_to_ect(dti, cert_ueid, ect);
+        err = dice_tcb_info_to_ect(*dti, cert_ueid, ect);
         if (err != Error::Ok) {
             return err;
         }

@@ -133,8 +133,11 @@ class CompositeDeviceId {
 public:
     CompositeDeviceId() : m_version(0) {}
 
-    static Error parse_from_der(const std::vector<uint8_t>& der, CompositeDeviceId& out);
-    static Error parse_from_x509_extension(const void* x509_cert, CompositeDeviceId& out);
+    // Parse the full DER value and require the expected wrapper and body shape.
+    static Error parse_from_der(const std::vector<uint8_t>& der,
+                                CompositeDeviceId& out);
+    static Error parse_from_x509_extension(const void* x509_cert,
+                                           CompositeDeviceId& out);
 
     int64_t version() const { return m_version; }
     const std::vector<uint8_t>& subject_public_key_info() const { return m_subject_public_key_info; }
@@ -193,12 +196,14 @@ public:
     DiceTcbInfo(DiceTcbInfo&&) = default;
     DiceTcbInfo& operator=(DiceTcbInfo&&) = default;
 
-    // Factory: parse from raw DER bytes
-    static Error parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& out, bool silent = false);
+    // Parse the full DER value, rejecting trailing bytes, duplicate or unknown
+    // fields, and fields outside the context-specific DICE tag set.
+    static Error parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& out,
+                                bool silent = false);
 
     // Factory: parse from X.509 certificate extension by OID.
     // x509_cert is `const X509*` but declared as `const void*` to avoid OpenSSL includes.
-    // When `silent`, "extension absent" demotes to DEBUG so chain probes don't spam ERROR.
+    // When `silent`, "extension absent" uses a quieter log level.
     static Error parse_from_x509_extension(const void* x509_cert, const std::string& oid, DiceTcbInfo& out,
                                            bool silent = false);
 
@@ -277,8 +282,10 @@ class MultiDiceTcbInfo {
 public:
     MultiDiceTcbInfo() = default;
 
+    // Parse the complete outer DER value and validate every entry.
     static Error parse_from_der(const std::vector<uint8_t>& der, MultiDiceTcbInfo& out);
-    static Error parse_from_x509_extension(const void* x509_cert, MultiDiceTcbInfo& out, bool silent = false);
+    static Error parse_from_x509_extension(const void* x509_cert, MultiDiceTcbInfo& out,
+                                           bool silent = false);
 
     const std::vector<DiceTcbInfo>& entries() const { return m_entries; }
     void add_entry(const DiceTcbInfo& entry) { m_entries.push_back(entry); }

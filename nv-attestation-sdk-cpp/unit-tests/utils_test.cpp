@@ -15,12 +15,15 @@
  * limitations under the License.
  */
 
+#include <thread>
+
 //third party
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
 //this sdk
 #include "nv_attestation/log.h"
+#include "nv_attestation/request_id.h"
 #include "nv_attestation/utils.h"
 #include "nvat.h"
 
@@ -247,6 +250,20 @@ TEST(HashAlgorithmTest, NiAlgorithmIds) {
     EXPECT_EQ(to_ni_algorithm_id(HashAlgorithm::Sha512), 8);
 }
 
+TEST(HashAlgorithmTest, NiNameLookup) {
+    const char* name = nullptr;
+    ASSERT_EQ(ni_algorithm_name_from_id(1, name), Error::Ok);
+    EXPECT_STREQ(name, "sha-256");
+    ASSERT_EQ(ni_algorithm_name_from_id(12, name), Error::Ok);
+    EXPECT_STREQ(name, "sha3-512");
+    for (int32_t id : {0, 13, -43}) {
+        SCOPED_TRACE(id);
+        name = nullptr;
+        EXPECT_EQ(ni_algorithm_name_from_id(id, name), Error::BadArgument);
+        EXPECT_EQ(name, nullptr);
+    }
+}
+
 TEST(HashAlgorithmTest, EvpDigests) {
     const EVP_MD* digest = nullptr;
 
@@ -292,4 +309,31 @@ TEST(HashAlgorithmTest, FromDigestSizeRejectsUnknownLengths) {
               Error::BadArgument);
     // Left untouched on failure.
     EXPECT_EQ(alg, HashAlgorithm::Sha384);
+}
+
+TEST(RequestIdTest, ValidatesHeaderSafeIds) {
+    EXPECT_TRUE(is_valid_request_id("3f2b9c1e-7a4d-4e8a-9b1c-2d3e4f5a6b7c"));
+    EXPECT_TRUE(is_valid_request_id(std::string(MAX_REQUEST_ID_LEN, 'a')));
+    EXPECT_FALSE(is_valid_request_id(""));
+    EXPECT_FALSE(is_valid_request_id(std::string(MAX_REQUEST_ID_LEN + 1, 'a')));
+    EXPECT_FALSE(is_valid_request_id("a b"));
+    EXPECT_FALSE(is_valid_request_id("a\r\nb"));
+    EXPECT_FALSE(is_valid_request_id("caf\xc3\xa9"));
+}
+
+TEST(RequestIdTest, ScopeSetsAndClears) {
+    EXPECT_TRUE(current_request_id().empty());
+    {
+        RequestIdScope scope("req-1");
+        EXPECT_EQ(current_request_id(), "req-1");
+    }
+    EXPECT_TRUE(current_request_id().empty());
+}
+
+TEST(RequestIdTest, IsPerThread) {
+    RequestIdScope scope("main-thread");
+    std::string seen = "unset";
+    std::thread([&seen] { seen = current_request_id(); }).join();
+    EXPECT_TRUE(seen.empty());
+    EXPECT_EQ(current_request_id(), "main-thread");
 }

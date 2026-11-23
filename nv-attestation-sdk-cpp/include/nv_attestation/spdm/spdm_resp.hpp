@@ -35,12 +35,15 @@
 
 namespace nvattestation {
 
+// TODO: Rename to SpdmMeasurementResponseMessage to remove the SPDM
+// 1.1-specific suffix; this parser also supports SPDM 1.2.
 /**
  * @brief Represents an SPDM GET_MEASUREMENTS response message.
  *
  * This class provides functionality to parse a raw byte stream representing
  * an SPDM MEASUREMENTS response and provides access to its various fields.
- * It follows the SPDM 1.1 specification for the MEASUREMENTS response format.
+ * It follows the SPDM 1.1 specification for the MEASUREMENTS response format,
+ * which SPDM 1.2 leaves unchanged apart from the version byte.
  */
 class SpdmMeasurementResponseMessage11 {
 public:

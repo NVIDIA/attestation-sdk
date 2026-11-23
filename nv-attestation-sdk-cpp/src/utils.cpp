@@ -31,6 +31,26 @@ namespace {
 constexpr int32_t kNiHashSha256 = 1;
 constexpr int32_t kNiHashSha384 = 7;
 constexpr int32_t kNiHashSha512 = 8;
+// Identifier recognition is independent of supported hash computation.
+// IANA Named Information Hash Algorithm Registry:
+// https://www.iana.org/assignments/named-information#hash-alg
+constexpr struct {
+    const char* name;
+    int32_t id;
+} kNiAlgorithms[] = {
+    {"sha-256",     1},
+    {"sha-256-128", 2},
+    {"sha-256-120", 3},
+    {"sha-256-96",  4},
+    {"sha-256-64",  5},
+    {"sha-256-32",  6},
+    {"sha-384",     7},
+    {"sha-512",     8},
+    {"sha3-224",    9},
+    {"sha3-256",   10},
+    {"sha3-384",   11},
+    {"sha3-512",   12},
+};
 // Digest lengths in bytes.
 constexpr std::size_t kSha256DigestBytes = 32;
 constexpr std::size_t kSha384DigestBytes = 48;
@@ -44,6 +64,26 @@ int32_t to_ni_algorithm_id(HashAlgorithm alg) {
         case HashAlgorithm::Sha512: return kNiHashSha512;
     }
     return kNiHashSha256;
+}
+
+Error ni_algorithm_id_from_name(const std::string& name, int32_t& out_id) {
+    for (const auto& algorithm : kNiAlgorithms) {
+        if (name == algorithm.name) {
+            out_id = algorithm.id;
+            return Error::Ok;
+        }
+    }
+    return Error::BadArgument;
+}
+
+Error ni_algorithm_name_from_id(int32_t id, const char*& out_name) {
+    for (const auto& algorithm : kNiAlgorithms) {
+        if (id == algorithm.id) {
+            out_name = algorithm.name;
+            return Error::Ok;
+        }
+    }
+    return Error::BadArgument;
 }
 
 Error hash_algorithm_from_ni_id(int32_t ni_id, HashAlgorithm& out_alg) {

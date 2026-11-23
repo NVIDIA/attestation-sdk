@@ -20,7 +20,9 @@
 use crate::error::{NvatError, Result};
 use crate::NVAT_RC_BAD_ARGUMENT;
 
-use std::ffi::CString;
+use std::any::Any;
+use std::ffi::{CStr, CString};
+use std::os::raw::c_char;
 
 /// Convert to a C string, mapping interior NULs to `NVAT_RC_BAD_ARGUMENT`.
 pub(crate) fn required_cstring(value: &str) -> Result<CString> {
@@ -30,4 +32,24 @@ pub(crate) fn required_cstring(value: &str) -> Result<CString> {
 /// Convert an optional argument, where `None` becomes a NULL pointer.
 pub(crate) fn optional_cstring(value: Option<&str>) -> Result<Option<CString>> {
     value.map(required_cstring).transpose()
+}
+
+/// Convert a C string, where NULL or invalid UTF-8 becomes `None`.
+///
+/// # Safety
+/// `ptr` must be null or a valid null-terminated string that outlives `'a`.
+pub(crate) unsafe fn optional_str<'a>(ptr: *const c_char) -> Option<&'a str> {
+    if ptr.is_null() {
+        return None;
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_str().ok()
+}
+
+/// Message carried by a caught panic payload.
+pub(crate) fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
 }

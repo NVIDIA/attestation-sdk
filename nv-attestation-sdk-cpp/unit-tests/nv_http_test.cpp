@@ -20,6 +20,7 @@
 
 #include "nv_attestation/nv_http.h"
 #include "nv_attestation/log.h"
+#include "nv_attestation/request_id.h"
 
 #include "gtest/gtest.h"
 
@@ -270,6 +271,35 @@ TEST_F(NvHttpClientTlsTest, RequestIdHeaderIsSentAndUnique) {
     ASSERT_EQ(client.do_request_as_json_struct(request, status, second_response), Error::Ok);
     std::string second_id = second_response["headers"]["x-request-id"];
     EXPECT_NE(first_id, second_id) << "Each request should get its own x-request-id";
+}
+
+TEST_F(NvHttpClientTlsTest, RequestIdHeaderUsesCallerRequestId) {
+    HttpOptions options;
+    options.set_tls_ca_cert(cert_path("tls_ca_cert.pem"));
+    options.set_max_retry_count(0);
+    options.set_connection_timeout_ms(5000);
+    options.set_request_timeout_ms(5000);
+
+    NvHttpClient client;
+    ASSERT_EQ(NvHttpClient::create(client, "", options), Error::Ok);
+
+    NvRequest request(server_url() + "echo-headers", NvHttpMethod::HTTP_METHOD_GET);
+    long status = 0;
+    {
+        RequestIdScope scope("caller-req-1");
+        // Every request in the scope carries the caller's id.
+        for (int i = 0; i < 2; ++i) {
+            nlohmann::json response;
+            ASSERT_EQ(client.do_request_as_json_struct(request, status, response), Error::Ok);
+            ASSERT_EQ(status, NvHttpStatus::HTTP_STATUS_OK);
+            EXPECT_EQ(response["headers"]["x-request-id"], "caller-req-1");
+        }
+    }
+
+    nlohmann::json response;
+    ASSERT_EQ(client.do_request_as_json_struct(request, status, response), Error::Ok);
+    EXPECT_NE(response["headers"]["x-request-id"], "caller-req-1")
+        << "Outside the scope each request generates its own id";
 }
 
 // A non-empty service key makes NvHttpClient add an "Authorization: Bearer"

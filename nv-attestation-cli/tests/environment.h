@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <gtest/gtest.h>
 #include <cstdlib>
 #include <iostream>
@@ -62,6 +64,8 @@ class Environment : public ::testing::Environment {
         std::string nvattest_bin = "";
         std::string test_label = "";
         std::string git_repo_root = "";
+        std::string expected_gpu_arch = "";
+        std::string expected_mode = "";
 
         ~Environment() override = default;
         
@@ -95,6 +99,36 @@ class Environment : public ::testing::Environment {
                     test_device_switch = true;
                 }
             }
+            expected_gpu_arch = get_env_or_default("TEST_EXPECTED_GPU_ARCH", "");
+            expected_mode = get_env_or_default("TEST_EXPECTED_MODE", "");
+            const auto to_ascii_lower = [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            };
+            std::transform(expected_gpu_arch.begin(), expected_gpu_arch.end(),
+                           expected_gpu_arch.begin(), to_ascii_lower);
+            std::transform(expected_mode.begin(), expected_mode.end(),
+                           expected_mode.begin(), to_ascii_lower);
+
+            const bool require_gpu_arch = test_mode == "integration" && test_device_gpu &&
+                                          test_label == "requires-working-driver";
+            const bool require_mode = require_gpu_arch || expects_gpu_v2_attestation();
+
+            if (require_gpu_arch) {
+                if (expected_gpu_arch != "hopper" && expected_gpu_arch != "blackwell" &&
+                    expected_gpu_arch != "rubin") {
+                    std::cerr << "TEST_EXPECTED_GPU_ARCH must be hopper, blackwell, or rubin (got '"
+                              << expected_gpu_arch << "')" << std::endl;
+                    exit(1);
+                }
+            }
+            if (require_mode) {
+                if (expected_mode != "spt" && expected_mode != "mpt" &&
+                    expected_mode != "tdisp") {
+                    std::cerr << "TEST_EXPECTED_MODE must be spt, mpt, or tdisp (got '"
+                              << expected_mode << "')" << std::endl;
+                    exit(1);
+                }
+            }
 
             service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
             ASSERT_FALSE(service_key.empty()) << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable";
@@ -109,6 +143,12 @@ class Environment : public ::testing::Environment {
             }
         }
 
+        bool expects_gpu_v2_attestation() const {
+            return test_mode == "integration" &&
+                   (test_label == "rubin-nvml" ||
+                    (test_label == "requires-working-driver" && test_device_gpu &&
+                     expected_gpu_arch == "rubin"));
+        }
         void TearDown() override {
             // no teardown required
         }

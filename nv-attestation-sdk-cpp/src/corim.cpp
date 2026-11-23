@@ -141,11 +141,6 @@ bool VersionedUriMatcher::matches(const ProfileValue& got) const {
 // UnsupportedCorimFeatureException is declared in internal/corim_decoders.h
 // (shared with the CoEV parser).
 
-// IANA Named Information hash algorithm IDs (not COSE algorithm IDs)
-static constexpr int32_t NI_HASH_SHA256 = 1;
-static constexpr int32_t NI_HASH_SHA384 = 7;
-static constexpr int32_t NI_HASH_SHA512 = 8;
-
 // Handles both COSE algorithm IDs (negative, from COSE_Sign1 digests) and
 // IANA Named Information hash algorithm IDs (positive, from CoRIM measurement digests).
 static const char* get_hash_algorithm_name(int32_t alg) {
@@ -153,10 +148,11 @@ static const char* get_hash_algorithm_name(int32_t alg) {
         case cose::HASH_SHA256: return "sha-256";  // COSE: -16
         case cose::HASH_SHA384: return "sha-384";  // COSE: -43
         case cose::HASH_SHA512: return "sha-512";  // COSE: -44
-        case NI_HASH_SHA256: return "sha-256";      // NI: 1
-        case NI_HASH_SHA384: return "sha-384";      // NI: 7
-        case NI_HASH_SHA512: return "sha-512";      // NI: 8
-        default: return "unknown";
+        default: {
+            const char* name = nullptr;
+            const Error err = ni_algorithm_name_from_id(alg, name);
+            return err == Error::Ok ? name : "unknown";
+        }
     }
 }
 
@@ -256,7 +252,9 @@ Error parse_signed_corim(
     const CorimParseOptions& parse_options
 ) {
     CoseSign1Result cose_result;
-    Error error = verify_cose_sign1(corim_bytes, options, ocsp_client, cose_result);
+    CoseSign1VerifyOptions corim_options = options;
+    corim_options.require_corim_signing_eku = true;
+    Error error = verify_cose_sign1(corim_bytes, corim_options, ocsp_client, cose_result);
     // Propagate cert-chain claims even on failure: verify_cose_sign1 may
     // have populated them before rejecting the chain (e.g. for revocation),
     // and the caller needs that diagnostic data regardless of outcome.
@@ -325,6 +323,15 @@ std::vector<uint8_t> ByteString::toVector() const {
     return m_data;
 }
 
+Digest::Digest(std::string algorithm, ByteString value)
+    : m_value(std::move(value)) {
+    // Normalize registered names so equivalent wire encodings compare equally.
+    if (ni_algorithm_id_from_name(algorithm, m_alg_int) != Error::Ok) {
+        m_alg_kind = AlgKind::kString;
+        m_alg_str = std::move(algorithm);
+    }
+}
+
 bool Digest::getAlgorithm(int32_t& out) const {
     if (m_alg_kind != AlgKind::kInt) {
         return false;
@@ -391,6 +398,10 @@ FlagsMap make_flags_map(const flags_map* ptr) {
         out.setConfidentialityProtected(
             ptr->flags_map_is_confidentiality_protected
                 .flags_map_is_confidentiality_protected);
+    }
+    if (ptr->flags_map_is_runtime_updatable_present) {
+        out.setRuntimeUpdatable(
+            ptr->flags_map_is_runtime_updatable.flags_map_is_runtime_updatable);
     }
     return out;
 }
@@ -1466,6 +1477,7 @@ void to_json(nlohmann::json& json_out, const FlagsMap& flags) {
     if (const bool* val = flags.getImmutable())               { json_out["immutable"] = *val; }
     if (const bool* val = flags.getTcb())                     { json_out["tcb"] = *val; }
     if (const bool* val = flags.getConfidentialityProtected()){ json_out["confidentiality_protected"] = *val; }
+    if (const bool* val = flags.getRuntimeUpdatable())       { json_out["runtime_updatable"] = *val; }
 }
 
 void to_json(nlohmann::json& json_out, const Version& ver) {

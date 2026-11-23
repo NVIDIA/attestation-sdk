@@ -25,6 +25,7 @@
 
 #include "nv_attestation/log.h"
 #include "nv_attestation/nv_cache.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/rim.h"
 #include "nv_attestation/utils.h"
 
@@ -41,6 +42,19 @@ constexpr const char *kFilePrefix = "file://";
 constexpr const char *kJsonContentType = "application/json";
 constexpr const char *kCorimCborContentType = "application/rim+cbor";
 constexpr const char *kCorimCoseContentType = "application/rim+cose";
+// Temporary Rubin GSP locator fix until the driver emits the canonical URL.
+constexpr char kRubinLegacyVbiosRimLocatorPrefix[] =
+    "https://rim.attestation.nvidia.com/v1/rim/NV_GPU_VBIOS_GR";
+constexpr char kRubinFixedVbiosRimLocatorPrefix[] =
+    "https://rim.attestation.nvidia.com/v1/rim/GR";
+
+void apply_rubin_vbios_rim_locator_fix(std::string &locator) {
+    if (starts_with(locator, kRubinLegacyVbiosRimLocatorPrefix)) {
+        locator.replace(0, sizeof(kRubinLegacyVbiosRimLocatorPrefix) - 1,
+                        kRubinFixedVbiosRimLocatorPrefix);
+    }
+}
+
 
 // The RIM service wraps CoRIM (and optional CoEV) as base64 in a JSON
 // envelope; other sources serve raw CoRIM bytes, same as a file:// fixture.
@@ -104,7 +118,7 @@ CorimStore::CorimStore(HttpOptions http_options, std::string service_key)
     : m_http_options(std::move(http_options))
 {
     m_allowed_prefixes.emplace_back(kDefaultAllowedRawUrlPrefix);
-    NvHttpClient::create(m_http_client, std::move(service_key), m_http_options);
+    NvHttpClient::create(m_http_client, std::move(service_key), m_http_options, kServiceRim);
 }
 
 Error CorimStore::add_allowed_url_prefix(std::string prefix) {
@@ -123,6 +137,20 @@ void CorimStore::enable_in_memory_cache(uint64_t max_size_bytes, time_t ttl_seco
 
 void CorimStore::set_cache(std::shared_ptr<INvCache> cache) {
     m_cache = std::move(cache);
+}
+
+void CorimStore::enable_negative_cache(uint64_t max_size_bytes,
+                                       time_t ttl_seconds) {
+    if (ttl_seconds <= 0) {
+        set_negative_cache(nullptr);
+        return;
+    }
+    set_negative_cache(std::make_shared<NvCache>(
+        std::make_shared<NvCacheOptions>(max_size_bytes, ttl_seconds)));
+}
+
+void CorimStore::set_negative_cache(std::shared_ptr<INvCache> cache) {
+    m_negative_cache = std::move(cache);
 }
 
 Error CorimStore::add_url_rewrite(std::string pattern,
@@ -161,6 +189,7 @@ Error CorimStore::resolve_and_authorize(const std::string &url,
                   "raw URL=" << url);
         return Error::BadArgument;
     }
+    apply_rubin_vbios_rim_locator_fix(out_effective);
     for (const auto &rule : m_rewrites) {
         if (starts_with(out_effective, rule.first)) {
             out_effective.replace(0, rule.first.size(), rule.second);
@@ -196,6 +225,7 @@ Error CorimStore::fetch_impl(const std::string &url,
                               bool &out_coev_present,
                               std::string &out_coev_sha256,
                               std::string *out_effective_url) const {
+    out_corim_bytes.clear();
     out_coev_present = false;
     out_coev_bytes.clear();
     out_coev_sha256.clear();
@@ -221,10 +251,26 @@ Error CorimStore::fetch_impl(const std::string &url,
                 out_coev_bytes = cached_entry->coev_bytes;
                 out_coev_present = cached_entry->coev_present;
                 out_coev_sha256 = cached_entry->coev_sha256;
+                notify_cache_lookup(kServiceRim, true);
                 return Error::Ok;
             }
             LOG_ERROR("CorimStore: cache hit returned null payload for " << effective);
         }
+    }
+
+    if (m_negative_cache) {
+        std::shared_ptr<void> cached;
+        if (m_negative_cache->get(effective, cached) == Error::Ok && cached) {
+            LOG_DEBUG("RIM fetch: cached HTTP 404 for effective URL "
+                      << effective);
+            notify_cache_lookup(kServiceRim, true);
+            return Error::RimNotFound;
+        }
+    }
+
+    // A cached 404 counts as a hit, so a miss means neither cache had it.
+    if (m_cache || m_negative_cache) {
+        notify_cache_lookup(kServiceRim, false);
     }
 
     Error err = Error::Ok;
@@ -248,6 +294,11 @@ Error CorimStore::fetch_impl(const std::string &url,
                       << " (raw URL=" << url << ")");
             if (status == HTTP_STATUS_NOT_FOUND) {
                 err = Error::RimNotFound;
+                if (m_negative_cache) {
+                    m_negative_cache->put(
+                        effective, std::make_shared<bool>(true),
+                        effective.size() + sizeof(bool));
+                }
             } else if (status == HTTP_STATUS_FORBIDDEN ||
                        status == HTTP_STATUS_UNAUTHORIZED) {
                 err = Error::RimForbidden;

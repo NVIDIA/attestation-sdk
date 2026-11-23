@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <curl/urlapi.h>
 #include <iostream>
@@ -59,6 +60,9 @@
 //todo: use specific error codes here instead of Error::InternalError
 
 namespace nvattestation {
+
+const std::string OID_TCG_DICE_KP_ATTEST_LOC = "2.23.133.5.4.100.9";
+const std::string OID_NVIDIA_CORIM_SIGNING = "1.3.6.1.4.1.5703.1200.1.1.1";
 
 constexpr int MILLIS_PER_SECOND = 1000;
 
@@ -342,7 +346,252 @@ Error X509CertChain::verify_signature_pkcs11(
     return error;
 }
 
-Error X509CertChain::verify(bool allow_partial_chain) const {
+// TODO(P1): Select the signature verifier from the COSE algorithm or negotiated
+// SPDM algorithms instead of hard-coding P-384 in both call paths.
+Error X509CertChain::verify_signature_ecdsa_p384(
+    const std::vector<uint8_t>& data,
+    const std::vector<uint8_t>& signature) {
+    constexpr std::size_t kP384SignatureBytes = 96;
+    if (signature.size() != kP384SignatureBytes) {
+        LOG_ERROR("ECDSA P-384 signature must contain 96 bytes of raw R||S");
+        return Error::InternalError;
+    }
+
+    nv_unique_ptr<EVP_PKEY> key;
+    Error error = get_leaf_public_key(key);
+    if (error != Error::Ok) {
+        return error;
+    }
+    if (EVP_PKEY_is_a(key.get(), "EC") != 1) {
+        LOG_ERROR("ECDSA P-384 signature requires an EC signing key");
+        return Error::InternalError;
+    }
+
+    constexpr std::size_t kGroupNameBufferBytes = 80;
+    std::array<char, kGroupNameBufferBytes> group_name{};
+    if (EVP_PKEY_get_group_name(key.get(), group_name.data(), group_name.size(),
+                                nullptr) != 1) {
+        LOG_ERROR("Could not read the EC signing key's curve: " << get_openssl_error());
+        return Error::InternalError;
+    }
+    if (OBJ_txt2nid(group_name.data()) != NID_secp384r1 &&
+        EC_curve_nist2nid(group_name.data()) != NID_secp384r1) {
+        LOG_ERROR("ECDSA P-384 signature requires curve secp384r1; got "
+                  << group_name.data());
+        return Error::InternalError;
+    }
+
+    return verify_signature_pkcs11(data, signature, EVP_sha384());
+}
+
+namespace {
+constexpr size_t kOidTextBufferSize = 64;
+
+struct DiceExtensionHandler {
+    const std::string& oid;
+    Error (*validate)(const X509*, const std::string&);
+};
+
+// OpenSSL identifies these OIDs but has no decoder for their DICE values.
+const std::array<DiceExtensionHandler, 4>& dice_extension_handlers() {
+    static const std::array<DiceExtensionHandler, 4> handlers = {{
+        {OID_TCG_DICE_TCB_INFO_ALIAS, [](const X509* cert, const std::string& oid) {
+            DiceTcbInfo dti;
+            return DiceTcbInfo::parse_from_x509_extension(cert, oid, dti, true);
+        }},
+        {OID_TCG_DICE_TCB_INFO, [](const X509* cert, const std::string& oid) {
+            DiceTcbInfo dti;
+            Error error = DiceTcbInfo::parse_from_x509_extension(cert, oid, dti, true);
+            if (error != Error::Ok) {
+                CompositeDeviceId composite;
+                error = CompositeDeviceId::parse_from_x509_extension(cert, composite);
+            }
+            return error;
+        }},
+        {OID_TCG_DICE_MULTI_TCB_INFO, [](const X509* cert, const std::string&) {
+            MultiDiceTcbInfo multi;
+            return MultiDiceTcbInfo::parse_from_x509_extension(cert, multi, true);
+        }},
+        {OID_TCG_DICE_UEID, [](const X509* cert, const std::string&) {
+            std::vector<uint8_t> ueid;
+            return parse_dice_ueid_from_x509_extension(cert, ueid, true);
+        }},
+    }};
+    return handlers;
+}
+
+const DiceExtensionHandler* find_dice_extension_handler(
+    const ASN1_OBJECT* object, char (&oid)[kOidTextBufferSize]) {
+    const int length = OBJ_obj2txt(oid, sizeof(oid), object, 1);
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(oid)) {
+        return nullptr;
+    }
+    for (const auto& handler : dice_extension_handlers()) {
+        if (handler.oid == oid) {
+            return &handler;
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * The CoRIM device AK path registers this callback. Waive only OpenSSL's
+ * X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION when every unsupported critical OID
+ * on the current cert is a DICE type we parse below. Leave other errors
+ * unchanged. Parse the extension values after OpenSSL validates the chain.
+ */
+int accept_known_critical_dice_extension(int ok, X509_STORE_CTX* ctx) {
+    if (ok != 0 || X509_STORE_CTX_get_error(ctx) !=
+                       X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION) {
+        return ok;
+    }
+    X509* cert = X509_STORE_CTX_get_current_cert(ctx);
+    if (cert == nullptr) {
+        return 0;
+    }
+    bool found = false;
+    for (int i = 0; i < X509_get_ext_count(cert); ++i) {
+        X509_EXTENSION* extension = X509_get_ext(cert, i);
+        if (extension == nullptr || X509_EXTENSION_get_critical(extension) == 0 ||
+            X509_supported_extension(extension) == 1) {
+            continue;
+        }
+        char oid[kOidTextBufferSize] = {};
+        if (find_dice_extension_handler(X509_EXTENSION_get_object(extension), oid) == nullptr) {
+            return 0;
+        }
+        found = true;
+    }
+    return found ? 1 : 0;
+}
+
+/**
+ * Parse each recognized critical DICE value on the validated path, including
+ * intermediates and the trust anchor. The shared TCB OID can hold DiceTcbInfo
+ * or legacy CompositeDeviceID; reject it if neither parser accepts it.
+ */
+Error validate_critical_dice_extensions(STACK_OF(X509)* path) {
+    if (path == nullptr) {
+        return Error::InternalError;
+    }
+    for (int depth = 0; depth < sk_X509_num(path); ++depth) {
+        X509* cert = sk_X509_value(path, depth);
+        for (int i = 0; i < X509_get_ext_count(cert); ++i) {
+            X509_EXTENSION* extension = X509_get_ext(cert, i);
+            if (extension == nullptr || X509_EXTENSION_get_critical(extension) == 0 ||
+                X509_supported_extension(extension) == 1) {
+                continue;
+            }
+            char oid[kOidTextBufferSize] = {};
+            const DiceExtensionHandler* handler = find_dice_extension_handler(
+                X509_EXTENSION_get_object(extension), oid);
+            if (handler == nullptr) {
+                return Error::CertChainVerificationFailure;
+            }
+            const Error error = handler->validate(cert, handler->oid);
+            if (error != Error::Ok) {
+                LOG_ERROR("Critical DICE extension " << oid
+                          << " failed parsing at validated path depth " << depth);
+                return Error::CertChainVerificationFailure;
+            }
+        }
+    }
+    return Error::Ok;
+}
+
+// Check usage by position in the validated path. The leaf at depth 0 needs
+// digitalSignature and must not assert cA in basicConstraints. Each intermediate
+// at depths 1..N-2 needs basicConstraints with cA=TRUE; the final trusted
+// certificate at depth N-1 is excluded. X509_verify_cert() checks any
+// pathLenConstraint before this function runs.
+Error check_certificate_usage(STACK_OF(X509)* path) {
+    if (path == nullptr || sk_X509_num(path) == 0) {
+        LOG_ERROR("Validated certificate path is empty");
+        return Error::InternalError;
+    }
+    X509* leaf = sk_X509_value(path, 0);
+    if (X509_get_ext_by_NID(leaf, NID_key_usage, -1) < 0) {
+        LOG_ERROR("End-entity certificate is missing keyUsage");
+        return Error::CertChainVerificationFailure;
+    }
+    std::unique_ptr<ASN1_BIT_STRING, decltype(&ASN1_BIT_STRING_free)> usage(
+        static_cast<ASN1_BIT_STRING*>(
+            X509_get_ext_d2i(leaf, NID_key_usage, nullptr, nullptr)),
+        ASN1_BIT_STRING_free);
+    if (!usage || ASN1_BIT_STRING_get_bit(usage.get(), 0) != 1) {
+        LOG_ERROR("End-entity certificate keyUsage lacks digitalSignature");
+        return Error::CertChainVerificationFailure;
+    }
+    if (X509_get_ext_by_NID(leaf, NID_basic_constraints, -1) >= 0) {
+        std::unique_ptr<BASIC_CONSTRAINTS, decltype(&BASIC_CONSTRAINTS_free)> constraints(
+            static_cast<BASIC_CONSTRAINTS*>(
+                X509_get_ext_d2i(leaf, NID_basic_constraints, nullptr, nullptr)),
+            BASIC_CONSTRAINTS_free);
+        if (!constraints || constraints->ca != 0) {
+            LOG_ERROR("End-entity certificate basicConstraints asserts cA");
+            return Error::CertChainVerificationFailure;
+        }
+    }
+    for (int depth = 1; depth + 1 < sk_X509_num(path); ++depth) {
+        X509* intermediate = sk_X509_value(path, depth);
+        std::unique_ptr<BASIC_CONSTRAINTS, decltype(&BASIC_CONSTRAINTS_free)> constraints(
+            static_cast<BASIC_CONSTRAINTS*>(
+                X509_get_ext_d2i(intermediate, NID_basic_constraints, nullptr, nullptr)),
+            BASIC_CONSTRAINTS_free);
+        if (!constraints || constraints->ca == 0) {
+            LOG_ERROR("Intermediate certificate at validated path depth " << depth
+                      << " lacks basicConstraints cA=TRUE");
+            return Error::CertChainVerificationFailure;
+        }
+    }
+    return Error::Ok;
+}
+
+// Check every certificate in the validated path, including the trust anchor.
+// RSA/RSA-PSS keys need minimums.rsa_bits (default 3072 bits); EC keys need
+// minimums.ec_bits (default 384 bits).
+Error check_certificate_key_sizes(STACK_OF(X509)* path,
+                                  const CertificateKeySizeMinimums& minimums) {
+    if (path == nullptr || sk_X509_num(path) == 0) {
+        LOG_ERROR("Validated certificate path is empty");
+        return Error::InternalError;
+    }
+    for (int depth = 0; depth < sk_X509_num(path); ++depth) {
+        X509* cert = sk_X509_value(path, depth);
+        nv_unique_ptr<EVP_PKEY> key(X509_get_pubkey(cert));
+        if (!key) {
+            LOG_ERROR("Could not read public key at validated path depth " << depth);
+            return Error::CertChainVerificationFailure;
+        }
+        int minimum_bits = 0;
+        const char* key_type = nullptr;
+        if (EVP_PKEY_is_a(key.get(), "RSA") == 1 ||
+            EVP_PKEY_is_a(key.get(), "RSA-PSS") == 1) {
+            minimum_bits = minimums.rsa_bits;
+            key_type = "RSA";
+        } else if (EVP_PKEY_is_a(key.get(), "EC") == 1) {
+            minimum_bits = minimums.ec_bits;
+            key_type = "EC";
+        } else {
+            continue;
+        }
+        const int key_bits = EVP_PKEY_get_bits(key.get());
+        if (key_bits < minimum_bits) {
+            LOG_ERROR("Certificate at validated path depth " << depth << " ("
+                      << get_cert_subject_issuer_str(cert) << "): " << key_type
+                      << " public key has " << key_bits
+                      << " bits; configured minimum is " << minimum_bits);
+            return Error::CertChainVerificationFailure;
+        }
+    }
+    return Error::Ok;
+}
+} // namespace
+
+Error X509CertChain::verify(bool allow_partial_chain,
+                            const CertificateKeySizeMinimums* key_size_minimums,
+                            bool enforce_certificate_usage,
+                            bool allow_critical_dice_extensions) const {
     // ref: https://docs.openssl.org/3.0/man1/openssl-verification-options/#certification-path-building
     // verification involves setting up the untrusted certs, the trust anchor, and then calling X509_verify_cert
     // with the target cert to be verified. the function will build a chain of certs from the target cert
@@ -352,6 +601,11 @@ Error X509CertChain::verify(bool allow_partial_chain) const {
     // also, openssl init might not be needed for newer versions of openssl
     // OpenSSL_add_all_algorithms();
     // ERR_load_crypto_strings();
+    if (key_size_minimums != nullptr &&
+        (key_size_minimums->rsa_bits <= 0 || key_size_minimums->ec_bits <= 0)) {
+        LOG_ERROR("Certificate key-size minimums must be positive");
+        return Error::BadArgument;
+    }
     if (m_certs.empty()) {
         LOG_ERROR("No certs in chain");
         return Error::InternalError;
@@ -389,6 +643,11 @@ Error X509CertChain::verify(bool allow_partial_chain) const {
         LOG_ERROR("Error: X509_STORE_CTX_init failed: " << get_openssl_error());
         return Error::InternalError;
     }
+    // The callback makes a narrow exception to OpenSSL's critical-extension
+    // check. validate_critical_dice_extensions() checks the actual bytes below.
+    if (allow_critical_dice_extensions) {
+        X509_STORE_CTX_set_verify_cb(ctx.get(), accept_known_critical_dice_extension);
+    }
     
     // Skip certificate expiration checks; optionally accept non-self-signed trust anchors
     X509_VERIFY_PARAM* param = X509_STORE_CTX_get0_param(ctx.get());
@@ -413,7 +672,57 @@ Error X509CertChain::verify(bool allow_partial_chain) const {
         return Error::CertChainVerificationFailure;
     } 
     
+    STACK_OF(X509)* path = X509_STORE_CTX_get0_chain(ctx.get());
+    if (allow_critical_dice_extensions) {
+        Error dice_error = validate_critical_dice_extensions(path);
+        if (dice_error != Error::Ok) {
+            return dice_error;
+        }
+    }
+    if (enforce_certificate_usage) {
+        Error usage_error = check_certificate_usage(path);
+        if (usage_error != Error::Ok) {
+            return usage_error;
+        }
+    }
+    if (key_size_minimums != nullptr) {
+        return check_certificate_key_sizes(path, *key_size_minimums);
+    }
     return Error::Ok;
+}
+
+Error X509CertChain::verify_end_entity_eku(const std::string& required_oid,
+                                           bool require_extension) const {
+    if (m_certs.empty() || !m_certs[0]) {
+        return Error::CertNotFound;
+    }
+    nv_unique_ptr<ASN1_OBJECT> required(OBJ_txt2obj(required_oid.c_str(), 1));
+    if (!required) {
+        return Error::BadArgument;
+    }
+    X509* leaf = m_certs[0].get();
+    if (X509_get_ext_by_NID(leaf, NID_ext_key_usage, -1) < 0) {
+        if (!require_extension) {
+            return Error::Ok;
+        }
+        LOG_ERROR("End-entity certificate is missing extendedKeyUsage " << required_oid);
+        return Error::CertChainVerificationFailure;
+    }
+    std::unique_ptr<EXTENDED_KEY_USAGE, decltype(&EXTENDED_KEY_USAGE_free)> usages(
+        static_cast<EXTENDED_KEY_USAGE*>(
+            X509_get_ext_d2i(leaf, NID_ext_key_usage, nullptr, nullptr)),
+        EXTENDED_KEY_USAGE_free);
+    if (!usages) {
+        LOG_ERROR("End-entity certificate has malformed extendedKeyUsage");
+        return Error::CertChainVerificationFailure;
+    }
+    for (int i = 0; i < sk_ASN1_OBJECT_num(usages.get()); ++i) {
+        if (OBJ_cmp(sk_ASN1_OBJECT_value(usages.get(), i), required.get()) == 0) {
+            return Error::Ok;
+        }
+    }
+    LOG_ERROR("End-entity certificate extendedKeyUsage lacks " << required_oid);
+    return Error::CertChainVerificationFailure;
 }
 
 Error X509CertChain::calculate_min_expiration_time(time_t& out_min_expiration_time, std::string* iso8601_time_out) const {
@@ -723,6 +1032,7 @@ Error X509CertChain::generate_per_cert_status(const OcspVerifyOptions& ocsp_opti
             LOG_ERROR("Failed to format cert expiration time at index " << i);
             return Error::InternalError;
         }
+        // TODO: Check notBefore too; a certificate valid only in the future must be rejected.
         out_statuses[i].expired = (cert_expiration < now);
         out_statuses[i].cert_check_status = out_statuses[i].expired ? CertChainStatus::EXPIRED : CertChainStatus::VALID;
     }
@@ -955,6 +1265,15 @@ Error X509CertChain::get_dice_tcb_info(size_t cert_index, const std::string& oid
     }
 
     return DiceTcbInfo::parse_from_x509_extension(cert, oid, out_dice_tcb_info, silent);
+}
+
+Error X509CertChain::get_composite_device_id(
+    size_t cert_index, CompositeDeviceId& out_composite_device_id) const {
+    if (cert_index >= m_certs.size() || !m_certs[cert_index]) {
+        return Error::CertNotFound;
+    }
+    return CompositeDeviceId::parse_from_x509_extension(
+        m_certs[cert_index].get(), out_composite_device_id);
 }
 
 Error X509CertChain::get_multi_dice_tcb_info(size_t cert_index, MultiDiceTcbInfo& out_multi_dice_tcb_info,

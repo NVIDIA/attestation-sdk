@@ -1806,25 +1806,89 @@ fn test_local_corim_verifier_create_and_configure() {
 }
 
 #[test]
+fn test_local_corim_verifier_add_trust_roots() {
+    init_sdk();
+    let root = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../nv-attestation-sdk-cpp/unit-tests/testdata/trusted_certs/rim_root.crt"
+    ))
+    .expect("read root CA fixture");
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+
+    assert!(verifier.add_device_identity_trust_root_pem(&root).is_ok());
+    assert!(verifier.add_rim_signing_trust_root_pem(&root).is_ok());
+    assert!(verifier.add_rim_signing_trust_root_pem(&root).is_ok());
+    assert!(verifier
+        .add_device_identity_trust_root_pem("invalid")
+        .is_err());
+    assert!(verifier.add_rim_signing_trust_root_pem("").is_err());
+}
+
+#[test]
+fn test_cmw_parse_errors_reach_rust() {
+    init_sdk();
+    let store = CorimStore::new(None, None).expect("CoRIM store");
+    let verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
+    let cases = [
+        ("not json", NVAT_RC_CMW_JSON_INVALID as u16, "JSON"),
+        ("[]", NVAT_RC_CMW_STRUCTURE_INVALID as u16, "object"),
+        ("{}", NVAT_RC_CMW_PROFILE_INVALID as u16, "__cmwc_t"),
+        (
+            r#"{"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0"}"#,
+            NVAT_RC_CMW_EVIDENCE_MISSING as u16,
+            "evidence",
+        ),
+        (
+            r#"{"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":[]}"#,
+            NVAT_RC_CMW_RECORD_INVALID as u16,
+            "record",
+        ),
+        (
+            r#"{"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/octet-stream","!"]}"#,
+            NVAT_RC_CMW_ENCODING_INVALID as u16,
+            "base64url",
+        ),
+        (
+            r#"{"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/json","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]}"#,
+            NVAT_RC_CMW_MEDIA_TYPE_UNSUPPORTED as u16,
+            "media type",
+        ),
+        (
+            r#"{"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/octet-stream","AA"]}"#,
+            NVAT_RC_CMW_NONCE_INVALID as u16,
+            "32",
+        ),
+    ];
+    for (input, code, message) in cases {
+        let err = verifier
+            .verify_cmw(input.as_bytes(), CmwFormat::Json, None, None)
+            .expect_err("malformed CMW must not produce an EAR");
+        assert_eq!(err.code, code, "input: {input}");
+        assert!(err.message().contains(message), "input: {input}: {err}");
+    }
+}
+
+#[test]
 fn test_local_corim_verifier_rejects_bad_input() {
     init_sdk();
     let store = CorimStore::new(None, None).expect("CoRIM store");
     let mut verifier = LocalCorimVerifier::new(store, None).expect("CoRIM verifier");
 
     let err = verifier
-        .verify_cmw(&[], CmwFormat::Json, None)
+        .verify_cmw(&[], CmwFormat::Json, None, None)
         .expect_err("empty CMW input should be rejected");
     assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
 
     assert!(
         verifier
-            .verify_cmw(b"not json at all", CmwFormat::Json, None)
+            .verify_cmw(b"not json at all", CmwFormat::Json, None, None)
             .is_err(),
         "unparseable CMW input should be an error"
     );
 
     let err = verifier
-        .verify_cmw(&[0x00], CmwFormat::Cbor, None)
+        .verify_cmw(&[0x00], CmwFormat::Cbor, None, None)
         .expect_err("CBOR is not implemented yet");
     assert_eq!(err.code, NVAT_RC_FEATURE_NOT_ENABLED as u16);
 
@@ -1870,6 +1934,7 @@ fn corim_verifier_is_send_and_sync() {
     assert_sync::<LocalCorimVerifier>();
     assert_send::<CorimStore>();
     assert_send::<CmwCollection>();
+    assert_send::<VerifyCmwOptions>();
 }
 
 // ---------------------------------------------------------------------------
@@ -1897,7 +1962,7 @@ fn test_verify_cmw_fixture_returns_ear() {
         .expect("disable revocation");
 
     let ear = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .verify_cmw(&cmw, CmwFormat::Json, None, None)
         .expect("verify fixture");
 
     assert!(
@@ -1937,7 +2002,7 @@ fn test_verify_cmw_fixture_returns_ear() {
         .set_default_hash_algorithms(&[HashAlgorithm::Sha512])
         .expect("select SHA-512");
     let ear = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .verify_cmw(&cmw, CmwFormat::Json, None, None)
         .expect("verify fixture");
     assert!(
         ear.json.contains("\"sha-512\"") && !ear.json.contains("\"sha-256\""),
@@ -1950,7 +2015,7 @@ fn test_verify_cmw_fixture_returns_ear() {
         .set_default_hash_algorithms(&[])
         .expect("disable digests");
     let ear = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .verify_cmw(&cmw, CmwFormat::Json, None, None)
         .expect("verify fixture");
     assert!(
         !ear.json.contains("\"ear_nvidia_inputs\""),
@@ -1988,7 +2053,7 @@ fn test_verify_cmw_fixture_signs_the_ear() {
         .expect("disable revocation");
 
     let ear = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, Some(&signing_options))
+        .verify_cmw(&cmw, CmwFormat::Json, Some(&signing_options), None)
         .expect("verify fixture");
 
     let parts: Vec<&str> = ear.jwt.split('.').collect();
@@ -2014,7 +2079,7 @@ fn test_verify_cmw_fixture_signs_the_ear() {
     let unsigned_options = EarSigningOptions::new("", "https://verifier.example.com", "test-kid")
         .expect("options with an empty key are accepted");
     let unsigned = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, Some(&unsigned_options))
+        .verify_cmw(&cmw, CmwFormat::Json, Some(&unsigned_options), None)
         .expect("verify fixture");
     assert!(
         unsigned.jwt.ends_with('.'),
@@ -2106,9 +2171,43 @@ fn test_corim_store_rewrite_redirects_rim_fetch() {
         &rubin_example_corim("rubin_driver_example.cbor"),
     );
     let ear = rubin_verifier(store)
-        .verify_cmw(&rubin_cmw(), CmwFormat::Json, None)
+        .verify_cmw(&rubin_cmw(), CmwFormat::Json, None, None)
         .expect("verify Rubin fixture");
     assert_rubin_appraisal(&ear);
+}
+
+/// A request id rides along with the appraisal without changing its outcome.
+#[test]
+fn test_verify_cmw_with_request_id() {
+    init_sdk();
+    let mut options = VerifyCmwOptions::new().expect("verify options");
+    options
+        .set_request_id("3f2b9c1e-7a4d-4e8a-9b1c-2d3e4f5a6b7c")
+        .expect("valid request id");
+    let store = rubin_store(
+        &rubin_example_corim("rubin_vbios_example.cbor"),
+        &rubin_example_corim("rubin_driver_example.cbor"),
+    );
+    let ear = rubin_verifier(store)
+        .verify_cmw(&rubin_cmw(), CmwFormat::Json, None, Some(&options))
+        .expect("verify Rubin fixture");
+    assert_rubin_appraisal(&ear);
+}
+
+#[test]
+fn test_verify_cmw_options_reject_unsafe_request_id() {
+    init_sdk();
+    let mut options = VerifyCmwOptions::new().expect("verify options");
+    for bad in ["", "has space", "crlf\r\nx-evil: 1", "nul\0byte"] {
+        let err = options
+            .set_request_id(bad)
+            .expect_err("unsafe request id must be rejected");
+        assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16, "input: {bad:?}");
+    }
+    let err = options
+        .set_request_id(&"a".repeat(129))
+        .expect_err("over-long request id must be rejected");
+    assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
 }
 
 /// Once both backing files disappear, a second affirming appraisal must use
@@ -2132,13 +2231,13 @@ fn test_corim_store_in_memory_cache_serves_second_fetch() {
         .expect("enable the CoRIM cache");
     let verifier = rubin_verifier(store);
     let first = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .verify_cmw(&cmw, CmwFormat::Json, None, None)
         .expect("first verification populates the cache");
     assert_rubin_appraisal(&first);
 
     std::fs::remove_dir_all(&dir).expect("remove both backing files");
     let second = verifier
-        .verify_cmw(&cmw, CmwFormat::Json, None)
+        .verify_cmw(&cmw, CmwFormat::Json, None, None)
         .expect("second verification uses the cache");
     assert_rubin_appraisal(&second);
 }
@@ -2191,4 +2290,46 @@ fn test_corim_verifier_accepts_aia_and_cached_ocsp_client() {
     let store = CorimStore::new(None, None).expect("CoRIM store");
 
     assert!(LocalCorimVerifier::new(store, Some(&ocsp)).is_ok());
+}
+
+#[test]
+fn test_corim_store_negative_cache_settings() {
+    // Exercise validation through Rust's FFI wrapper, including zero TTL to disable.
+    init_sdk();
+    let mut store = CorimStore::new(None, None).expect("CoRIM store");
+    store
+        .enable_negative_cache(1024 * 1024, 600)
+        .expect("negative cache");
+    for (bytes, ttl) in [(0, 600), (1024, -1), (0, 0)] {
+        let err = store
+            .enable_negative_cache(bytes, ttl)
+            .expect_err("invalid cache configuration");
+        assert_eq!(err.code, NVAT_RC_BAD_ARGUMENT as u16);
+    }
+    store
+        .enable_negative_cache(1024, 0)
+        .expect("disable negative cache");
+}
+
+#[test]
+fn test_corim_store_negative_cache_independent_configuration_order() {
+    // Either setup order must allow the configured store to move into a verifier.
+    init_sdk();
+    for negative_first in [true, false] {
+        let mut store = CorimStore::new(None, None).expect("CoRIM store");
+        if negative_first {
+            store
+                .enable_negative_cache(1024, 600)
+                .expect("negative cache");
+        }
+        store
+            .enable_in_memory_cache(1024 * 1024, 3600)
+            .expect("positive cache");
+        if !negative_first {
+            store
+                .enable_negative_cache(1024, 600)
+                .expect("negative cache");
+        }
+        LocalCorimVerifier::new(store, None).expect("verifier consumes configured store");
+    }
 }

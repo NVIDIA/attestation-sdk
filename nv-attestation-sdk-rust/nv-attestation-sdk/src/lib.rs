@@ -49,6 +49,9 @@ pub mod attestation;
 // CoRIM verification
 pub mod corim;
 
+/// Observer hooks for SDK-internal HTTP calls and cache lookups
+pub mod observer;
+
 // Shared helpers
 mod util;
 
@@ -63,9 +66,10 @@ pub use attestation::{
 };
 pub use corim::{
     CmwCollection, CmwFormat, CorimStore, EarResult, EarSigningOptions, HashAlgorithm,
-    LocalCorimVerifier,
+    LocalCorimVerifier, VerifyCmwOptions,
 };
 pub use error::{NvatError, Result};
+pub use observer::{HttpCall, Observer};
 pub use types::{
     GpuEvidenceCollection, GpuEvidenceSource, HttpOptions, HttpOptionsBuilder,
     JwtValidationOptions, Logger, Nonce, NvatString, SdkOptions, SwitchEvidenceCollection,

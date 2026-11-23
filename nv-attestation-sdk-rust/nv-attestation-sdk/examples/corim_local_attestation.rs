@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // No signing options leaves the EAR JWT unsigned. To sign it, pass
     // EarSigningOptions to verify_cmw_collection.
-    match verifier.verify_cmw_collection(&cmw, CmwFormat::Json, None) {
+    match verifier.verify_cmw_collection(&cmw, CmwFormat::Json, None, None) {
         Ok(ear) => {
             println!("CoRIM verification completed!");
 

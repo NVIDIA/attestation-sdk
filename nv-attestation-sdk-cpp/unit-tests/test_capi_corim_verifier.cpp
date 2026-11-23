@@ -33,8 +33,10 @@
 
 #include "gtest/gtest.h"
 
+#include "internal/certs.h"
 #include "nv_attestation/nv_ocsp.h"
 #include "nv_attestation/nvat_private.hpp"
+#include "nv_attestation/request_id.h"
 #include "nv_attestation/utils.h"
 #include "nvat.h"
 #include "test_utils.h"
@@ -70,7 +72,7 @@ static nvat_str_t verify_cmw(nvat_local_corim_verifier_t verifier,
     nvat_str_t result = nullptr;
     out_rc = nvat_local_corim_verifier_verify_cmw(
         verifier, reinterpret_cast<const uint8_t *>(cmw.data()), cmw.size(),
-        NVAT_CMW_FORMAT_JSON, nullptr, nullptr, &result);
+        NVAT_CMW_FORMAT_JSON, nullptr, nullptr, nullptr, &result);
     return result;
 }
 
@@ -85,6 +87,35 @@ static nlohmann::json result_json(nvat_str_t result) {
         return nlohmann::json::object();
     }
     return nlohmann::json::parse(data, nullptr, /*allow_exceptions=*/false);
+}
+
+TEST(CApiCorimVerifierTest, AddsValidatedTrustRoots) {
+    std::string device_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/eat_jwks_root",
+                                 device_root_pem), nvattestation::Error::Ok);
+
+    nvat_corim_store_t store = nullptr;
+    ASSERT_EQ(nvat_corim_store_create(&store, nullptr, nullptr), NVAT_RC_OK);
+    nvat_local_corim_verifier_t verifier = nullptr;
+    ASSERT_EQ(nvat_local_corim_verifier_create(&verifier, &store, nullptr),
+              NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+                  nullptr, "unused"),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+                  verifier, nullptr), NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+                  verifier, "not a certificate"), NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+                  verifier, device_root_pem.c_str()),
+              NVAT_RC_OK);
+    EXPECT_EQ(nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+                  verifier, nvattestation::RIM_ROOT_CERT_CA001_DEV.c_str()),
+              NVAT_RC_OK);
+
+    nvat_local_corim_verifier_free(&verifier);
+    nvat_corim_store_free(&store);
 }
 
 TEST(CApiCorimVerifierTest, VerifyCmwBlackwellNoTocSucceeds) {
@@ -344,6 +375,53 @@ TEST(CApiCorimVerifierTest, CorimStoreRejectsBadArgs) {
     nvat_corim_store_free(&store);
 }
 
+TEST(CApiCorimVerifierTest, CmwParseErrorsReachCaller) {
+    nvat_corim_store_t store = nullptr;
+    ASSERT_EQ(nvat_corim_store_create(&store, nullptr, nullptr), NVAT_RC_OK);
+    nvat_local_corim_verifier_t verifier = nullptr;
+    ASSERT_EQ(nvat_local_corim_verifier_create(&verifier, &store, nullptr),
+              NVAT_RC_OK);
+
+    struct ParseCase {
+        const char *input;
+        nvat_rc_t code;
+        const char *message;
+    };
+    const ParseCase cases[] = {
+        {"not json", NVAT_RC_CMW_JSON_INVALID, "JSON"},
+        {"[]", NVAT_RC_CMW_STRUCTURE_INVALID, "object"},
+        {"{}", NVAT_RC_CMW_PROFILE_INVALID, "__cmwc_t"},
+        {R"({"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0"})",
+         NVAT_RC_CMW_EVIDENCE_MISSING, "evidence"},
+        {R"({"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":[]})",
+         NVAT_RC_CMW_RECORD_INVALID, "record"},
+        {R"({"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/octet-stream","!"]})",
+         NVAT_RC_CMW_ENCODING_INVALID, "base64url"},
+        {R"({"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/json","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]})",
+         NVAT_RC_CMW_MEDIA_TYPE_UNSUPPORTED, "media type"},
+        {R"({"__cmwc_t":"tag:nvidia.com,2026:verifier-input/profiles/base/pre-1.0.0","nonce":["application/octet-stream","AA"]})",
+         NVAT_RC_CMW_NONCE_INVALID, "32"},
+    };
+    for (const auto &test : cases) {
+        SCOPED_TRACE(test.input);
+        const std::string input(test.input);
+        nvat_str_t ear_jwt = nullptr;
+        nvat_str_t ear_json = nullptr;
+        const nvat_rc_t rc = nvat_local_corim_verifier_verify_cmw(
+            verifier, reinterpret_cast<const uint8_t *>(input.data()),
+            input.size(), NVAT_CMW_FORMAT_JSON, nullptr, nullptr, &ear_jwt,
+            &ear_json);
+        EXPECT_EQ(rc, test.code);
+        EXPECT_NE(std::string(nvat_rc_to_string(rc)).find(test.message),
+                  std::string::npos);
+        EXPECT_EQ(ear_jwt, nullptr);
+        EXPECT_EQ(ear_json, nullptr);
+        nvat_str_free(&ear_jwt);
+        nvat_str_free(&ear_json);
+    }
+    nvat_local_corim_verifier_free(&verifier);
+}
+
 TEST(CApiCorimVerifierTest, VerifierCreateAndVerifyRejectBadArgs) {
     EXPECT_EQ(nvat_local_corim_verifier_create(nullptr, nullptr, nullptr),
               NVAT_RC_BAD_ARGUMENT);
@@ -365,11 +443,13 @@ TEST(CApiCorimVerifierTest, VerifierCreateAndVerifyRejectBadArgs) {
     const uint8_t one_byte = 0;
     EXPECT_EQ(nvat_local_corim_verifier_verify_cmw(nullptr, &one_byte, 1,
                                                    NVAT_CMW_FORMAT_JSON,
-                                                   nullptr, nullptr, &result),
+                                                   nullptr, nullptr, nullptr,
+                                                   &result),
               NVAT_RC_BAD_ARGUMENT);
     EXPECT_EQ(nvat_local_corim_verifier_verify_cmw(verifier, nullptr, 0,
                                                    NVAT_CMW_FORMAT_JSON,
-                                                   nullptr, nullptr, &result),
+                                                   nullptr, nullptr, nullptr,
+                                                   &result),
               NVAT_RC_BAD_ARGUMENT);
 
     const std::string garbage = "not json at all";
@@ -381,7 +461,8 @@ TEST(CApiCorimVerifierTest, VerifierCreateAndVerifyRejectBadArgs) {
     const uint8_t byte = 0;
     EXPECT_EQ(nvat_local_corim_verifier_verify_cmw(verifier, &byte, 1,
                                                    NVAT_CMW_FORMAT_CBOR,
-                                                   nullptr, nullptr, &result),
+                                                   nullptr, nullptr, nullptr,
+                                                   &result),
               NVAT_RC_FEATURE_NOT_ENABLED);
     nvat_str_free(&result);
 
@@ -656,7 +737,8 @@ TEST(CApiCorimVerifierTest, VerifyCmwDiscardsResultAndRejectsEmptyInput) {
     // Both out_ear_jwt/out_ear_json null discards the EAR result.
     EXPECT_EQ(nvat_local_corim_verifier_verify_cmw(
                   verifier, reinterpret_cast<const uint8_t *>(cmw.data()),
-                  cmw.size(), NVAT_CMW_FORMAT_JSON, nullptr, nullptr, nullptr),
+                  cmw.size(), NVAT_CMW_FORMAT_JSON, nullptr, nullptr, nullptr,
+                  nullptr),
               NVAT_RC_OK);
 
     // Non-null pointer with zero length reaches the parser and fails there.
@@ -664,7 +746,7 @@ TEST(CApiCorimVerifierTest, VerifyCmwDiscardsResultAndRejectsEmptyInput) {
     nvat_str_t result = nullptr;
     EXPECT_NE(nvat_local_corim_verifier_verify_cmw(
                   verifier, &byte, 0, NVAT_CMW_FORMAT_JSON, nullptr, nullptr,
-                  &result),
+                  nullptr, &result),
               NVAT_RC_OK);
     nvat_str_free(&result);
 
@@ -685,7 +767,7 @@ TEST(CApiCorimVerifierTest, VerifyCmwNullSigningOptionsProducesUnsignedEar) {
     nvat_str_t result = nullptr;
     nvat_rc_t rc = nvat_local_corim_verifier_verify_cmw(
         verifier, reinterpret_cast<const uint8_t *>(cmw.data()), cmw.size(),
-        NVAT_CMW_FORMAT_JSON, nullptr, &result, nullptr);
+        NVAT_CMW_FORMAT_JSON, nullptr, nullptr, &result, nullptr);
     ASSERT_EQ(rc, NVAT_RC_OK);
     ASSERT_NE(result, nullptr);
     char *data = nullptr;
@@ -694,6 +776,63 @@ TEST(CApiCorimVerifierTest, VerifyCmwNullSigningOptionsProducesUnsignedEar) {
     EXPECT_EQ(decoded.get_algorithm(), "none");
     nvat_str_free(&result);
 
+    nvat_local_corim_verifier_free(&verifier);
+    nvat_corim_store_free(&store);
+}
+
+TEST(CApiCorimVerifierTest, VerifyCmwOptionsRequestIdValidated) {
+    EXPECT_EQ(nvat_verify_cmw_options_create(nullptr), NVAT_RC_BAD_ARGUMENT);
+    nvat_verify_cmw_options_t options = nullptr;
+    ASSERT_EQ(nvat_verify_cmw_options_create(&options), NVAT_RC_OK);
+
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(nullptr, "abc"),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, nullptr),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, ""),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, "a b"),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, "abc\r\nx-evil: 1"),
+              NVAT_RC_BAD_ARGUMENT);
+    const std::string too_long(nvattestation::MAX_REQUEST_ID_LEN + 1, 'a');
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, too_long.c_str()),
+              NVAT_RC_BAD_ARGUMENT);
+    const std::string longest(nvattestation::MAX_REQUEST_ID_LEN, 'a');
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(options, longest.c_str()),
+              NVAT_RC_OK);
+    EXPECT_EQ(nvat_verify_cmw_options_set_request_id(
+                  options, "3f2b9c1e-7a4d-4e8a-9b1c-2d3e4f5a6b7c"),
+              NVAT_RC_OK);
+
+    nvat_verify_cmw_options_free(&options);
+    EXPECT_EQ(options, nullptr);
+    nvat_verify_cmw_options_free(&options);
+}
+
+TEST(CApiCorimVerifierTest, VerifyCmwRequestIdScopedToCall) {
+    nvat_corim_store_t store = nullptr;
+    ASSERT_EQ(nvat_corim_store_create(&store, nullptr, nullptr), NVAT_RC_OK);
+    nvat_local_corim_verifier_t verifier = nullptr;
+    ASSERT_EQ(nvat_local_corim_verifier_create(&verifier, &store, nullptr), NVAT_RC_OK);
+    ASSERT_EQ(nvat_local_corim_verifier_set_verify_revocation(verifier, false), NVAT_RC_OK);
+    nvat_verify_cmw_options_t options = nullptr;
+    ASSERT_EQ(nvat_verify_cmw_options_create(&options), NVAT_RC_OK);
+    ASSERT_EQ(nvat_verify_cmw_options_set_request_id(options, "req-123"), NVAT_RC_OK);
+
+    std::string cmw;
+    ASSERT_EQ(readFileIntoString(kRubinCmwPath, cmw), nvattestation::Error::Ok);
+
+    nvat_str_t result = nullptr;
+    nvat_rc_t rc = nvat_local_corim_verifier_verify_cmw(
+        verifier, reinterpret_cast<const uint8_t *>(cmw.data()), cmw.size(),
+        NVAT_CMW_FORMAT_JSON, nullptr, options, &result, nullptr);
+    EXPECT_EQ(rc, NVAT_RC_OK);
+    // The id must not leak to later work on this thread.
+    EXPECT_TRUE(nvattestation::current_request_id().empty());
+    nvat_str_free(&result);
+
+    nvat_verify_cmw_options_free(&options);
     nvat_local_corim_verifier_free(&verifier);
     nvat_corim_store_free(&store);
 }
@@ -719,7 +858,7 @@ TEST(CApiCorimVerifierTest, VerifyCmwSigningOptionsProducesSignedEar) {
     nvat_str_t result_json = nullptr;
     nvat_rc_t rc = nvat_local_corim_verifier_verify_cmw(
         verifier, reinterpret_cast<const uint8_t *>(cmw.data()), cmw.size(),
-        NVAT_CMW_FORMAT_JSON, options, &result, &result_json);
+        NVAT_CMW_FORMAT_JSON, options, nullptr, &result, &result_json);
     ASSERT_EQ(rc, NVAT_RC_OK);
     ASSERT_NE(result, nullptr);
     char *data = nullptr;
@@ -838,4 +977,61 @@ TEST(CApiCorimVerifierTest, EnableInMemoryCacheOnStore) {
 
     nvat_corim_store_free(&store);
     EXPECT_EQ(store, nullptr);
+}
+
+TEST(CApiCorimVerifierTest, EnableNegativeCacheOnStore) {
+    // Check C argument validation, zero-TTL disabling and transfer to the verifier.
+    nvat_corim_store_t store = nullptr;
+    ASSERT_EQ(nvat_corim_store_create(&store, nullptr, nullptr), NVAT_RC_OK);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1048576, 600),
+              NVAT_RC_OK);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(nullptr, 1048576, 600),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 0, 600),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1048576, -1),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 0, 0),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1048576, 0),
+              NVAT_RC_OK);
+    EXPECT_EQ(nvat_corim_store_enable_in_memory_cache(store, 1048576, 3600),
+              NVAT_RC_OK);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1048576, 600),
+              NVAT_RC_OK);
+    nvat_local_corim_verifier_t verifier = nullptr;
+    EXPECT_EQ(nvat_local_corim_verifier_create(&verifier, &store, nullptr),
+              NVAT_RC_OK);
+    EXPECT_EQ(store, nullptr);
+    nvat_local_corim_verifier_free(&verifier);
+    nvat_corim_store_free(&store);
+}
+
+TEST(CApiCorimVerifierTest,
+     NegativeCacheInvalidSettingsPreserveEntriesAndZeroTtlDisables) {
+    // Seed a marker for a closed local port: a cache hit and a live fetch return different errors.
+    nvat_corim_store_t store = nullptr;
+    ASSERT_EQ(nvat_corim_store_create(&store, nullptr, nullptr), NVAT_RC_OK);
+    auto *cpp = nvat_corim_store_to_cpp(store);
+    const std::string raw =
+        "https://rim.attestation.nvidia.com/cache-validation";
+    const std::string effective = "http://127.0.0.1:9/rim";
+    ASSERT_EQ(cpp->add_url_rewrite(raw, effective), nvattestation::Error::Ok);
+    auto cache = std::make_shared<nvattestation::NvCache>(
+        std::make_shared<nvattestation::NvCacheOptions>(1024, 600));
+    ASSERT_EQ(cache->put(effective, std::make_shared<bool>(true), 512),
+              nvattestation::Error::Ok);
+    cpp->set_negative_cache(cache);
+    // Invalid configuration must leave the seeded marker usable.
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 0, 600),
+              NVAT_RC_BAD_ARGUMENT);
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1024, -1),
+              NVAT_RC_BAD_ARGUMENT);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(cpp->fetch(raw, bytes), nvattestation::Error::RimNotFound);
+    // Disabling removes the cache, so the next fetch exposes the connection failure.
+    EXPECT_EQ(nvat_corim_store_enable_negative_cache(store, 1024, 0),
+              NVAT_RC_OK);
+    EXPECT_NE(cpp->fetch(raw, bytes), nvattestation::Error::RimNotFound);
+    nvat_corim_store_free(&store);
 }

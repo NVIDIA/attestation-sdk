@@ -337,6 +337,81 @@ TEST(MeasurementValuesMatch, DigestSameAlgSameValueMatches) {
     EXPECT_TRUE(match_measurement_values(ref, ev).digests.empty());
 }
 
+TEST(MeasurementValuesMatch, DigestNamesMatchIntegerIds) {
+    const std::pair<const char*, int32_t> algorithms[] = {
+        {"sha-256", 1},
+        {"sha-256-128", 2},
+        {"sha-256-120", 3},
+        {"sha-256-96", 4},
+        {"sha-256-64", 5},
+        {"sha-256-32", 6},
+        {"sha-384", 7},
+        {"sha-512", 8},
+        {"sha3-224", 9},
+        {"sha3-256", 10},
+        {"sha3-384", 11},
+        {"sha3-512", 12}};
+    for (const auto& algorithm : algorithms) {
+        SCOPED_TRACE(algorithm.first);
+        auto named = mv(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                        nullptr, {Digest(algorithm.first, ByteString({0xAB}))});
+        auto numbered = mv(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                           nullptr, {Digest(algorithm.second, ByteString({0xAB}))});
+        EXPECT_TRUE(match_measurement_values(named, numbered).digests.empty());
+        EXPECT_TRUE(match_measurement_values(numbered, named).digests.empty());
+        const nlohmann::json named_json = named.getDigests()[0];
+        const nlohmann::json numbered_json = numbered.getDigests()[0];
+        EXPECT_EQ(named_json, std::string(algorithm.first) + ";qw==");
+        EXPECT_EQ(numbered_json, std::string(algorithm.first) + ";qw==");
+
+        auto different = mv(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                            nullptr, {Digest(algorithm.second, ByteString({0xCD}))});
+        const auto mismatch = match_measurement_values(named, different);
+        ASSERT_EQ(mismatch.digests.size(), 1u);
+        EXPECT_EQ(mismatch.digests[0].reason, DigestMatchEntry::Reason::kValueDiffers);
+    }
+}
+
+TEST(MeasurementValuesMatch, DigestAliasesAreDuplicates) {
+    auto single = mv(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                     nullptr, {Digest(7, ByteString({0xAB}))});
+    auto duplicates = mv(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                         nullptr, {Digest(7, ByteString({0xAB})),
+                                   Digest("sha-384", ByteString({0xAB}))});
+    const auto ref_mismatch = match_measurement_values(duplicates, single);
+    ASSERT_EQ(ref_mismatch.digests.size(), 1u);
+    EXPECT_EQ(ref_mismatch.digests[0].reason,
+              DigestMatchEntry::Reason::kDuplicateAlgorithmInReference);
+    const auto ev_mismatch = match_measurement_values(single, duplicates);
+    ASSERT_EQ(ev_mismatch.digests.size(), 1u);
+    EXPECT_EQ(ev_mismatch.digests[0].reason,
+              DigestMatchEntry::Reason::kDuplicateAlgorithmInEvidence);
+}
+
+TEST(MeasurementValuesMatch, DigestNamesRemainCaseSensitive) {
+    const Digest canonical(7, ByteString({0xAB}));
+    EXPECT_FALSE(canonical.sameAlgorithm(Digest("SHA-384", ByteString({0xAB}))));
+    EXPECT_FALSE(canonical.sameAlgorithm(Digest("sha384", ByteString({0xAB}))));
+    EXPECT_FALSE(canonical.sameAlgorithm(Digest(-43, ByteString({0xAB}))));
+    EXPECT_FALSE(Digest(11, ByteString({0xAB})).sameAlgorithm(
+        Digest("SHA3-384", ByteString({0xAB}))));
+}
+
+TEST(MeasurementValuesMatch, UnknownDigestNamesRemainStrings) {
+    for (const char* algorithm : {"custom-hash", "blake2b-512", "k12-256"}) {
+        SCOPED_TRACE(algorithm);
+        const Digest digest(algorithm, ByteString({0xAB}));
+        std::string name;
+        int32_t id = 0;
+        EXPECT_TRUE(digest.getAlgorithm(name));
+        EXPECT_EQ(name, algorithm);
+        EXPECT_FALSE(digest.getAlgorithm(id));
+        EXPECT_TRUE(digest.sameAlgorithm(Digest(algorithm, ByteString({0xAB}))));
+        EXPECT_FALSE(digest.sameAlgorithm(Digest("other-hash", ByteString({0xAB}))));
+        EXPECT_FALSE(digest.sameAlgorithm(Digest(0, ByteString({0xAB}))));
+    }
+}
+
 TEST(MeasurementValuesMatch, DigestEvidenceWithExtraAlgStillMatches) {
     // Reference has only sha256; evidence carries sha256 + sha384. Match.
     std::vector<Digest> ref_d;
@@ -604,6 +679,7 @@ TEST(MeasurementValuesMatch, EveryFieldMismatchedReportedTogether) {
         f->setReplayProtected(v); f->setIntegrityProtected(v);
         f->setRuntimeMeas(v); f->setImmutable(v); f->setTcb(v);
         f->setConfidentialityProtected(v);
+        f->setRuntimeUpdatable(v);
         return f;
     };
     auto ref = mv(std::make_unique<Version>("1.0"),
@@ -2105,7 +2181,7 @@ TEST(ReverseTopologicalSort, CycleInOneComponentOnly) {
     EXPECT_FALSE(reverse_topological_sort(deps, sorted));
 }
 
-// Mixed true/false across all 10 slots so any dropped slot, dropped polarity,
+// Mixed true/false across all 11 slots so any dropped slot, dropped polarity,
 // or aliasing bug surfaces as an inequality failure.
 FlagsMap make_fully_populated_flags() {
     FlagsMap fm;
@@ -2119,10 +2195,11 @@ FlagsMap make_fully_populated_flags() {
     fm.setImmutable(false);
     fm.setTcb(true);
     fm.setConfidentialityProtected(false);
+    fm.setRuntimeUpdatable(true);
     return fm;
 }
 
-// Copy ctor with every slot present (all 10 if-true branches), copy
+// Copy ctor with every slot present (all 11 if-true branches), copy
 // assignment's non-self path, defaulted move ctor + move assign, operator==.
 // Independent-ownership tail guards against shared-state aliasing.
 TEST(FlagsMap, CopyAndMoveRoundTripAllSlots) {
@@ -2148,7 +2225,7 @@ TEST(FlagsMap, CopyAndMoveRoundTripAllSlots) {
     EXPECT_TRUE(*src.getTcb());
 }
 
-// Copy ctor with every slot absent (all 10 if-false branches) and the
+// Copy ctor with every slot absent (all 11 if-false branches) and the
 // clear-on-assign path.
 TEST(FlagsMap, EmptyCopiesAndClearsCorrectly) {
     FlagsMap empty;
@@ -2208,33 +2285,48 @@ MeasurementMap string_version_claim(const std::string &mkey,
         mv(std::make_unique<Version>(ver_str), nullptr, nullptr, nullptr,
            nullptr, nullptr, nullptr, {})};
 }
+
+void expect_text_claim(const EvidenceClaimMap &claims,
+                       const std::string &key, const std::string &expected) {
+    ASSERT_EQ(claims.size(), 1u);
+    ASSERT_EQ(claims.count(key), 1u);
+    const auto *text = dynamic_cast<const TextClaimValue *>(claims.at(key).get());
+    ASSERT_NE(text, nullptr);
+    EXPECT_EQ(text->value(), expected);
+}
+
+void expect_raw_claim(const EvidenceClaimMap &claims,
+                      const std::string &key, const ByteString &expected) {
+    ASSERT_EQ(claims.size(), 1u);
+    ASSERT_EQ(claims.count(key), 1u);
+    const auto *raw = dynamic_cast<const RawClaimValue *>(claims.at(key).get());
+    ASSERT_NE(raw, nullptr);
+    EXPECT_EQ(raw->value(), expected);
+}
 } // namespace
 
 TEST(CorimVerify, ClaimsFromEvidenceRequirementExample) {
-    const std::vector<uint8_t> enabled{0x65, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64};
     auto jtag_env = claims_from_evidence_env(17, "Gpu");
     std::vector<Ect> reference{
         corroborating_root(),
-        Ect{jtag_env, {string_rawvalue_claim("jtag_status", enabled)}}};
+        Ect{jtag_env, {string_name_claim("jtag_status", "enabled")}}};
     std::vector<Ect> evidence{
         corroborating_root(),
         Ect{claims_from_evidence_env(2, "Gpu"),
             {string_name_claim("driver_version", "535.104.05")}},
-        Ect{jtag_env, {string_rawvalue_claim("jtag_status", enabled)}}};
+        Ect{jtag_env, {string_name_claim("jtag_status", "enabled")}}};
     std::vector<DependencyTriple> deps;
 
     VerificationResult v = verify(reference, evidence, deps);
     document_test(R"(Two claims-from-evidence envs (penultimate arc 2): jtag_status
-carries a raw-value matching a CoRIM reference (corroborated, decoded to
-"enabled"); driver_version has no reference (uncorroborated).)",
+carries a name matching a CoRIM reference (corroborated as "enabled");
+driver_version has no reference (uncorroborated).)",
                   reference, evidence, deps, v);
 
     EXPECT_TRUE(v.diagnostics.empty());
-    EXPECT_EQ(v.corroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"jtag_status", "enabled"}}));
-    EXPECT_EQ(
-        v.uncorroborated_evidence_claims,
-        (std::map<std::string, std::string>{{"driver_version", "535.104.05"}}));
+    expect_text_claim(v.corroborated_evidence_claims, "jtag_status", "enabled");
+    expect_text_claim(v.uncorroborated_evidence_claims,
+                      "driver_version", "535.104.05");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceUncorroboratedNoReference) {
@@ -2252,9 +2344,8 @@ uncorroborated.)",
 
     EXPECT_TRUE(v.diagnostics.empty());
     EXPECT_TRUE(v.corroborated_evidence_claims.empty());
-    EXPECT_EQ(
-        v.uncorroborated_evidence_claims,
-        (std::map<std::string, std::string>{{"driver_version", "535.104.05"}}));
+    expect_text_claim(v.uncorroborated_evidence_claims,
+                      "driver_version", "535.104.05");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceUncorroboratedReferenceMismatch) {
@@ -2272,8 +2363,7 @@ uncorroborated (a failed match, not corroborated).)",
 
     EXPECT_TRUE(v.diagnostics.empty());
     EXPECT_TRUE(v.corroborated_evidence_claims.empty());
-    EXPECT_EQ(v.uncorroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"k", "actual"}}));
+    expect_text_claim(v.uncorroborated_evidence_claims, "k", "actual");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceCorroboratedName) {
@@ -2290,8 +2380,7 @@ reference is corroborated.)",
                   reference, evidence, deps, v);
 
     EXPECT_TRUE(v.diagnostics.empty());
-    EXPECT_EQ(v.corroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"k", "v"}}));
+    expect_text_claim(v.corroborated_evidence_claims, "k", "v");
     EXPECT_TRUE(v.uncorroborated_evidence_claims.empty());
 }
 
@@ -2312,24 +2401,7 @@ the evidence value matches alt B, so the claim is corroborated.)",
                   reference, evidence, deps, v);
 
     EXPECT_TRUE(v.diagnostics.empty());
-    EXPECT_EQ(v.corroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"k", "B"}}));
-}
-
-TEST(CorimVerify, ClaimsFromEvidenceRawValueDecodedToString) {
-    const std::vector<uint8_t> enabled{0x65, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64};
-    std::vector<Ect> reference{corroborating_root()};
-    std::vector<Ect> evidence{
-        corroborating_root(),
-        Ect{claims_from_evidence_env(17, "Gpu"),
-            {string_rawvalue_claim("jtag_status", enabled)}}};
-    std::vector<DependencyTriple> deps;
-
-    VerificationResult v = verify(reference, evidence, deps);
-
-    EXPECT_TRUE(v.diagnostics.empty());
-    ASSERT_EQ(v.uncorroborated_evidence_claims.count("jtag_status"), 1u);
-    EXPECT_EQ(v.uncorroborated_evidence_claims.at("jtag_status"), "enabled");
+    expect_text_claim(v.corroborated_evidence_claims, "k", "B");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceCorroboratedVersion) {
@@ -2346,8 +2418,7 @@ reference is corroborated.)",
                   reference, evidence, deps, v);
 
     EXPECT_TRUE(v.diagnostics.empty());
-    EXPECT_EQ(v.corroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"fw_version", "1.2.3"}}));
+    expect_text_claim(v.corroborated_evidence_claims, "fw_version", "1.2.3");
     EXPECT_TRUE(v.uncorroborated_evidence_claims.empty());
 }
 
@@ -2366,8 +2437,8 @@ matching CoRIM reference is uncorroborated.)",
 
     EXPECT_TRUE(v.diagnostics.empty());
     EXPECT_TRUE(v.corroborated_evidence_claims.empty());
-    EXPECT_EQ(v.uncorroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"fw_version", "535.104.05"}}));
+    expect_text_claim(v.uncorroborated_evidence_claims,
+                      "fw_version", "535.104.05");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceVersionMismatch) {
@@ -2387,8 +2458,7 @@ reference is uncorroborated.)",
 
     EXPECT_TRUE(v.diagnostics.empty());
     EXPECT_TRUE(v.corroborated_evidence_claims.empty());
-    EXPECT_EQ(v.uncorroborated_evidence_claims,
-              (std::map<std::string, std::string>{{"fw_version", "actual"}}));
+    expect_text_claim(v.uncorroborated_evidence_claims, "fw_version", "actual");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceMalformedShapesAbort) {
@@ -2484,16 +2554,15 @@ verify aborts with duplicate-evidence-claim-key.)",
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceJsonShape) {
-    const std::vector<uint8_t> enabled{0x65, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64};
     auto jtag_env = claims_from_evidence_env(17, "Gpu");
     std::vector<Ect> reference{
         corroborating_root(),
-        Ect{jtag_env, {string_rawvalue_claim("jtag_status", enabled)}}};
+        Ect{jtag_env, {string_name_claim("jtag_status", "enabled")}}};
     std::vector<Ect> evidence{
         corroborating_root(),
         Ect{claims_from_evidence_env(2, "Gpu"),
             {string_name_claim("driver_version", "535.104.05")}},
-        Ect{jtag_env, {string_rawvalue_claim("jtag_status", enabled)}}};
+        Ect{jtag_env, {string_name_claim("jtag_status", "enabled")}}};
     std::vector<DependencyTriple> deps;
 
     nlohmann::json j = verify(reference, evidence, deps);
@@ -2507,24 +2576,20 @@ TEST(CorimVerify, ClaimsFromEvidenceJsonShape) {
     EXPECT_FALSE(empty.contains("uncorroborated_evidence_claims"));
 }
 
-TEST(CorimVerify, ClaimsFromEvidenceRawValueInvalidUtf8Aborts) {
-    std::vector<Ect> reference{corroborating_root()};
-    std::vector<Ect> evidence{
-        corroborating_root(),
-        Ect{claims_from_evidence_env(2, "Gpu"),
-            {string_rawvalue_claim("k", {0xFF})}}};
+TEST(CorimVerify, ClaimsFromEvidenceRawValuePreservesBinaryBytes) {
+    const std::vector<uint8_t> binary{0xFB, 0xFF, 0xFE, 0x00};
+    auto env = claims_from_evidence_env(2, "Gpu");
+    std::vector<Ect> reference{corroborating_root(),
+                               Ect{env, {string_rawvalue_claim("k", binary)}}};
+    std::vector<Ect> evidence{corroborating_root(),
+                              Ect{env, {string_rawvalue_claim("k", binary)}}};
     std::vector<DependencyTriple> deps;
 
     VerificationResult v = verify(reference, evidence, deps);
-    document_test(R"(A claims-from-evidence raw-value that is not valid UTF-8 (0xFF)
-aborts with non-utf8-evidence-claim; no claims are emitted.)",
-                  reference, evidence, deps, v);
-
-    EXPECT_TRUE(v.outcomes.empty());
-    ASSERT_EQ(v.diagnostics.size(), 1u);
-    EXPECT_EQ(v.diagnostics[0].code, Diagnostic::Code::kNonUtf8EvidenceClaim);
-    EXPECT_TRUE(v.corroborated_evidence_claims.empty());
-    EXPECT_TRUE(v.uncorroborated_evidence_claims.empty());
+    EXPECT_TRUE(v.diagnostics.empty());
+    expect_raw_claim(v.corroborated_evidence_claims, "k", ByteString(binary));
+    nlohmann::json j = v;
+    EXPECT_EQ(j["corroborated_evidence_claims"]["k"], "-__-AA");
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceNameInvalidUtf8Aborts) {
@@ -2544,19 +2609,17 @@ TEST(CorimVerify, ClaimsFromEvidenceNameInvalidUtf8Aborts) {
 }
 
 TEST(CorimVerify, ClaimsFromEvidenceValidMultibyteUtf8Preserved) {
-    const std::vector<uint8_t> e_acute{0xC3, 0xA9}; // U+00E9
     std::vector<Ect> reference{corroborating_root()};
     std::vector<Ect> evidence{
         corroborating_root(),
         Ect{claims_from_evidence_env(2, "Gpu"),
-            {string_rawvalue_claim("k", e_acute)}}};
+            {string_name_claim("k", std::string("\xC3\xA9"))}}}; // U+00E9
     std::vector<DependencyTriple> deps;
 
     VerificationResult v = verify(reference, evidence, deps);
     EXPECT_TRUE(v.diagnostics.empty());
-    EXPECT_EQ(
-        v.uncorroborated_evidence_claims,
-        (std::map<std::string, std::string>{{"k", std::string("\xC3\xA9")}}));
+    expect_text_claim(v.uncorroborated_evidence_claims, "k",
+                      std::string("\xC3\xA9"));
 }
 
 // ── cert_chain_dti_matches ───────────────────────────────────────────────────

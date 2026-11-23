@@ -24,6 +24,7 @@
 #include "nv_attestation/error.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/nv_jwt.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/utils.h"
 #include "nv_attestation/verify.h"
 #include "nvat.h"
@@ -242,7 +243,7 @@ Error verify_attestation_result(
     }
 
     NvHttpClient http_client;
-    error = NvHttpClient::create(http_client, service_key, http_options);
+    error = NvHttpClient::create(http_client, service_key, http_options, kServiceNras);
     if (error != Error::Ok) {
         LOG_WARN("Failed to create HTTP client for EAT verification");
         return error;

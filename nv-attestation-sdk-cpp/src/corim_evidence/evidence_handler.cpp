@@ -37,14 +37,16 @@
 #include "nv_attestation/spdm/spdm_measurement_records.hpp"
 #include "nv_attestation/spdm/spdm_req.hpp"
 #include "nv_attestation/spdm/spdm_resp.hpp"
+#include "nv_attestation/spdm/utils.h"
 #include "nv_attestation/utils.h"
 
 namespace nvattestation {
 
 namespace {
 
-// Raw SPDM 1.1 GET_MEASUREMENTS + MEASUREMENTS transcript, signed by the chain
-// leaf; the companion certificate slot carries the device-identity chain.
+// Raw SPDM 1.1 or 1.2 GET_MEASUREMENTS + MEASUREMENTS transcript, signed by the
+// chain leaf. A 1.2 transcript is prefixed with the VCA messages; the companion
+// certificate slot carries the device-identity chain.
 
 constexpr std::size_t kSpdmSignatureLength = 96; // SHA-384, ECDSA P-384
 
@@ -63,8 +65,148 @@ constexpr uint8_t kDeviceIdentifierBlockIndex = 52;
 
 constexpr const char *kSpdmMediaTypes[] = {kCmwMediaSpdmTranscript};
 
-// The negotiated algorithm is not in the transcript. SPDM uses one algorithm
-// per record, so derive it from the digest length; sha-384 when unusable.
+// SPDM 1.2 responder-measurements signing context (DSP0274 "Signature
+// generation"): the 16-byte prefix is repeated 4 times, the context string
+// starts at offset 36, zero-padded, followed by the transcript hash.
+constexpr const char kSpdm12SigningPrefix[] = "dmtf-spdm-v1.2.*";
+constexpr std::size_t kSpdm12SigningPrefixLen = 16;
+constexpr std::size_t kSpdm12SigningPrefixRepeats = 4;
+constexpr std::size_t kSpdm12SigningContextFieldLen = 36;
+constexpr const char kSpdm12MeasurementsSigningContext[] =
+    "responder-measurements signing";
+
+// Returns the size of a VCA message for the SPDM version indicated by the
+// transcript.
+// A return value of 0 means the message code is unexpected or the bytes needed
+// to determine its size are unavailable.
+// A nonzero result does not guarantee the complete message is present; callers
+// must check that before advancing.
+std::size_t vca_message_size(const std::vector<uint8_t> &transcript,
+                             std::size_t offset, uint8_t code) {
+    constexpr std::size_t kHeaderLen = 4;
+    constexpr std::size_t kLengthFieldEnd = 6; // Length field is bytes 4-5, LE.
+    constexpr std::size_t kVersionEntryCountOffset = 5;
+    constexpr std::size_t kVersionEntrySize = 2;
+    constexpr std::size_t kCapabilitiesMessageLenV11 = 12;
+    constexpr std::size_t kCapabilitiesMessageLenV12 = 20;
+    if (offset + kHeaderLen > transcript.size() ||
+        transcript[offset + 1] != code) {
+        return 0;
+    }
+    const uint8_t version = transcript[offset];
+    switch (code) {
+    case SPDM_REQ_CODE_GET_VERSION:
+        return kHeaderLen;
+    case SPDM_RES_CODE_VERSION: {
+        // Header, reserved, VersionNumberEntryCount, then 2 bytes per entry.
+        constexpr std::size_t kVersionFixedLen = 6;
+        if (offset + kVersionFixedLen > transcript.size()) {
+            return 0;
+        }
+        return kVersionFixedLen +
+               kVersionEntrySize * static_cast<std::size_t>(
+                                        transcript[offset + kVersionEntryCountOffset]);
+    }
+    case SPDM_REQ_CODE_GET_CAPABILITIES:
+    case SPDM_RES_CODE_CAPABILITIES:
+        return version >= SPDM_VERSION_1_2 ? kCapabilitiesMessageLenV12
+                                            : kCapabilitiesMessageLenV11;
+    case SPDM_REQ_CODE_NEGOTIATE_ALGORITHMS:
+    case SPDM_RES_CODE_ALGORITHMS:
+        if (offset + kLengthFieldEnd > transcript.size()) {
+            return 0;
+        }
+        {
+            const std::size_t length =
+                static_cast<std::size_t>(transcript[offset + 4]) |
+                (static_cast<std::size_t>(transcript[offset + 5]) << 8);
+            return length >= kLengthFieldEnd ? length : 0;
+        }
+    default:
+        return 0;
+    }
+}
+
+// Finds the start of the GET_MEASUREMENTS request and stores its byte offset in
+// `out_request_offset`.
+// Returns `Error::Ok` if found, or `Error::EvidenceMalformed` if the transcript is
+// too short or malformed.
+// An SPDM 1.1 transcript starts with it; an SPDM 1.2 transcript starts with the
+// VCA sequence (GET_VERSION ... ALGORITHMS), which is also part of the signed
+// data.
+// This function only checks for the request code, not the full request body.
+Error locate_spdm_measurement_request(const std::vector<uint8_t> &transcript,
+                                      std::size_t &out_request_offset) {
+    out_request_offset = 0;
+    if (transcript.size() < 2) {
+        return Error::EvidenceMalformed;
+    }
+    if (transcript[1] == SPDM_REQ_CODE_GET_MEASUREMENTS) {
+        return Error::Ok;
+    }
+    static const uint8_t kVcaCodes[] = {
+        SPDM_REQ_CODE_GET_VERSION,           SPDM_RES_CODE_VERSION,
+        SPDM_REQ_CODE_GET_CAPABILITIES,      SPDM_RES_CODE_CAPABILITIES,
+        SPDM_REQ_CODE_NEGOTIATE_ALGORITHMS,  SPDM_RES_CODE_ALGORITHMS};
+    std::size_t offset = 0;
+    for (uint8_t code : kVcaCodes) {
+        const std::size_t size = vca_message_size(transcript, offset, code);
+        if (size == 0 || size > transcript.size() - offset) {
+            LOG_ERROR("SPDM transcript: malformed VCA message "
+                      << to_hex_string(code) << " at offset " << offset);
+            return Error::EvidenceMalformed;
+        }
+        offset += size;
+    }
+    if (offset + 2 > transcript.size() ||
+        transcript[offset + 1] != SPDM_REQ_CODE_GET_MEASUREMENTS) {
+        LOG_ERROR("SPDM transcript: GET_MEASUREMENTS does not follow the VCA");
+        return Error::EvidenceMalformed;
+    }
+    out_request_offset = offset;
+    return Error::Ok;
+}
+
+// Builds the data the responder signed. SPDM 1.1 signs the transcript itself;
+// SPDM 1.2 signs the signing context followed by the transcript hash.
+Error build_spdm_signed_data(const std::vector<uint8_t> &message,
+                             uint8_t spdm_version,
+                             std::vector<uint8_t> &out_signed_data) {
+    if (spdm_version == SPDM_VERSION_1_1) {
+        out_signed_data = message;
+        return Error::Ok;
+    }
+    if (spdm_version != SPDM_VERSION_1_2) {
+        LOG_ERROR("Unsupported SPDM version for signed-data construction: "
+                  << to_hex_string(spdm_version));
+        return Error::EvidenceMalformed;
+    }
+    // TODO(thofos): SHA-384 is currently hardcoded; for general
+    // interoperability the negotiated hash should be used instead.
+    std::vector<uint8_t> digest;
+    Error err = compute_digest(message, HashAlgorithm::Sha384, digest);
+    if (err != Error::Ok) {
+        return err;
+    }
+    out_signed_data.clear();
+    for (std::size_t i = 0; i < kSpdm12SigningPrefixRepeats; ++i) {
+        out_signed_data.insert(out_signed_data.end(), kSpdm12SigningPrefix,
+                               kSpdm12SigningPrefix + kSpdm12SigningPrefixLen);
+    }
+    const std::size_t context_len = sizeof(kSpdm12MeasurementsSigningContext) - 1;
+    out_signed_data.insert(out_signed_data.end(),
+                           kSpdm12SigningContextFieldLen - context_len, 0);
+    out_signed_data.insert(out_signed_data.end(),
+                           kSpdm12MeasurementsSigningContext,
+                           kSpdm12MeasurementsSigningContext + context_len);
+    out_signed_data.insert(out_signed_data.end(), digest.begin(), digest.end());
+    return Error::Ok;
+}
+
+// Infers the hash algorithm for digest-valued measurement blocks from their
+// digest lengths.
+// Returns the NI algorithm ID, falling back to SHA-384 if no usable digest blocks are present or their lengths are inconsistent or unsupported.
+// This does not determine the SPDM 1.2 signing hash negotiated in the VCA ALGORITHMS exchange.
 int32_t derive_measurement_hash_alg_id(
     const SpdmMeasurementRecordParser &records) {
     const int32_t fallback = to_ni_algorithm_id(HashAlgorithm::Sha384);
@@ -151,9 +293,21 @@ Error SpdmEvidenceHandler::verify_and_extract_ects(
         LOG_ERROR("SPDM transcript too short");
         return Error::EvidenceMalformed;
     }
+    std::size_t request_offset = 0;
+    Error locate_err =
+        locate_spdm_measurement_request(transcript, request_offset);
+    if (locate_err != Error::Ok) {
+        return locate_err;
+    }
+    if (transcript.size() <=
+        request_offset + spdm_request_len + kSpdmSignatureLength) {
+        LOG_ERROR("SPDM transcript too short");
+        return Error::EvidenceMalformed;
+    }
+    const uint8_t spdm_version = transcript[request_offset];
     out_verification.signature_checked = true;
 
-    std::vector<uint8_t> signed_data(
+    std::vector<uint8_t> message(
         transcript.begin(),
         transcript.end() -
             static_cast<std::ptrdiff_t>(kSpdmSignatureLength));
@@ -161,11 +315,16 @@ Error SpdmEvidenceHandler::verify_and_extract_ects(
         transcript.end() -
             static_cast<std::ptrdiff_t>(kSpdmSignatureLength),
         transcript.end());
-    // TODO(v2): hash + signature length are hardcoded for SHA-384 /
-    // ECDSA P-384, today's NVIDIA standard. When a part diverges, derive
-    // these from chain properties / GpuArchitectureData.
-    Error sig_err = validated_chain.verify_signature_pkcs11(
-        signed_data, signature, EVP_sha384());
+    std::vector<uint8_t> signed_data;
+    Error build_err =
+        build_spdm_signed_data(message, spdm_version, signed_data);
+    if (build_err != Error::Ok) {
+        return build_err;
+    }
+    // TODO(P1): Select the signature length and verifier from negotiated SPDM
+    // algorithms instead of assuming a 96-byte ECDSA P-384 signature.
+    Error sig_err = validated_chain.verify_signature_ecdsa_p384(
+        signed_data, signature);
     if (sig_err != Error::Ok) {
         LOG_ERROR("SPDM signature verification failed");
         if (settings.m_verify_evidence_signature) {
@@ -178,8 +337,9 @@ Error SpdmEvidenceHandler::verify_and_extract_ects(
     // Freshness: the nonce signed into the request must equal the item nonce.
     SpdmMeasurementRequestMessage11 request;
     std::vector<uint8_t> request_bytes(
-        transcript.begin(),
-        transcript.begin() + static_cast<std::ptrdiff_t>(spdm_request_len));
+        transcript.begin() + static_cast<std::ptrdiff_t>(request_offset),
+        transcript.begin() +
+            static_cast<std::ptrdiff_t>(request_offset + spdm_request_len));
     Error req_err = SpdmMeasurementRequestMessage11::create(request_bytes,
                                                             request);
     if (req_err != Error::Ok) {
@@ -203,7 +363,7 @@ Error SpdmEvidenceHandler::verify_and_extract_ects(
     SpdmMeasurementResponseMessage11 response;
     std::vector<uint8_t> response_bytes(
         transcript.begin() +
-            static_cast<std::ptrdiff_t>(spdm_request_len),
+            static_cast<std::ptrdiff_t>(request_offset + spdm_request_len),
         transcript.end());
     // The CoRIM verifier only needs measurement records, never SPDM opaque data, so skip
     // decoding it here rather than fail on an OpaqueData format this path doesn't use.

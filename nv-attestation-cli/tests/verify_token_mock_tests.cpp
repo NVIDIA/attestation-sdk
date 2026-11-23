@@ -22,7 +22,6 @@
 // with a live JWKS + signed EAT (the verification success/policy/serialize
 // paths) can be exercised deterministically.
 
-#include <array>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -47,8 +46,6 @@ const char* const kPolicyPath = "/tmp/nvattest_mock_policy.rego";
 const char* const kSignedEar = "signed.ear.jwt";
 const char* const kAffirmingEar =
     R"({"ear_status":"affirming","submods":{"gpu-0":{"ear_status":"affirming"}}})";
-const char* const kContraindicatedEar =
-    R"({"ear_status":"contraindicated","submods":{"gpu-0":{"ear_status":"contraindicated"}}})";
 
 } // namespace
 
@@ -87,6 +84,7 @@ class VerifyTokenMock : public ::testing::Test {
 
     void use_ear() {
         options.token_type = "ear";
+        verification_options.relying_party_policy = "builtin:cc-bounce-buffer";
         g_fake_nvat.verified_ear_json = kAffirmingEar;
         std::ofstream(kTokenPath) << kSignedEar;
     }
@@ -156,7 +154,7 @@ TEST_F(VerifyTokenEar, PrintsPayloadOnlyAfterSuccess) {
     EXPECT_EQ(output.at("ear"), nlohmann::json::object());
 }
 
-TEST_F(VerifyTokenEar, AppliesEarPolicyAndRetainsAuthenticatedPayload) {
+TEST_F(VerifyTokenEar, AppliesRelyingPartyPolicyAndRetainsAuthenticatedPayload) {
     use_ear();
     write_policy("package policy\n");
     g_fake_nvat.policy_apply_ear_rc = NVAT_RC_RP_POLICY_MISMATCH;
@@ -166,36 +164,9 @@ TEST_F(VerifyTokenEar, AppliesEarPolicyAndRetainsAuthenticatedPayload) {
     EXPECT_EQ(captured_json().at("ear").at("ear_status"), "affirming");
 }
 
-TEST_F(VerifyTokenEar, NonAffirmingEarWithoutPolicyReturnsOverallFalse) {
-    use_ear();
-    const std::array<std::string, 3> authenticated_ears = {{
-        kContraindicatedEar,
-        R"({"ear_status":"contraindicated","submods":{"gpu-0":{"ear_status":"affirming"}}})",
-        R"({"ear_status":"affirming","submods":{"gpu-0":{"ear_status":"contraindicated"}}})",
-    }};
-
-    for (const auto& ear : authenticated_ears) {
-        SCOPED_TRACE(ear);
-        m_captured_cout.str("");
-        m_captured_cout.clear();
-        g_fake_nvat.verified_ear_json = ear;
-        EXPECT_EQ(run(), 3);
-        EXPECT_EQ(captured_json().at("ear"), nlohmann::json::parse(ear));
-    }
-}
-
-TEST_F(VerifyTokenEar, PolicySuccessDoesNotOverrideOverallFalse) {
-    use_ear();
-    g_fake_nvat.verified_ear_json = kContraindicatedEar;
-    write_policy("package policy\n");
-
-    EXPECT_EQ(run(), 3);
-    EXPECT_EQ(captured_json().at("ear").at("ear_status"), "contraindicated");
-}
-
 TEST_F(VerifyTokenEar, PolicySetupFailuresRetainAuthenticatedPayload) {
     use_ear();
-    verification_options.relying_party_policy = "/tmp/nvattest_missing_ear_policy.rego";
+    verification_options.relying_party_policy = "/tmp/nvattest_missing_relying_party_policy_v2.rego";
 
     EXPECT_EQ(run(), 1);
     EXPECT_EQ(captured_json().at("ear").at("ear_status"), "affirming");

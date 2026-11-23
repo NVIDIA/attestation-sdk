@@ -27,7 +27,8 @@
 #include "nv_attestation/utils.h"
 
 namespace nvattestation {
-
+// TODO: Rename to SpdmMeasurementRequestMessage to remove the SPDM
+// 1.1-specific suffix; this parser also supports SPDM 1.2.
 class SpdmMeasurementRequestMessage11 {
     static const size_t kSpdmVersionSize = 1;
     static const size_t kRequestResponseCodeSize = 1;

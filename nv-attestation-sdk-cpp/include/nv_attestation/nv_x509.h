@@ -33,11 +33,36 @@
 
 namespace nvattestation {
 
+/**
+ * Example certificate extension layout. DiceTcbInfo can also occur in other
+ * certificates in the AK chain or use its alias OID.
+ *
+ * Device AK certificate
+ * └─ Extensions
+ *    ├─ DiceTcbInfo                 extension OID: 2.23.133.5.4.1
+ *    │  └─ Data: firmware identity, version, FWID digests, etc.
+ *    └─ Extended Key Usage (EKU)   extension OID: 2.5.29.37
+ *       └─ If present, must include 2.23.133.5.4.100.9
+ *          (DICE attestation key purpose).
+ *
+ * CoRIM signing certificate
+ * └─ Extended Key Usage (EKU)      extension OID: 2.5.29.37
+ *    └─ Must include 1.3.6.1.4.1.5703.1200.1.1.1
+ *       (CoRIM signing purpose).
+ */
+extern const std::string OID_TCG_DICE_KP_ATTEST_LOC;
+extern const std::string OID_NVIDIA_CORIM_SIGNING;
+
 // DMTF device-info fields from a certificate's SubjectAltName otherName.
 struct DmtfDeviceInfo {
     std::string manufacturer;
     std::string product;
     std::string serial;
+};
+
+struct CertificateKeySizeMinimums {
+    int rsa_bits = 3072;
+    int ec_bits = 384;
 };
 
 // DSP0274 §330 fixes the value at exactly "<manufacturer>:<product>:<serial>",
@@ -235,7 +260,19 @@ class X509CertChain{
         Error set_root_cert(nv_unique_ptr<X509> root_cert);
         Error push_back(const std::string &cert_string);
         
-        Error verify(bool allow_partial_chain = false) const;
+        /**
+         * Verify the chain, then optionally check usage and key sizes on its
+         * validated path. The DICE option is for device AK chains: OpenSSL may
+         * pass recognized critical DICE OIDs, whose values we then parse.
+         */
+        Error verify(bool allow_partial_chain = false,
+                     const CertificateKeySizeMinimums* key_size_minimums = nullptr,
+                     bool enforce_certificate_usage = false,
+                     bool allow_critical_dice_extensions = false) const;
+        // Require the leaf EKU to contain required_oid if present. When
+        // require_extension is true, reject a leaf without an EKU extension.
+        Error verify_end_entity_eku(const std::string& required_oid,
+                                    bool require_extension) const;
         Error generate_cert_chain_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, CertChainClaims& out_cert_chain_claims) const;
         Error generate_ocsp_claims(const OcspVerifyOptions& ocsp_verify_options, IOcspHttpClient& ocsp_client, OCSPClaims& out_ocsp_claims) const;
         Error generate_per_cert_status(const OcspVerifyOptions& ocsp_options, IOcspHttpClient* ocsp_client,
@@ -272,6 +309,9 @@ class X509CertChain{
          * @return Error::Ok if the signature is valid, Error::InternalError if invalid.
          */
         Error verify_signature_pkcs11(const std::vector<uint8_t>& data, const std::vector<uint8_t>& pkcs11_signature, const EVP_MD* md);
+
+        // Verifies a 96-byte raw R||S signature with a P-384 leaf key and SHA-384.
+        Error verify_signature_ecdsa_p384(const std::vector<uint8_t>& data, const std::vector<uint8_t>& signature);
 
         enum class FWIDType {
             FWID_2_23_133_5_4_1,
@@ -341,6 +381,9 @@ class X509CertChain{
          */
         Error get_dice_tcb_info(size_t cert_index, const std::string& oid, DiceTcbInfo& out_dice_tcb_info,
                                 bool silent = false) const;
+        // Read legacy CompositeDeviceID under the OID shared with DiceTcbInfo.
+        Error get_composite_device_id(size_t cert_index,
+                                      CompositeDeviceId& out_composite_device_id) const;
 
         /**
          * @brief Extracts and parses a MultiDiceTcbInfo extension from a certificate in the chain.

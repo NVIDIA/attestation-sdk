@@ -34,6 +34,9 @@ CORIM_TESTDATA = TESTDATA / "sample_rims" / "corim"
 COMID_TESTDATA = TESTDATA / "sample_rims" / "comid"
 CORIM_SIGNED_TESTDATA = TESTDATA / "sample_rims" / "corim_signed"
 EAT_TESTDATA = TESTDATA / "sample_rims" / "eat"
+SPDM12_TRANSCRIPT = (
+    TESTDATA / "sample_attestation_data" / "spdm" / "cx9Spdm12Transcript.bin"
+)
 
 # Signed-token EAT fixtures (55799/61/COSE tag stack); every other .cbor in the
 # eat/ dir is a bare claims-set payload for the unsigned harness.
@@ -42,6 +45,9 @@ EAT_SIGNED_NAMES = {"full_signed.cbor", "bare_cose.cbor"}
 # Must match SpdmMeasurementRequestMessage11::kRequestLength
 # (include/nv_attestation/spdm/spdm_req.hpp).
 SPDM_REQUEST_LEN = 37
+SPDM12_VERSION = 0x12
+CX9_SPDM12_SIGNATURE_LEN = 96
+CX9_SPDM12_VCA_CODES = (0x84, 0x04, 0xE1, 0x61, 0xE3, 0x63)
 
 CORIM_FILES = sorted(p.name for p in CORIM_TESTDATA.glob("*.cbor"))
 COMID_FILES = sorted(p.name for p in COMID_TESTDATA.glob("*.cbor"))
@@ -67,9 +73,8 @@ CERT_CHAIN_COPIES = [
     ("switchCertChain.txt", "x509_from_cert"),
 ]
 
-# SPDM captures live as hex in AttestationReport.txt. First kRequestLength
-# bytes are the request; the rest is the response. See unit-tests/gpu/spdm/
-# spdm_req_test.cpp and spdm_resp_test.cpp for the same split logic.
+# SPDM 1.1 captures live as hex in AttestationReport.txt, with the request first.
+# The SPDM 1.2 capture has a VCA prefix and is split separately below.
 SPDM_CAPTURES = [
     ("hopperAttestationReport.txt", "hopper"),
     ("switchAttestationReport.txt", "switch"),
@@ -92,6 +97,15 @@ def copy_real_captures(dest: Path) -> None:
         req, resp = raw[:SPDM_REQUEST_LEN], raw[SPDM_REQUEST_LEN:]
         _write(dest / "spdm_req" / f"{label}_req.bin", req)
         _write(dest / "spdm_resp" / f"{label}_resp.bin", resp)
+
+    spdm12_request, spdm12_response = _split_cx9_spdm12_transcript(
+        SPDM12_TRANSCRIPT.read_bytes()
+    )
+    _write(dest / "spdm_req" / "cx9_spdm12_req.bin", spdm12_request)
+    _write(
+        dest / "spdm_resp" / "cx9_spdm12_resp.bin",
+        struct.pack("<H", CX9_SPDM12_SIGNATURE_LEN) + spdm12_response,
+    )
 
     for name in CORIM_FILES:
         _copy(CORIM_TESTDATA / name, dest / "corim_unsigned" / name)
@@ -298,6 +312,31 @@ def _parse_nvdaod_tlvs(raw: bytes) -> list[tuple[int, int, bytes]]:
 
 def verify(dest: Path) -> int:
     failures = 0
+    try:
+        spdm12_request, spdm12_response = _split_cx9_spdm12_transcript(
+            SPDM12_TRANSCRIPT.read_bytes()
+        )
+        expected_spdm12_seeds = {
+            "spdm_req/cx9_spdm12_req.bin": spdm12_request,
+            "spdm_resp/cx9_spdm12_resp.bin": (
+                struct.pack("<H", CX9_SPDM12_SIGNATURE_LEN) + spdm12_response
+            ),
+        }
+    except (OSError, ValueError) as e:
+        print(f"MALFORMED {SPDM12_TRANSCRIPT}: {e}")
+        return 1
+
+    for relative_path, expected in expected_spdm12_seeds.items():
+        path = dest / relative_path
+        if not path.exists():
+            print(f"MISSING {path}")
+            failures += 1
+        elif path.read_bytes() != expected:
+            print(f"MISMATCH {path}")
+            failures += 1
+        else:
+            print(f"OK {path}")
+
     for name, fields in GPU_OPAQUE_NVDAOD_SEEDS.items():
         path = dest / "gpu_opaque" / name
         if not path.exists():
@@ -381,6 +420,53 @@ def verify(dest: Path) -> int:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _split_cx9_spdm12_transcript(raw: bytes) -> tuple[bytes, bytes]:
+    """Split the CX9 capture's known SPDM 1.2 VCA + measurement transcript."""
+    offset = 0
+    for code in CX9_SPDM12_VCA_CODES:
+        if offset + 4 > len(raw) or raw[offset + 1] != code:
+            raise ValueError(f"expected VCA message 0x{code:02x} at offset {offset}")
+        version = raw[offset]
+        expected_version = 0x10 if code in (0x84, 0x04) else SPDM12_VERSION
+        if version != expected_version:
+            raise ValueError(
+                f"unexpected SPDM version 0x{version:02x} for VCA message "
+                f"0x{code:02x} at offset {offset}"
+            )
+
+        if code == 0x84:  # GET_VERSION request
+            message_len = 4
+        elif code == 0x04:  # VERSION response: header + 2 bytes per entry
+            if offset + 6 > len(raw):
+                raise ValueError("truncated VERSION response")
+            message_len = 6 + 2 * raw[offset + 5]
+        elif code in (0xE1, 0x61):  # 1.2 GET_CAPABILITIES / CAPABILITIES
+            message_len = 20
+        else:  # NEGOTIATE_ALGORITHMS / ALGORITHMS carry a 16-bit LE length
+            if offset + 6 > len(raw):
+                raise ValueError(f"truncated VCA message 0x{code:02x}")
+            message_len = int.from_bytes(raw[offset + 4:offset + 6], "little")
+            if message_len < 6:
+                raise ValueError(f"invalid VCA message length {message_len} for 0x{code:02x}")
+
+        if message_len > len(raw) - offset:
+            raise ValueError(f"truncated VCA message 0x{code:02x} at offset {offset}")
+        offset += message_len
+
+    if offset + SPDM_REQUEST_LEN > len(raw):
+        raise ValueError("transcript is missing the GET_MEASUREMENTS request")
+    request = raw[offset:offset + SPDM_REQUEST_LEN]
+    if request[0] != SPDM12_VERSION or request[1] != 0xE0:
+        raise ValueError("expected SPDM 1.2 GET_MEASUREMENTS request after VCA")
+
+    response = raw[offset + SPDM_REQUEST_LEN:]
+    if len(response) <= CX9_SPDM12_SIGNATURE_LEN:
+        raise ValueError("transcript is missing the SPDM response or signature")
+    if response[0] != SPDM12_VERSION or response[1] != 0x60:
+        raise ValueError("expected SPDM 1.2 MEASUREMENTS response after request")
+    return request, response
+
 
 def _copy(src: Path, dst: Path) -> None:
     if not src.exists():

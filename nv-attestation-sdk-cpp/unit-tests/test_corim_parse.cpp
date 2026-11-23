@@ -147,6 +147,12 @@ static nvattestation::Error parse_signed_corim_helper(
     return nvattestation::parse_signed_corim(bytes, options, ocsp_client, out, claims, parse_options);
 }
 
+TEST(CorimParse, PositionalCoseOptionsDisableOcsp) {
+    const nvattestation::CoseSign1VerifyOptions options{false, {}, {}, {}, false};
+    EXPECT_FALSE(options.verify_ocsp);
+    EXPECT_FALSE(options.require_corim_signing_eku);
+}
+
 TEST(CorimParse, ParseFullCorim) {
     auto bytes = read_file(get_corim_testdata("full.cbor"));
     auto corim = parse_corim(bytes);
@@ -689,9 +695,9 @@ TEST(CorimParse, ProfileAbsentIsAlwaysAccepted) {
 TEST(CorimParse, ParseCoverageCorim) {
     // Catch-all fixture for happy-path parser branches none of the other
     // fixtures hit: every version-scheme variant, mval.name, all flags
-    // (incl. is-tcb / is-confidentiality-protected), plain svn-val (untagged
-    // uint), tstr digest algorithm, manifest-signer entity role, and a
-    // validity-map with only not_after.
+    // (incl. is-tcb / is-confidentiality-protected / is-runtime-updatable),
+    // plain svn-val (untagged uint), tstr digest algorithm, manifest-signer
+    // entity role, and a validity-map with only not_after.
     auto bytes = read_file(get_corim_testdata("coverage.cbor"));
     nvattestation::CorimMap corim;
     nvattestation::Error err = nvattestation::parse_unsigned_corim(bytes, corim);
@@ -744,7 +750,7 @@ TEST(CorimParse, ParseCoverageCorim) {
         EXPECT_EQ(bin_ver->getValue(), std::string("\x01\x02\x03\xff", 4));
     }
 
-    // Triple 2: every flag bit set, including is-tcb and is-confidentiality-protected.
+    // Triple 2: every flag bit set, including is-runtime-updatable.
     {
         const auto* flags = triples[1].getMeasurements()[0].getValues().getFlags();
         ASSERT_NE(flags, nullptr);
@@ -752,17 +758,19 @@ TEST(CorimParse, ParseCoverageCorim) {
         EXPECT_TRUE(*flags->getTcb());
         ASSERT_NE(flags->getConfidentialityProtected(), nullptr);
         EXPECT_TRUE(*flags->getConfidentialityProtected());
+        ASSERT_NE(flags->getRuntimeUpdatable(), nullptr);
+        EXPECT_TRUE(*flags->getRuntimeUpdatable());
     }
 
-    // Triple 3: digest carries a tstr algorithm name (Digest::AlgKind::kString).
+    // Triple 3: the wire-format algorithm name is normalized to its NI ID.
     {
         const auto& digests = triples[2].getMeasurements()[0].getValues().getDigests();
         ASSERT_EQ(digests.size(), 1u);
         std::string alg_str;
         int32_t alg_int = 0;
-        EXPECT_TRUE(digests[0].getAlgorithm(alg_str));
-        EXPECT_FALSE(digests[0].getAlgorithm(alg_int));
-        EXPECT_EQ(alg_str, "sha-256");
+        EXPECT_FALSE(digests[0].getAlgorithm(alg_str));
+        EXPECT_TRUE(digests[0].getAlgorithm(alg_int));
+        EXPECT_EQ(alg_int, 1);
     }
 }
 
@@ -876,7 +884,30 @@ TEST(CorimParse, ParseSignedFull) {
     compare_to_rim_golden(j, "full");
 }
 
-TEST(CorimParse, ParseSignedRevokedSigningCertRejected) {
+TEST(CorimParse, RequestedSigningEkuRejectsGeneratedLeafWithoutPurpose) {
+    const auto bytes = read_file(get_signed_corim_testdata("signed_missing_corim_eku.cbor"));
+    nvattestation::CoseSign1VerifyOptions options;
+    options.root_cert_pem = signed_corim_trust_anchor();
+    options.verify_ocsp = false;
+    options.require_corim_signing_eku = true;
+    NoopOcspHttpClient unused_client;
+    nvattestation::CorimMap corim;
+    std::vector<nvattestation::PerCertStatus> claims;
+    EXPECT_EQ(nvattestation::parse_signed_corim(
+                  bytes, options, unused_client, corim, claims),
+              nvattestation::Error::CertChainVerificationFailure);
+}
+
+TEST(CorimParse, RejectsSignerWithoutCorimPurpose) {
+    const auto bytes = read_file(get_signed_corim_testdata("signed_missing_corim_eku.cbor"));
+    nvattestation::CorimMap corim;
+    EXPECT_EQ(parse_signed_corim_helper(bytes, corim),
+              nvattestation::Error::CertChainVerificationFailure);
+}
+
+// Parsing reports the chain status and leaves the verdict to the caller, so a
+// revoked signer still yields a usable CoRIM plus the claims that condemn it.
+TEST(CorimParse, ParseSignedRevokedSigningCertReportsStatus) {
     // Needs a chain with >=2 certs: the OCSP check pairs each subject with
     // its issuer, so a lone leaf (signed_full.cbor) has nothing to check.
     auto bytes = read_file(get_signed_corim_testdata("signed_full_chained.cbor"));
@@ -884,17 +915,19 @@ TEST(CorimParse, ParseSignedRevokedSigningCertRejected) {
     nvattestation::CorimMap corim;
     std::vector<nvattestation::PerCertStatus> claims;
     EXPECT_EQ(parse_signed_corim_with_ocsp_helper(bytes, ocsp_client, corim, &claims),
-              nvattestation::Error::CertChainVerificationFailure);
-    // Cert-chain diagnostics must survive the rejection, not just the error code.
+              nvattestation::Error::Ok);
     EXPECT_FALSE(claims.empty());
+    EXPECT_FALSE(nvattestation::all_certs_trusted(claims));
 }
 
-TEST(CorimParse, ParseSignedUnknownSigningCertRejected) {
+TEST(CorimParse, ParseSignedUnknownSigningCertReportsStatus) {
     auto bytes = read_file(get_signed_corim_testdata("signed_full_chained.cbor"));
     FixedStatusOcspHttpClient ocsp_client(V_OCSP_CERTSTATUS_UNKNOWN);
     nvattestation::CorimMap corim;
-    EXPECT_EQ(parse_signed_corim_with_ocsp_helper(bytes, ocsp_client, corim),
-              nvattestation::Error::CertChainVerificationFailure);
+    std::vector<nvattestation::PerCertStatus> claims;
+    EXPECT_EQ(parse_signed_corim_with_ocsp_helper(bytes, ocsp_client, corim, &claims),
+              nvattestation::Error::Ok);
+    EXPECT_FALSE(nvattestation::all_certs_trusted(claims));
 }
 
 TEST(CorimParse, ParseSignedFullChained) {

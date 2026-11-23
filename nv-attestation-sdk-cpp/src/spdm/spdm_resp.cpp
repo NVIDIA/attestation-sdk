@@ -73,8 +73,8 @@ Error SpdmMeasurementResponseMessage11::parse( // NOLINT(readability-function-co
         return Error::SpdmParseError;
     }
     m_spdm_version = response_data[current_offset];
-    if (m_spdm_version != SPDM_VERSION_1_1) {
-        LOG_ERROR("SPDMVersion is not " << to_hex_string(SPDM_VERSION_1_1) << " (1.1). Actual version: " << to_hex_string(m_spdm_version));
+    if (m_spdm_version != SPDM_VERSION_1_1 && m_spdm_version != SPDM_VERSION_1_2) {
+        LOG_ERROR("SPDMVersion is not " << to_hex_string(SPDM_VERSION_1_1) << " (1.1) or " << to_hex_string(SPDM_VERSION_1_2) << " (1.2). Actual version: " << to_hex_string(m_spdm_version));
         return Error::SpdmParseError;
     }
     current_offset += kSpdmVersionSize;

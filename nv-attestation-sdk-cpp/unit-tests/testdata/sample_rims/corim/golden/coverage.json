@@ -128,6 +128,7 @@
                   "recovery": true,
                   "replay_protected": true,
                   "runtime_meas": true,
+                  "runtime_updatable": true,
                   "secure": true,
                   "tcb": true
                 }

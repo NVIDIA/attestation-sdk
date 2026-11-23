@@ -46,6 +46,7 @@ namespace nvattestation {
     MACRO(RimInvalidSchema, NVAT_RC_RIM_INVALID_SCHEMA) \
     MACRO(RimMeasurementNotFound, NVAT_RC_RIM_MEASUREMENT_NOT_FOUND) \
     MACRO(RimMeasurementConflict, NVAT_RC_RIM_MEASUREMENT_CONFLICT) \
+    MACRO(RimLocatorUnavailable, NVAT_RC_RIM_LOCATOR_UNAVAILABLE) \
     MACRO(NrasAttestationError, NVAT_RC_NRAS_ATTESTATION_ERROR) \
     MACRO(NrasTokenInvalid, NVAT_RC_NRAS_TOKEN_INVALID) \
     MACRO(NrasForbidden, NVAT_RC_NRAS_FORBIDDEN) \
@@ -81,6 +82,14 @@ namespace nvattestation {
     MACRO(EvidenceNonceMismatch, NVAT_RC_EVIDENCE_NONCE_MISMATCH) \
     MACRO(EarSigningFailed, NVAT_RC_EAR_SIGNING_FAILED) \
     MACRO(VerifierJwksError, NVAT_RC_VERIFIER_JWKS_ERROR) \
+    MACRO(CmwJsonInvalid, NVAT_RC_CMW_JSON_INVALID) \
+    MACRO(CmwStructureInvalid, NVAT_RC_CMW_STRUCTURE_INVALID) \
+    MACRO(CmwProfileInvalid, NVAT_RC_CMW_PROFILE_INVALID) \
+    MACRO(CmwEvidenceMissing, NVAT_RC_CMW_EVIDENCE_MISSING) \
+    MACRO(CmwRecordInvalid, NVAT_RC_CMW_RECORD_INVALID) \
+    MACRO(CmwEncodingInvalid, NVAT_RC_CMW_ENCODING_INVALID) \
+    MACRO(CmwMediaTypeUnsupported, NVAT_RC_CMW_MEDIA_TYPE_UNSUPPORTED) \
+    MACRO(CmwNonceInvalid, NVAT_RC_CMW_NONCE_INVALID) \
     MACRO(JsonSerializationError, NVAT_RC_JSON_SERIALIZATION_ERROR) \
     MACRO(LibXml2Error, NVAT_RC_LIBXML2_ERROR) \
     MACRO(NscqInitFailed, NVAT_RC_NSCQ_INIT_FAILED) \
@@ -132,6 +141,7 @@ inline const char* to_string(Error error) {
         case Error::RimInvalidSchema: return "RIM Invalid Schema";
         case Error::RimMeasurementNotFound: return "RIM Measurement Not Found";
         case Error::RimMeasurementConflict: return "RIM Measurement Conflict";
+        case Error::RimLocatorUnavailable: return "RIM Locator Unavailable";
 
         // OCSP errors
         case Error::OcspInvalidResponse: return "OCSP Invalid Response";
@@ -187,6 +197,14 @@ inline const char* to_string(Error error) {
         case Error::EvidenceNonceMismatch: return "Evidence Nonce Mismatch";
         case Error::EarSigningFailed: return "EAR Signing Failed";
         case Error::VerifierJwksError: return "Verifier JWKS Error";
+        case Error::CmwJsonInvalid: return "CMW input must be valid JSON";
+        case Error::CmwStructureInvalid: return "CMW collection and evidence items must be JSON objects";
+        case Error::CmwProfileInvalid: return "CMW __cmwc_t profile is missing, not a string, or unsupported";
+        case Error::CmwEvidenceMissing: return "CMW must contain evidence items, each with an evidence record";
+        case Error::CmwRecordInvalid: return "CMW record must be a two-element array of strings";
+        case Error::CmwEncodingInvalid: return "CMW record data must be unpadded base64url";
+        case Error::CmwMediaTypeUnsupported: return "CMW nonce, certificate, hints, or appraisal-settings media type is unsupported";
+        case Error::CmwNonceInvalid: return "CMW nonce must be at least 32 bytes";
 
         // JSON serialization errors
         case Error::JsonSerializationError: return "JSON Serialization Error";

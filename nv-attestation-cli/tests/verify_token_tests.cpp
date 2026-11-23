@@ -44,6 +44,7 @@ TEST(VerifyTokenArgHandling, MissingTokenReturnsExitCode1) {
     int exit_code = 0;
     std::string output = exec_and_capture_output(cmd, exit_code);
     EXPECT_EQ(exit_code, 1) << "Expected exit code 1 when no token is supplied. Output:\n" << output;
+    EXPECT_EQ(output.find("show-policy"), std::string::npos);
 
     std::string json_str;
     if (extract_json_object(output, json_str)) {
@@ -56,7 +57,7 @@ TEST(VerifyTokenArgHandling, MissingTokenReturnsExitCode1) {
     // If no JSON in output, the exit code check above is sufficient.
 }
 
-TEST(VerifyTokenEarArgHandling, AcceptsTokenTypeAndClockSkewLeewayOptions) {
+TEST(VerifyTokenEarArgHandling, HelpAndMissingPolicyHint) {
     std::string nvattest_bin = get_env_or_default("NVATTEST_BIN", "../nvattest");
     int exit_code = 0;
     const std::string output = exec_and_capture_output(
@@ -65,10 +66,20 @@ TEST(VerifyTokenEarArgHandling, AcceptsTokenTypeAndClockSkewLeewayOptions) {
 
     EXPECT_EQ(exit_code, 0) << output;
     EXPECT_THAT(output, ::testing::HasSubstr("--token-type"));
+    EXPECT_THAT(output, ::testing::HasSubstr("--rp"));
     EXPECT_THAT(output, ::testing::HasSubstr("--clock-skew-leeway-seconds"));
     EXPECT_THAT(output, ::testing::HasSubstr("default 60"));
     EXPECT_THAT(output, ::testing::HasSubstr("zero means strict validation"));
     EXPECT_THAT(output, ::testing::HasSubstr("iat, nbf, and exp"));
+    const std::string missing_policy = exec_and_capture_output(
+        nvattest_bin + " verify-token --token-type ear </dev/null", exit_code);
+    EXPECT_EQ(exit_code, 105) << missing_policy;
+    EXPECT_THAT(missing_policy, ::testing::HasSubstr("required for EAR tokens. Run 'nvattest show-policy'"));
+    const std::string with_alias = exec_and_capture_output(
+        nvattest_bin + " verify-token --token-type ear --rp builtin:cc-bounce-buffer </dev/null",
+        exit_code);
+    EXPECT_EQ(exit_code, 1) << with_alias;
+    EXPECT_THAT(with_alias, ::testing::HasSubstr("No token provided"));
 }
 
 TEST(VerifyTokenEarArgHandling, RejectsInvalidClockSkew) {

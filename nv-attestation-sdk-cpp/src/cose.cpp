@@ -329,7 +329,7 @@ Error verify_cose_sign1_signature(
 
     // RFC 9053 §2.1: COSE ECDSA signatures are raw r||s, not DER. Use the
     // pkcs11 helper which converts r||s → DER before calling EVP_DigestVerifyFinal.
-    error = validated_chain.verify_signature_pkcs11(tbs_data, components.signature, EVP_sha384());
+    error = validated_chain.verify_signature_ecdsa_p384(tbs_data, components.signature);
     if (error != Error::Ok) {
         LOG_ERROR("COSE signature verification failed");
         return Error::CoseInvalidSignature;
@@ -338,6 +338,23 @@ Error verify_cose_sign1_signature(
     LOG_DEBUG("COSE signature verification successful");
     return Error::Ok;
 }
+
+namespace {
+// root_cert_pem first, then the extras, skipping empties.
+std::vector<std::string> prepend(const std::string &first,
+                                 const std::vector<std::string> &rest) {
+    std::vector<std::string> out;
+    if (!first.empty()) {
+        out.push_back(first);
+    }
+    for (const auto &pem : rest) {
+        if (!pem.empty()) {
+            out.push_back(pem);
+        }
+    }
+    return out;
+}
+} // namespace
 
 Error verify_cose_sign1(
     const std::vector<uint8_t>& cose_sign1_bytes,
@@ -383,17 +400,53 @@ Error verify_cose_sign1(
     }
 
     X509CertChain cert_chain;
-    error = X509CertChain::create_from_cert_chain_str(
-        CertificateChainType::GENERIC, options.root_cert_pem, x5chain_pem, cert_chain);
+    if (options.additional_root_cert_pems.empty()) {
+        error = X509CertChain::create_from_cert_chain_str(
+            CertificateChainType::GENERIC, options.root_cert_pem, x5chain_pem, cert_chain);
+    } else {
+        // Build a multi-anchor store: verifying under any one root is enough.
+        std::vector<nv_unique_ptr<X509>> anchors;
+        std::vector<X509 *> anchor_ptrs;
+        for (const auto &pem : prepend(options.root_cert_pem,
+                                       options.additional_root_cert_pems)) {
+            nv_unique_ptr<X509> cert = x509_from_cert_string(pem);
+            if (!cert) {
+                LOG_ERROR("Skipping unparseable COSE signing trust root");
+                continue;
+            }
+            anchor_ptrs.push_back(cert.get());
+            anchors.push_back(std::move(cert));
+        }
+        if (anchor_ptrs.empty()) {
+            LOG_ERROR("No usable COSE signing trust roots");
+            return Error::CertChainVerificationFailure;
+        }
+        nv_unique_ptr<X509_STORE> store = create_trust_store(anchor_ptrs);
+        if (!store) {
+            LOG_ERROR("Failed to build multi-anchor trust store");
+            return Error::CertChainVerificationFailure;
+        }
+        error = X509CertChain::create_from_cert_chain_str(
+            CertificateChainType::GENERIC, std::move(store), x5chain_pem, cert_chain);
+    }
     if (error != Error::Ok) {
         LOG_ERROR("Failed to build certificate chain with root cert");
         return error;
     }
 
-    error = cert_chain.verify();
+    const CertificateKeySizeMinimums minimums;
+    error = cert_chain.verify(false, &minimums,
+                              options.require_corim_signing_eku);
     if (error != Error::Ok) {
         LOG_ERROR("Certificate chain verification failed");
         return error;
+    }
+    if (options.require_corim_signing_eku) {
+        error = cert_chain.verify_end_entity_eku(
+            OID_NVIDIA_CORIM_SIGNING, true);
+        if (error != Error::Ok) {
+            return error;
+        }
     }
 
     error = verify_cose_sign1_signature(components, cert_chain);
@@ -403,14 +456,12 @@ Error verify_cose_sign1(
 
     {
         IOcspHttpClient* ocsp_ptr = options.verify_ocsp ? &ocsp_client : nullptr;
-        error = cert_chain.generate_per_cert_status(options.ocsp_options, ocsp_ptr, out_result.cert_chain_claims);
-        if (error != Error::Ok) {
-            LOG_ERROR("Failed to generate per-cert status");
-            return error;
-        }
-        if (!all_certs_trusted(out_result.cert_chain_claims)) {
-            LOG_ERROR("Signing cert chain has an expired, revoked, or untrusted-OCSP-status certificate");
-            return Error::CertChainVerificationFailure;
+        // An unreachable responder leaves the unreached certs marked ERROR,
+        // which makes the chain untrusted without ending the appraisal here.
+        if (cert_chain.generate_per_cert_status(options.ocsp_options, ocsp_ptr,
+                                                out_result.cert_chain_claims) !=
+            Error::Ok) {
+            LOG_WARN("OCSP collection failed; chain status reports what was reached");
         }
     }
 

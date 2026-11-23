@@ -31,7 +31,7 @@ add_executable(nv-attestation-cli-tests
     # fake_nvat.cpp.
     ../src/verify_token_output.cpp
     ../src/verify_token.cpp
-    ../src/ear_status.cpp
+    ../src/relying_party_policy_v2.cpp
     ../src/attest.cpp
     ../src/attest_v2.cpp
     ../src/collect_evidence.cpp
@@ -121,7 +121,53 @@ else()
     add_dependencies(nv-attestation-cli-tests nvattest)
 endif()
 
+set(SDK_TESTDATA_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../nv-attestation-sdk-cpp/unit-tests/testdata")
+if(TARGET prepare-test-data-for-unit-tests)
+    # The SDK already stages and converts these fixtures in a source build.
+    set(CLI_SDK_TESTDATA_DIR "${NVAT_SDK_BUILD_DIR}/unit-tests/testdata")
+    add_dependencies(nv-attestation-cli-tests prepare-test-data-for-unit-tests)
+else()
+    # Standalone/installed-SDK tests have no SDK fixture target; use its recipe.
+    set(CLI_SDK_TESTDATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/testdata")
+    file(COPY "${SDK_TESTDATA_SOURCE_DIR}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+    add_custom_target(prepare-test-data-for-cli-tests
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${SDK_TESTDATA_SOURCE_DIR}/sample_rims"
+            "${CLI_SDK_TESTDATA_DIR}/sample_rims"
+        COMMAND bash
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../nv-attestation-sdk-cpp/scripts/prepare-test-data.sh"
+            "${CLI_SDK_TESTDATA_DIR}"
+        VERBATIM
+    )
+    add_dependencies(nv-attestation-cli-tests prepare-test-data-for-cli-tests)
+endif()
+target_compile_definitions(nv-attestation-cli-tests PRIVATE
+    CLI_SDK_TESTDATA_DIR="${CLI_SDK_TESTDATA_DIR}")
+
 include(GoogleTest)
 gtest_discover_tests(nv-attestation-cli-tests PROPERTIES LABELS "cli"
+    XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test-results
+)
+
+add_executable(nv-attestation-relying-party-policy-v2-tests
+    relying_party_policy_v2_tests.cpp
+    ../src/relying_party_policy_v2.cpp
+)
+target_include_directories(nv-attestation-relying-party-policy-v2-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_link_libraries(nv-attestation-relying-party-policy-v2-tests PRIVATE
+    GTest::gtest_main
+    nlohmann_json::nlohmann_json
+    nvat::nvat
+)
+if (SANITIZER)
+    target_compile_options(nv-attestation-relying-party-policy-v2-tests PRIVATE
+        -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
+    target_link_options(nv-attestation-relying-party-policy-v2-tests PRIVATE
+        -fsanitize=${SANITIZER} -fno-sanitize-recover=all)
+endif()
+gtest_discover_tests(nv-attestation-relying-party-policy-v2-tests PROPERTIES LABELS "cli"
     XML_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test-results
 )

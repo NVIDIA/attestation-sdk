@@ -17,6 +17,7 @@
 
 #include "utils.h"
 #include "CLI/Validators.hpp"
+#include "relying_party_policy_v2.h"
 #include "logging.h"
 #include "nvat.h"
 #include "spdlog/spdlog.h"
@@ -154,13 +155,33 @@ namespace nvattest {
             ->default_val(true);
     }
 
-    void add_evidence_verification_options(CLI::App* app, EvidenceVerificationOptions& options) {
+    CLI::Validator relying_party_policy_v2_validator() {
+        return CLI::Validator(
+            [](std::string& selector) {
+                const auto selection = resolve_relying_party_policy_v2_selector(selector);
+                if (selection.kind == RelyingPartyPolicyV2SelectorKind::kBuiltin)
+                    return std::string{};
+                if (selection.kind == RelyingPartyPolicyV2SelectorKind::kUnknownBuiltin)
+                    return std::string{"unknown built-in relying-party policy"};
+                auto file = CLI::ExistingFile;
+                return file(selector);
+            },
+            "builtin:<name> or an existing Rego file",
+            "RELYING_PARTY_POLICY_V2");
+    }
+
+    void add_evidence_verification_options(CLI::App* app, EvidenceVerificationOptions& options,
+                                           bool allow_builtin) {
         app->add_option("--verifier", options.verifier, "Appraise evidence using the given verifier type")
             ->check(CLI::IsMember({"local", "remote"}))
             ->default_val("local");
-        app->add_option("--relying-party-policy", options.relying_party_policy, "Path to a local file which contains a Relying Party Rego policy")
-            ->check(CLI::ExistingFile)
-            ->default_str("");
+        auto* policy = app->add_option("--relying-party-policy,--rp", options.relying_party_policy,
+            allow_builtin
+                ? "Relying-party policy: an existing Rego file, or builtin:<name> with --token-type ear"
+                : "Relying-party Rego policy file");
+        if (allow_builtin) policy->check(relying_party_policy_v2_validator());
+        else policy->check(CLI::ExistingFile);
+        policy->default_str("");
         app->add_option("--rim-store", options.rim_store, "Type of RIM store to use if --verifier=local")
             ->check(CLI::IsMember({"remote", "dir"}))
             ->default_val("remote");
@@ -345,6 +366,21 @@ namespace nvattest {
             nvat_relying_party_policy_free(&out_raw_policy);
         }
         return err;
+    }
+    nvat_rc_t load_relying_party_policy_v2(
+        const std::string& selector, nvat_relying_party_policy_t& out_raw_policy) {
+        out_raw_policy = nullptr;
+        const auto selection = resolve_relying_party_policy_v2_selector(selector);
+        if (selection.kind == RelyingPartyPolicyV2SelectorKind::kBuiltin) {
+            const nvat_rc_t err = nvat_relying_party_policy_create_rego_from_str(
+                &out_raw_policy, selection.builtin_source);
+            if (err != NVAT_RC_OK && out_raw_policy != nullptr)
+                nvat_relying_party_policy_free(&out_raw_policy);
+            return err;
+        }
+        if (selection.kind != RelyingPartyPolicyV2SelectorKind::kFile)
+            return NVAT_RC_BAD_ARGUMENT;
+        return load_relying_party_policy(selector, out_raw_policy);
     }
 
     nvat_rc_t init_sdk(CliLogger& logger, const CommonOptions& common_options) {

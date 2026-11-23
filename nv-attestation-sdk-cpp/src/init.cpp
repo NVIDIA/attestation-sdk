@@ -52,6 +52,10 @@ Error handle_init_logger(const std::shared_ptr<SdkOptions>& options) {
     return Error::Ok;
 }
 
+void handle_init_observer(const std::shared_ptr<SdkOptions>& options) {
+    set_observer(options->observer);
+}
+
 Error handle_init_curl() {
     // The first curl_easy_init() performs lazy global init, which is only
     // lock-guarded on libcurl >= 7.84 built with atomics. Doing it here
@@ -146,6 +150,7 @@ Error init(const std::shared_ptr<SdkOptions>& sdk_options) {
         if (err != Error::Ok) {
             return err;
         }
+        handle_init_observer(g_sdkOptions);
 
         // Initialize curl before xmlsec: curl_global_init also initialises OpenSSL.
         err = handle_init_curl();
@@ -174,6 +179,7 @@ void shutdown() {
     handle_shutdown_nvml();
     handle_shutdown_nscq();
     handle_delete_sdk_options();
+    destroy_observer();
     handle_shutdown_logger();
 }
 

@@ -65,6 +65,44 @@ TEST_F(NvCacheTest, TestPutAndRemove) {
     ASSERT_EQ(err, Error::CacheObjectNotFound);
 }
 
+TEST(NvShortExpiryCacheTest, ExpiredGetReleasesPayload) {
+    // Zero TTL expires immediately, so cleanup can be checked without sleeping.
+    NvCache cache(std::make_shared<NvCacheOptions>(2, 0));
+    auto payload = std::make_shared<int>(1);
+    std::weak_ptr<int> observed = payload;
+    ASSERT_EQ(cache.put("expired", payload, 1), Error::Ok);
+    payload.reset();
+    ASSERT_FALSE(observed.expired());
+
+    std::shared_ptr<void> value;
+    EXPECT_EQ(cache.get("expired", value), Error::CacheObjectNotFound);
+    EXPECT_TRUE(observed.expired());
+    EXPECT_EQ(cache.get("expired", value), Error::CacheObjectNotFound);
+}
+
+TEST(NvShortExpiryCacheTest, ExpiredGetPreservesCapacityAndLruOrder) {
+    auto options = std::make_shared<NvCacheOptions>(2, 0);
+    NvCache cache(options);
+    ASSERT_EQ(cache.put("expired", std::make_shared<int>(1), 1), Error::Ok);
+    // Give later entries a long TTL while leaving the first entry expired.
+    options->ttl_seconds = 3600;
+    ASSERT_EQ(cache.put("live", std::make_shared<int>(2), 1), Error::Ok);
+
+    std::shared_ptr<void> value;
+    ASSERT_EQ(cache.get("expired", value), Error::CacheObjectNotFound);
+    ASSERT_EQ(cache.put("new", std::make_shared<int>(3), 1), Error::Ok);
+    // Reclaimed capacity must let both live entries remain in the cache.
+    ASSERT_EQ(cache.get("live", value), Error::Ok);
+    ASSERT_EQ(cache.get("new", value), Error::Ok);
+
+    // Reusing the removed key must evict only the least recently used live entry.
+    ASSERT_EQ(cache.put("expired", std::make_shared<int>(4), 1), Error::Ok);
+    EXPECT_EQ(cache.get("live", value), Error::CacheObjectNotFound);
+    EXPECT_EQ(cache.get("new", value), Error::Ok);
+    ASSERT_EQ(cache.get("expired", value), Error::Ok);
+    EXPECT_EQ(*std::static_pointer_cast<int>(value), 4);
+}
+
 TEST_F(NvCacheTest, TestLruEviction) {
     /*
         put test

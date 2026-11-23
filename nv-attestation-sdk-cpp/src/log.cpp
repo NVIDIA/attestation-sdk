@@ -22,6 +22,7 @@
 #include "nvat.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "nv_attestation/log.h"
+#include "nv_attestation/request_id.h"
 
 namespace nvattestation {
 
@@ -61,7 +62,12 @@ void SpdLogLogger::log(LogLevel level, const std::string& message, const std::st
     // TODO(p1): Add custom flag formatter to support filename, function, and line through flags
     // See: https://github.com/gabime/spdlog/wiki/Custom-formatting#extending-spdlog-with-your-own-flags
     auto source_log = spdlog::source_loc{filename.c_str(), line_number, function.c_str()};
-    m_logger->log(source_log, get_spdlog_level(level), message);
+    const std::string& request_id = current_request_id();
+    if (request_id.empty()) {
+        m_logger->log(source_log, get_spdlog_level(level), message);
+    } else {
+        m_logger->log(source_log, get_spdlog_level(level), "[request_id=" + request_id + "] " + message);
+    }
 }
 
 bool SpdLogLogger::should_log(LogLevel level, const std::string& filename, const std::string& function, int line_number) {

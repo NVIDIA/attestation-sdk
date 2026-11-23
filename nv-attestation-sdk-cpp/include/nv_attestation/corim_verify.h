@@ -236,6 +236,40 @@ struct EnvOutcome {
     bool mismatched() const;
 };
 
+// Claim values retain their source type until an output format serializes them.
+// Serialize through to_json(nlohmann::json&, const EvidenceClaimValue&).
+class EvidenceClaimValue {
+  public:
+    virtual ~EvidenceClaimValue() = default;
+
+  private:
+    // Dispatch target for the free to_json, which cannot itself be virtual.
+    virtual void toJson(nlohmann::json &json_out) const = 0;
+    friend void to_json(nlohmann::json &json_out, const EvidenceClaimValue &value);
+};
+
+class TextClaimValue final : public EvidenceClaimValue {
+  public:
+    explicit TextClaimValue(std::string value) : m_value(std::move(value)) {}
+    const std::string &value() const { return m_value; }
+
+  private:
+    void toJson(nlohmann::json &json_out) const override;
+    std::string m_value;
+};
+
+class RawClaimValue final : public EvidenceClaimValue {
+  public:
+    explicit RawClaimValue(ByteString value) : m_value(std::move(value)) {}
+    const ByteString &value() const { return m_value; }
+
+  private:
+    void toJson(nlohmann::json &json_out) const override;
+    ByteString m_value;
+};
+
+using EvidenceClaimMap = std::map<std::string, std::unique_ptr<EvidenceClaimValue>>;
+
 struct VerificationResult {
     // When `diagnostics` is non-empty, `outcomes` is empty (verify aborted).
     std::vector<Diagnostic> diagnostics;
@@ -245,8 +279,8 @@ struct VerificationResult {
     // Claims-from-evidence envs (NVIDIA CoRIM arc, penultimate arc 2). EAR
     // target: corroborated -> ear_nvidia_evidence_rim_cmp, uncorroborated ->
     // ear_evidence_claims.
-    std::map<std::string, std::string> corroborated_evidence_claims;
-    std::map<std::string, std::string> uncorroborated_evidence_claims;
+    EvidenceClaimMap corroborated_evidence_claims;
+    EvidenceClaimMap uncorroborated_evidence_claims;
     // Evidence ECTs whose environment matched no reference ECT.
     std::vector<EnvironmentMap> unmatched_environments;
 };
@@ -275,6 +309,8 @@ void to_json(nlohmann::json &json_out, const MismatchReason &reason);
 void to_json(nlohmann::json &json_out, const Diagnostic &diagnostic);
 void to_json(nlohmann::json &json_out, const EctAttempt &attempt);
 void to_json(nlohmann::json &json_out, const EnvOutcome &outcome);
+void to_json(nlohmann::json &json_out, const EvidenceClaimValue &value);
+void to_json(nlohmann::json &json_out, const EvidenceClaimMap &claims);
 void to_json(nlohmann::json &json_out, const VerificationResult &result);
 
 // Why a stage could not run. `code` reuses the public nvat_rc_t numbering so a
@@ -397,6 +433,12 @@ void to_json(nlohmann::json &json_out, const CorimAttestationResult &result);
 // verify(). Returns a CorimAttestationResult carrying the per-item appraisal
 // (anchoring, signature, CoRIM signing chains, and the match outcome).
 //
+// Per-call options behind the C API's nvat_verify_cmw_options_t.
+struct VerifyCmwOptions {
+    // Empty means each outbound request generates its own id.
+    std::string request_id;
+};
+
 // TODO(v2): take an EvidencePolicy once RP policy is wired.
 class LocalCorimVerifier {
   public:
@@ -408,9 +450,19 @@ class LocalCorimVerifier {
         CorimStore corim_store,
         std::shared_ptr<IOcspHttpClient> ocsp_client = nullptr);
 
-    // Append a root CA PEM to the device-identity trust store. The chain
-    // on each CMW evidence item must anchor to one of these roots.
+    /**
+     * @brief Add one PEM root CA to the device identity trust store.
+     *
+     * Device chains must anchor to this root or another root in the store.
+     */
     Error add_device_identity_trust_root_pem(std::string pem);
+
+    /**
+     * @brief Add one PEM root CA for CoRIM and fetched CoEV signing chains.
+     *
+     * A root already in the store is accepted without adding another copy.
+     */
+    Error add_rim_signing_trust_root_pem(std::string pem);
 
     // When disabled, the injected OCSP client is not consulted and chains are
     // treated as not revoked.
@@ -487,6 +539,8 @@ class LocalCorimVerifier {
     bool m_verify_coev_signature = true;
     bool m_verify_revocation = true;
     std::string m_rim_signing_root;
+    // Extra roots accepted alongside m_rim_signing_root.
+    std::vector<std::string> m_rim_signing_additional_roots;
     EvidenceHandlerSettings m_evidence_handler_settings;
     std::vector<std::string> m_backup_rim_locators;
     std::vector<HashAlgorithm> m_default_hash_algorithms{HashAlgorithm::Sha256};

@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -26,7 +28,7 @@
 
 #include "CLI/Validators.hpp"
 #include "attest_v2.h"
-#include "ear_status.h"
+#include "relying_party_policy_v2.h"
 #include "nvat.h"
 #include "nvattest_types.h"
 #include "spdlog/spdlog.h"
@@ -38,6 +40,41 @@ namespace {
 
 constexpr uint64_t kDefaultCacheBytes   = 10ULL * 1024 * 1024;
 constexpr time_t   kDefaultCacheTtlSecs = 3600;
+
+using AddTrustRoot = nvat_rc_t (*)(nvat_local_corim_verifier_t, const char*);
+
+/**
+ * Reads PEM files and adds their root certificates to the verifier trust store
+ * selected by add_root. Rejects empty files and embedded null bytes before
+ * passing PEM data to the SDK for certificate validation.
+ * Returns the first file-read, input-validation, or SDK error, or NVAT_RC_OK
+ * if all files were accepted.
+ */
+nvat_rc_t add_trust_roots_from_files(
+    nvat_local_corim_verifier_t verifier,
+    const std::vector<std::string>& paths, const char* store_name,
+    AddTrustRoot add_root) {
+    for (const auto& path : paths) {
+        std::vector<uint8_t> bytes;
+        nvat_rc_t err = read_binary_file(path, bytes);
+        if (err != NVAT_RC_OK) {
+            SPDLOG_ERROR("Cannot read {} trust root from {}", store_name, path);
+            return err;
+        }
+        if (bytes.empty() ||
+            std::find(bytes.begin(), bytes.end(), uint8_t{0}) != bytes.end()) {
+            SPDLOG_ERROR("Invalid PEM data in {} trust root file {}", store_name, path);
+            return NVAT_RC_BAD_ARGUMENT;
+        }
+        const std::string pem(bytes.begin(), bytes.end());
+        err = add_root(verifier, pem.c_str());
+        if (err != NVAT_RC_OK) {
+            SPDLOG_ERROR("Cannot add {} trust root from {}", store_name, path);
+            return err;
+        }
+    }
+    return NVAT_RC_OK;
+}
 
 nvat_rc_t collect_cmw_from_nvml(const std::string& nonce_hex,
                                 std::vector<uint8_t>& out) {
@@ -116,6 +153,21 @@ nvat_rc_t run_verify(CliLogger& logger, const AttestV2Options& options,
             return err;
         }
     }
+    const char* rim_base = std::getenv("NVAT_RIM_SERVICE_BASE_URL");
+    if (rim_base && *rim_base) {
+        std::string rim_url(rim_base);
+        if (rim_url.back() == '/') {
+            rim_url.pop_back();
+        }
+        rim_url += "/v1/rim/";
+        err = nvat_corim_store_add_url_rewrite(
+            raw_store, "https://rim.attestation.nvidia.com/v1/rim/",
+            rim_url.c_str());
+        if (err != NVAT_RC_OK) {
+            return err;
+        }
+    }
+
 
     err = nvat_corim_store_enable_in_memory_cache(raw_store, kDefaultCacheBytes,
                                         kDefaultCacheTtlSecs);
@@ -133,6 +185,16 @@ nvat_rc_t run_verify(CliLogger& logger, const AttestV2Options& options,
         for (size_t i = 0; i + 1 < options.ocsp_url_rewrites.size(); i += 2) {
             ocsp_patterns.push_back(options.ocsp_url_rewrites[i].c_str());
             ocsp_replacements.push_back(options.ocsp_url_rewrites[i + 1].c_str());
+        }
+        std::string ocsp_base;
+        const char* env_base = std::getenv("NVAT_OCSP_BASE_URL");
+        if (env_base && *env_base) {
+            ocsp_base = env_base;
+            if (ocsp_base.back() == '/') {
+                ocsp_base.pop_back();
+            }
+            ocsp_patterns.push_back("http://ocsp.ndis.nvidia.com");
+            ocsp_replacements.push_back(ocsp_base.c_str());
         }
         {
             nvat_ocsp_client_options_t raw_ocsp_options = nullptr;
@@ -169,6 +231,19 @@ nvat_rc_t run_verify(CliLogger& logger, const AttestV2Options& options,
         return err;
     }
     verifier_guard.reset(&raw_verifier);
+
+    err = add_trust_roots_from_files(
+        raw_verifier, options.device_identity_root_files, "device identity",
+        nvat_local_corim_verifier_add_device_identity_trust_root_pem);
+    if (err != NVAT_RC_OK) {
+        return err;
+    }
+    err = add_trust_roots_from_files(
+        raw_verifier, options.rim_signing_root_files, "RIM signing",
+        nvat_local_corim_verifier_add_rim_signing_trust_root_pem);
+    if (err != NVAT_RC_OK) {
+        return err;
+    }
 
     err = nvat_local_corim_verifier_set_verify_rim_signature(
         raw_verifier, options.verify_rim_signature);
@@ -241,7 +316,8 @@ nvat_rc_t run_verify(CliLogger& logger, const AttestV2Options& options,
     nv_unique_ptr<nvat_str_t> result_jwt_guard;
     err = nvat_local_corim_verifier_verify_cmw(
         raw_verifier, cmw_bytes.data(), cmw_bytes.size(),
-        NVAT_CMW_FORMAT_JSON, raw_signing_options, &raw_result_jwt, &raw_result);
+        NVAT_CMW_FORMAT_JSON, raw_signing_options, nullptr, &raw_result_jwt,
+        &raw_result);
     if (raw_result != nullptr) {
         result_guard.reset(&raw_result);
         char* data = nullptr;
@@ -268,10 +344,6 @@ enum class AttestV2ExitCode : int {
     kVerifierError = 2,    // trust could not be determined
 };
 
-AttestV2ExitCode attestation_status(const nlohmann::json& ear) {
-    return ear_is_affirming(ear) ? AttestV2ExitCode::kAffirming
-                                 : AttestV2ExitCode::kContraindicated;
-}
 
 // Renders one EnvironmentMap: optional class (class_id, vendor, model,
 // layer, index) plus optional instance/group. No field is guaranteed.
@@ -493,11 +565,11 @@ void print_ear_submods(std::ostream& out, const nlohmann::json& ear) {
     out << "\n";
 }
 
-nvat_rc_t apply_relying_party_policy(const std::string& policy_path,
+nvat_rc_t apply_relying_party_policy(const std::string& selector,
                                      const std::string& ear_json) {
     nvat_relying_party_policy_t raw_policy = nullptr;
     nv_unique_ptr<nvat_relying_party_policy_t> policy_guard;
-    nvat_rc_t err = load_relying_party_policy(policy_path, raw_policy);
+    nvat_rc_t err = load_relying_party_policy_v2(selector, raw_policy);
     if (err != NVAT_RC_OK) {
         return err;
     }
@@ -554,10 +626,23 @@ CLI::App* create_attest_v2_subcommand(CLI::App& app, AttestV2Options& options) {
         "--rim-url-rewrite", options.rim_url_rewrites,
         "Prefix substitution applied to rim-locator URLs before fetching. "
         "Takes two tokens: PATTERN REPLACEMENT. Repeatable; first match wins. "
-        "The pre-rewrite URL must still pass the verifier's allowlist, so use "
-        "this to redirect https://rim.attestation.nvidia.com/ to a mirror or "
-        "local file:// path.")
+        "Explicit rules take precedence over the NVAT_RIM_SERVICE_BASE_URL "
+        "fallback. The pre-rewrite URL must pass the verifier's allowlist, "
+        "so use this to redirect https://rim.attestation.nvidia.com/ to a mirror "
+        "or local file:// path.")
         ->type_size(2);
+
+    subcommand->add_option(
+        "--device-identity-root-ca-file", options.device_identity_root_files,
+        "PEM root CA certificate to add to the device identity trust store. "
+        "Repeat for each additional root; built-in roots remain trusted.")
+        ->check(CLI::ExistingFile);
+
+    subcommand->add_option(
+        "--rim-root-ca-file", options.rim_signing_root_files,
+        "PEM root CA certificate to add to the CoRIM and CoEV signing trust "
+        "store. Repeat for each additional root; built-in roots remain trusted.")
+        ->check(CLI::ExistingFile);
 
     subcommand->add_flag(
         "--verify-rim-signatures,!--no-verify-rim-signatures",
@@ -592,7 +677,8 @@ CLI::App* create_attest_v2_subcommand(CLI::App& app, AttestV2Options& options) {
         "--ocsp-url-rewrite", options.ocsp_url_rewrites,
         "Prefix substitution applied to the OCSP responder URL before the "
         "request. Takes two tokens: PATTERN REPLACEMENT. Repeatable; first "
-        "match wins. Use to upgrade http:// to https:// or redirect to an "
+        "match wins. Explicit rules take precedence over the NVAT_OCSP_BASE_URL "
+        "fallback. Use to upgrade http:// to https:// or redirect to an "
         "alternate responder, such as Trust Outpost.")
         ->type_size(2);
 
@@ -613,10 +699,9 @@ CLI::App* create_attest_v2_subcommand(CLI::App& app, AttestV2Options& options) {
         "RIM locator URI used when evidence contains no locators. Repeatable.");
 
     subcommand->add_option(
-        "--relying-party-policy", options.relying_party_policy,
-        "Path to a local file containing a relying-party Rego policy for the EAR.")
-        ->check(CLI::ExistingFile)
-        ->default_str("");
+        "--relying-party-policy,--rp", options.relying_party_policy,
+        "Required: builtin:<name> or a local Rego policy file for the EAR.")
+        ->check(relying_party_policy_v2_validator());
 
     auto* ear_signing_key_file_opt = subcommand->add_option(
         "--ear-signing-key-file", options.ear_signing_key_file,
@@ -637,6 +722,11 @@ CLI::App* create_attest_v2_subcommand(CLI::App& app, AttestV2Options& options) {
         ->needs(ear_signing_key_file_opt);
 
     subcommand->parse_complete_callback([&options]() {
+        if (options.relying_party_policy.empty()) {
+            throw CLI::ValidationError("--relying-party-policy",
+                "required for EAR appraisal. Run 'nvattest show-policy' to list built-in policies, "
+                "or provide a Rego file.");
+        }
         if (options.evidence_source == "file") {
             if (options.evidence_file.empty()) {
                 throw CLI::ValidationError(
@@ -676,6 +766,12 @@ int handle_attest_v2_subcommand(
     const AttestV2Options& options,
     const CommonOptions& common_options) {
 
+    const auto selection = resolve_relying_party_policy_v2_selector(options.relying_party_policy);
+    if (selection.kind != RelyingPartyPolicyV2SelectorKind::kFile &&
+        selection.kind != RelyingPartyPolicyV2SelectorKind::kBuiltin) {
+        SPDLOG_ERROR("Select a registered built-in policy or a Rego policy file");
+        return static_cast<int>(AttestV2ExitCode::kVerifierError);
+    }
     std::string ear_json;
     std::string ear_jwt;
     nvat_rc_t err = run_verify(logger, options, common_options, ear_json, ear_jwt);
@@ -692,8 +788,7 @@ int handle_attest_v2_subcommand(
         }
     }
 
-    if (err == NVAT_RC_OK && have_result &&
-        !options.relying_party_policy.empty()) {
+    if (err == NVAT_RC_OK && have_result) {
         err = apply_relying_party_policy(options.relying_party_policy, ear_json);
     }
     nvat_sdk_shutdown();
@@ -715,10 +810,8 @@ int handle_attest_v2_subcommand(
         SPDLOG_CRITICAL("Attestation returned no usable result!");
         exit_code = AttestV2ExitCode::kVerifierError;
     } else {
-        exit_code = options.relying_party_policy.empty()
-            ? attestation_status(result)
-            : (err == NVAT_RC_OK ? AttestV2ExitCode::kAffirming
-                                 : AttestV2ExitCode::kContraindicated);
+        exit_code = err == NVAT_RC_OK ? AttestV2ExitCode::kAffirming
+                                     : AttestV2ExitCode::kContraindicated;
         if (exit_code == AttestV2ExitCode::kAffirming) {
             SPDLOG_INFO("Attestation was successful");
         } else {
