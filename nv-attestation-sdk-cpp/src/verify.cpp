@@ -122,7 +122,8 @@ Error validate_and_decode_EAT(
     LOG_DEBUG("Deserializing overall EAT claims from JSON");
     error = deserialize_from_json<SerializableOverallEATClaims>(overall_jwt_payload, overall_jwt_payload_json);
     if (error != Error::Ok) {
-        return error;
+        LOG_ERROR("NRAS token does not contain the expected overall EAT claims");
+        return Error::NrasTokenInvalid;
     }
     if (overall_jwt_payload_json.m_eat_nonce.empty()) {
         LOG_ERROR("NRAS token does not contain eat_nonce");
@@ -219,7 +220,7 @@ Error verify_attestation_result(
     Error error = deserialize_from_json(detached_eat_json, detached_eat);
     if (error != Error::Ok) {
         LOG_WARN("Failed to parse detached EAT");
-        return error;
+        return Error::NrasTokenInvalid;
     }
 
     std::string normalized_nras_base_url;
