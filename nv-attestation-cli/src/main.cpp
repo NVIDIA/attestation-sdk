@@ -22,6 +22,7 @@
 #include "version.h"
 #include "attest.h"
 #include "attest_v2.h"
+#include "relying_party_policy_v2.h"
 #include "collect_evidence.h"
 #include "verify_token.h"
 #include "collect_evidence_v2.h"
@@ -54,6 +55,15 @@ int main(int argc, char** argv) {
     CLI::App* attest_v2_subcommand = nvattest::create_attest_v2_subcommand(app, attest_v2_options);
     CLI::App* version_subcommand = nvattest::create_version_subcommand(app);
     CLI::App* verify_token_subcommand = nvattest::create_verify_token_subcommand(app, verify_token_options, evidence_verification_options);
+    std::string policy_name;
+    CLI::App* show_policy_subcommand = app.add_subcommand(
+        "show-policy", "Print the source of a built-in relying-party policy");
+    show_policy_subcommand->add_option("policy_name", policy_name,
+        "Built-in policy name (omit to list available policies)")
+        ->check(CLI::Validator([](std::string& name) {
+            return nvattest::builtin_relying_party_policy_v2(name) ? std::string{} :
+                std::string{"unknown built-in policy"};
+        }, "", "BUILTIN_POLICY"));
 
     CLI11_PARSE(app, argc, argv);
 
@@ -63,6 +73,13 @@ int main(int argc, char** argv) {
     // Dispatch subcommands
     if (version_subcommand->parsed()) {
         return nvattest::handle_version_subcommand();
+    } else if (show_policy_subcommand->parsed()) {
+        if (policy_name.empty()) {
+            nvattest::print_builtin_relying_party_policy_v2_names(std::cout);
+            return 0;
+        }
+        std::cout << nvattest::builtin_relying_party_policy_v2(policy_name);
+        return 0;
     } else if (attest_subcommand->parsed()) {
         return nvattest::handle_attest_subcommand(logger, evidence_collection_options, evidence_verification_options, evidence_policy_options, common_options);
     } else if (collect_evidence_subcommand->parsed()) {

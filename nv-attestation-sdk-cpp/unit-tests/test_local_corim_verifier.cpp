@@ -28,6 +28,7 @@
 #include <nlohmann/json.hpp>
 
 #include <openssl/ocsp.h>
+#include <openssl/pem.h>
 
 #include <jwt-cpp/jwt.h>
 #include "jwt-cpp/traits/nlohmann-json/traits.h"
@@ -35,6 +36,7 @@
 #include "gtest/gtest.h"
 
 #include "local_https_test_server.h"
+#include "internal/certs.h"
 #include "nv_attestation/claims.h"
 #include "nv_attestation/cmw.h"
 #include "nv_attestation/corim_evidence/corim_store.h"
@@ -54,6 +56,9 @@ constexpr const char *kRubinCmwPath =
     "testdata/sample_attestation_data/rubin_evidence.cmw.json";
 constexpr const char *kBlackwellFspCmwPath =
     "testdata/sample_attestation_data/blackwell_fsp_evidence.cmw.json";
+// Real GB202 capture where the leaf cert reports "GB20X".
+constexpr const char *kGB20xFspCmwPath =
+    "testdata/sample_attestation_data/blackwell_gb20x_fsp_evidence.cmw.json";
 constexpr uint8_t kTamperMask = 0xFF;
 
 // Records whether the verifier consulted it, so tests can assert the OCSP
@@ -69,6 +74,19 @@ class CallCountingOcspClient : public IOcspHttpClient {
         ++calls;
         out_ocsp_response = NvOcspResponse{};
         return Error::Ok;
+    }
+};
+
+// Stands in for an unreachable responder: the query itself fails rather than
+// returning a status.
+class UnreachableOcspClient : public IOcspHttpClient {
+  public:
+    Error get_ocsp_response(const nv_unique_ptr<X509> &,
+                            const nv_unique_ptr<X509> &,
+                            const nv_unique_ptr<stack_st_X509> &,
+                            const nv_unique_ptr<X509_STORE> &,
+                            NvOcspResponse &) override {
+        return Error::OcspServerError;
     }
 };
 
@@ -166,6 +184,61 @@ class SkippedOcspClient : public IOcspHttpClient {
 TEST(LocalCorimVerifierTest, RejectsEmptyDeviceRootPem) {
     LocalCorimVerifier verifier(CorimStore{});
     EXPECT_EQ(verifier.add_device_identity_trust_root_pem(""),
+              Error::BadArgument);
+    EXPECT_EQ(verifier.add_device_identity_trust_root_pem("not a certificate"),
+              Error::BadArgument);
+}
+
+TEST(LocalCorimVerifierTest, AddsRimSigningRootAndRejectsInvalidPem) {
+    LocalCorimVerifier verifier(CorimStore{});
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(""), Error::BadArgument);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem("not a certificate"),
+              Error::BadArgument);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(RIM_ROOT_CERT_CA001_DEV), Error::Ok);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(RIM_ROOT_CERT_CA001_DEV), Error::Ok);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(RIM_ROOT_CERT_CA001), Error::Ok);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(
+                  RIM_ROOT_CERT_CA001_DEV + RIM_ROOT_CERT_CA001),
+              Error::BadArgument);
+}
+
+TEST(LocalCorimVerifierTest, RejectsIntermediateTrustRoot) {
+    std::string intermediate_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/eat_jwks_int",
+                                 intermediate_pem), Error::Ok);
+
+    LocalCorimVerifier verifier(CorimStore{});
+    EXPECT_EQ(verifier.add_device_identity_trust_root_pem(intermediate_pem),
+              Error::BadArgument);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(intermediate_pem),
+              Error::BadArgument);
+}
+
+TEST(LocalCorimVerifierTest, RejectsSelfIssuedRootWithInvalidSignature) {
+    nv_unique_ptr<X509> cert = x509_from_cert_string(RIM_ROOT_CERT_CA001_DEV);
+    ASSERT_NE(cert, nullptr);
+    nv_unique_ptr<BIO> key_pem(BIO_new_file(
+        "testdata/x509_cert_chain/cose_signing_leaf_key.pem", "r"));
+    ASSERT_NE(key_pem, nullptr);
+    nv_unique_ptr<EVP_PKEY> wrong_key(
+        PEM_read_bio_PrivateKey(key_pem.get(), nullptr, nullptr, nullptr));
+    ASSERT_NE(wrong_key, nullptr);
+    ASSERT_GT(X509_sign(cert.get(), wrong_key.get(), EVP_sha384()), 0);
+    nv_unique_ptr<EVP_PKEY> root_key(X509_get_pubkey(cert.get()));
+    ASSERT_NE(root_key, nullptr);
+    ASSERT_NE(X509_verify(cert.get(), root_key.get()), 1);
+    nv_unique_ptr<BIO> pem(BIO_new(BIO_s_mem()));
+    ASSERT_NE(pem, nullptr);
+    ASSERT_EQ(PEM_write_bio_X509(pem.get(), cert.get()), 1);
+    BUF_MEM *contents = nullptr;
+    BIO_get_mem_ptr(pem.get(), &contents);
+    ASSERT_NE(contents, nullptr);
+    const std::string invalid_signature_pem(contents->data, contents->length);
+
+    LocalCorimVerifier verifier(CorimStore{});
+    EXPECT_EQ(verifier.add_device_identity_trust_root_pem(invalid_signature_pem),
+              Error::BadArgument);
+    EXPECT_EQ(verifier.add_rim_signing_trust_root_pem(invalid_signature_pem),
               Error::BadArgument);
 }
 
@@ -510,7 +583,7 @@ TEST(LocalCorimVerifierTest, VerifyCmwPropagatesParseFailure) {
     EXPECT_EQ(verifier.verify_cmw(
                   reinterpret_cast<const uint8_t *>(junk.data()), junk.size(),
                   CmwFormat::kJson, result),
-              Error::EvidenceMalformed);
+              Error::CmwJsonInvalid);
 }
 
 // A structurally valid item with an unrecognized evidence media type is a
@@ -619,7 +692,8 @@ TEST(LocalCorimVerifierTest, VerifyCmwUnsignedEatSkipsDeviceIdentityChain) {
     EXPECT_TRUE(item.evidence.akpub.empty());
     EXPECT_FALSE(item.evidence.signature_verified);
     EXPECT_TRUE(item.evidence.parsed);
-    EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against");
+    EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable);
+    EXPECT_EQ(item.stage_error.message, "no RIM locator available");
 
     nlohmann::json serialized = result;
     ASSERT_TRUE(serialized.contains("evidence_items"));
@@ -653,7 +727,8 @@ TEST(LocalCorimVerifierTest, VerifyCmwToleratesTamperedEatSignatureWhenDisabled)
     EXPECT_FALSE(item.evidence.signature_verified);
     EXPECT_TRUE(item.evidence.parsed);
     EXPECT_FALSE(item.evidence.akpub.empty());
-    EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against");
+    EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable);
+    EXPECT_EQ(item.stage_error.message, "no RIM locator available");
 }
 
 TEST(LocalCorimVerifierTest,
@@ -720,7 +795,8 @@ TEST(LocalCorimVerifierTest, VerifyCmwBlackwellAnchorsAndVerifiesSignature) {
         EXPECT_TRUE(item.evidence.nonce_supplied) << item.label;
         EXPECT_TRUE(item.evidence.nonce_match) << item.label;
         EXPECT_FALSE(item.eat_nonce.empty()) << item.label;
-        EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against")
+        EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable) << item.label;
+        EXPECT_EQ(item.stage_error.message, "no RIM locator available")
             << item.label;
         EXPECT_TRUE(item.corims.empty()) << item.label;
         EXPECT_TRUE(item.match.outcomes.empty()) << item.label;
@@ -802,7 +878,8 @@ TEST(LocalCorimVerifierTest, VerifyCmwOptionalNonceOmittedYieldsEatNonce) {
     EXPECT_FALSE(item.evidence.nonce_supplied);
     EXPECT_FALSE(item.eat_nonce.empty());
     // No RIM locators; the eat_nonce extraction under test is unaffected.
-    EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against");
+    EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable);
+    EXPECT_EQ(item.stage_error.message, "no RIM locator available");
 }
 
 TEST(LocalCorimVerifierTest, VerifyCmwMissingCompanionCertRecordsStageError) {
@@ -891,8 +968,42 @@ TEST(LocalCorimVerifierTest, GspResponderDoesNotSynthesizeRimLocator) {
     const auto &item = result.items[0];
     EXPECT_TRUE(item.evidence.signature_verified);
     // No locator anywhere -- neither from evidence nor synthesized.
-    EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against");
+    EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable);
+    EXPECT_EQ(item.stage_error.message, "no RIM locator available");
     EXPECT_TRUE(item.corims.empty());
+    nlohmann::json ear;
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    EXPECT_EQ(ear["submods"][item.label]["ear_nvidia_error_details"][0]["code"], 109);
+    EXPECT_EQ(ear["submods"][item.label]["ear_status"], "contraindicated");
+}
+
+TEST(LocalCorimVerifierTest, FetchedRimWithoutReferencesReportsMissingMeasurements) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kRubinCmwPath, cmw_json), Error::Ok);
+    char resolved[PATH_MAX];
+    ASSERT_NE(::realpath("testdata/sample_rims/corim/empty.cbor", resolved), nullptr);
+    CorimStore store;
+    for (const char *locator : {
+             "https://rim.attestation.nvidia.com/v1/rim/GR100_081D_9900230000",
+             "https://rim.attestation.nvidia.com/v1/rim/NV_GPU_DRIVER_GR100_620.54"}) {
+        ASSERT_EQ(store.add_url_rewrite(locator, "file://" + std::string(resolved)),
+                  Error::Ok);
+    }
+    LocalCorimVerifier verifier(std::move(store));
+    verifier.set_verify_revocation(false);
+    verifier.set_verify_rim_signature(false);
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result), Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items[0];
+    ASSERT_FALSE(item.corims.empty());
+    for (const auto &corim : item.corims) {
+        EXPECT_TRUE(corim.fetched);
+        EXPECT_TRUE(corim.parsed);
+    }
+    EXPECT_EQ(item.stage_error.code, Error::RimMeasurementNotFound);
 }
 
 TEST(LocalCorimVerifierTest, VerifyCmwToleratesTamperedSpdmSignatureWhenDisabled) {
@@ -930,7 +1041,8 @@ TEST(LocalCorimVerifierTest, VerifyCmwToleratesTamperedSpdmSignatureWhenDisabled
     EXPECT_NE(item.evidence.cert_chain, nullptr);
     EXPECT_FALSE(item.evidence.signature_verified);
     EXPECT_FALSE(item.evidence.akpub.empty());
-    EXPECT_EQ(item.stage_error.message, "no RIM reference values to appraise against");
+    EXPECT_EQ(item.stage_error.code, Error::RimLocatorUnavailable);
+    EXPECT_EQ(item.stage_error.message, "no RIM locator available");
 }
 
 TEST(LocalCorimVerifierTest,
@@ -1029,6 +1141,61 @@ TEST(LocalCorimVerifierTest, VerifyCmwRubinTocMatchesUnsignedFixtureRims) {
     EXPECT_FALSE(item.corims[1].signature_verified);
 }
 
+// An unknown OCSP status must cost the relying party the verdict, not the
+// comparison it came for: the EAR contraindicates and still reports which
+// environments matched.
+TEST(LocalCorimVerifierTest, UnknownOcspKeepsMeasurementComparisonInEar) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kRubinCmwPath, cmw_json), Error::Ok);
+
+    char vbios_path[PATH_MAX];
+    char driver_path[PATH_MAX];
+    ASSERT_NE(::realpath("testdata/sample_rims/corim/rubin_vbios_example.cbor",
+                         vbios_path), nullptr);
+    ASSERT_NE(::realpath("testdata/sample_rims/corim/rubin_driver_example.cbor",
+                         driver_path), nullptr);
+
+    CorimStore store;
+    ASSERT_EQ(store.add_url_rewrite(
+                  "https://rim.attestation.nvidia.com/v1/rim/"
+                  "GR100_081D_9900230000",
+                  "file://" + std::string(vbios_path)),
+              Error::Ok);
+    ASSERT_EQ(store.add_url_rewrite(
+                  "https://rim.attestation.nvidia.com/v1/rim/"
+                  "NV_GPU_DRIVER_GR100_620.54",
+                  "file://" + std::string(driver_path)),
+              Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(V_OCSP_CERTSTATUS_UNKNOWN);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(false);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_EQ(result.items.size(), 1u);
+    const auto &item = result.items.front();
+
+    // The chain is untrusted, but the stage must not fail or the comparison
+    // below never runs.
+    EXPECT_FALSE(item.evidence.signature_verified);
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_NE(item.evidence.cert_chain, nullptr);
+    EXPECT_FALSE(all_certs_trusted(*item.evidence.cert_chain));
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+}
+
 // === RIM-fetch loop: fetched CoEV is converted into ECTs (appraise_item) ===
 class LocalCorimVerifierCoevTest : public ::testing::Test {
   protected:
@@ -1054,6 +1221,40 @@ class LocalCorimVerifierCoevTest : public ::testing::Test {
 
 LocalHttpsTestServer LocalCorimVerifierCoevTest::m_server;
 bool LocalCorimVerifierCoevTest::m_setup_ok = false;
+
+TEST_F(LocalCorimVerifierCoevTest, RimHttpNotFoundPreservesFetchError) {
+    const std::string locator =
+        "https://rim.attestation.nvidia.com/v1/rim/"
+        "NV_GPU_VBIOS_GB100_065C_0100000001";
+    for (const char *fixture : {kBlackwellCmwPath, kBlackwellFspCmwPath}) {
+        SCOPED_TRACE(fixture);
+        std::string cmw_json;
+        ASSERT_EQ(readFileIntoString(fixture, cmw_json), Error::Ok);
+        CorimStore store = make_store();
+        // This server has no JWKS file, so this endpoint returns HTTP 404.
+        ASSERT_EQ(store.add_url_rewrite(locator, server_url() + ".well-known/jwks.json"),
+                  Error::Ok);
+        LocalCorimVerifier verifier(std::move(store));
+        verifier.set_verify_revocation(false);
+        if (fixture == kBlackwellCmwPath) {
+            verifier.add_backup_rim_locator(locator);
+        }
+        CorimAttestationResult result;
+        ASSERT_EQ(verifier.verify_cmw(
+                      reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                      cmw_json.size(), CmwFormat::kJson, result), Error::Ok);
+        ASSERT_FALSE(result.items.empty());
+        const auto &item = result.items[0];
+        EXPECT_EQ(item.stage_error.code, Error::RimNotFound);
+        ASSERT_EQ(item.corims.size(), 1U);
+        EXPECT_EQ(item.corims[0].locator, locator);
+        EXPECT_FALSE(item.corims[0].fetched);
+        EXPECT_EQ(item.corims[0].error.code, Error::RimNotFound);
+        nlohmann::json ear;
+        ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+        EXPECT_EQ(ear["submods"][item.label]["ear_nvidia_error_details"][0]["code"], 104);
+    }
+}
 
 TEST_F(LocalCorimVerifierCoevTest, FetchedCoevIsConvertedAndFedIntoComparison) {
     std::string cmw_json;
@@ -1188,6 +1389,42 @@ TEST_F(LocalCorimVerifierCoevTest, FspResponderSynthesizesLocatorAndConvertsFetc
     EXPECT_GT(reachable_count, 0U);
 }
 
+// Real GB202 capture whose leaf cert reports "GB20X"; the correction
+// must run before the locator is synthesized.
+TEST_F(LocalCorimVerifierCoevTest, CorrectsGB20XHwmodelBeforeSynthesizingLocator) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kGB20xFspCmwPath, cmw_json), Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB202_0652_9802C40002",
+            server_url() + "rim-service-with-blackwell-fsp-coev"),
+        Error::Ok);
+
+    LocalCorimVerifier verifier(std::move(store));
+    verifier.set_verify_revocation(false);
+    verifier.set_verify_rim_signature(false);
+    verifier.set_verify_coev_signature(false);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items[0];
+    EXPECT_TRUE(item.evidence.signature_verified);
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    EXPECT_EQ(item.hwmodel, "GB202");
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_TRUE(item.corims[0].fetched);
+    EXPECT_EQ(item.corims[0].locator,
+              "https://rim.attestation.nvidia.com/v1/rim/"
+              "NV_GPU_VBIOS_GB202_0652_9802C40002");
+}
+
 TEST_F(LocalCorimVerifierCoevTest, FetchedCoevProfilePopulatesEvidenceProfile) {
     std::string cmw_json;
     ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
@@ -1244,7 +1481,19 @@ TEST_F(LocalCorimVerifierCoevTest, VerifiesFetchedCoevSignatureEndToEnd) {
     LocalCorimVerifier verifier(std::move(store));
     verifier.set_verify_revocation(false);
     verifier.set_verify_rim_signature(false);
-    verifier.set_rim_signing_root_for_testing(test_root_pem);
+    ASSERT_EQ(verifier.add_device_identity_trust_root_pem(test_root_pem), Error::Ok);
+
+    CorimAttestationResult without_rim_root;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, without_rim_root),
+              Error::Ok);
+    ASSERT_EQ(without_rim_root.items.size(), 1U);
+    ASSERT_EQ(without_rim_root.items[0].corims.size(), 1U);
+    EXPECT_EQ(without_rim_root.items[0].corims[0].error.code,
+              Error::CertChainVerificationFailure);
+
+    ASSERT_EQ(verifier.add_rim_signing_trust_root_pem(test_root_pem), Error::Ok);
 
     CorimAttestationResult result;
     ASSERT_EQ(verifier.verify_cmw(
@@ -1271,6 +1520,374 @@ TEST_F(LocalCorimVerifierCoevTest, VerifiesFetchedCoevSignatureEndToEnd) {
         }
     }
     EXPECT_GT(reachable_count, 0U);
+}
+
+// The shape reported from the field: the signature is good but its chain's
+// OCSP status is unknown. The appraisal must still reach measurement
+// comparison and publish it, with the EAR naming the offending certificate.
+TEST_F(LocalCorimVerifierCoevTest, UnknownOcspOnCoevChainKeepsMeasurementComparison) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-signed-coev-chained"),
+        Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(V_OCSP_CERTSTATUS_UNKNOWN);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(false);
+    verifier.set_rim_signing_root_for_testing(test_root_pem);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    // The stage must not fail, or the comparison below never runs.
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_TRUE(item.corims[0].coev_signature_verified);
+    ASSERT_NE(item.corims[0].coev_cert_chain, nullptr);
+    EXPECT_FALSE(all_certs_trusted(*item.corims[0].coev_cert_chain));
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_NE(item.corims[0].error.details.find("unknown"), std::string::npos);
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    EXPECT_TRUE(cmp["mismatched_env"].empty());
+    ASSERT_TRUE(submod.contains("ear_nvidia_error_details"));
+    EXPECT_EQ(submod["ear_nvidia_error_details"][0]["code"].get<int>(),
+              static_cast<int>(Error::CertChainVerificationFailure));
+}
+
+// The chain reported from the field is the RIM signer's. Same requirement as
+// the CoEV case: contraindicate, name the cert, keep the comparison.
+TEST_F(LocalCorimVerifierCoevTest, UnknownOcspOnRimChainKeepsMeasurementComparison) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-signed-rim-chained"),
+        Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(V_OCSP_CERTSTATUS_UNKNOWN);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(true);
+    verifier.set_verify_coev_signature(false);
+    verifier.set_rim_signing_root_for_testing(test_root_pem);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    // The RIM signature is good; only its chain's OCSP status is unknown, so
+    // the stage must not fail or the comparison below never runs.
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_TRUE(item.corims[0].parsed);
+    EXPECT_TRUE(item.corims[0].signature_verified);
+    ASSERT_NE(item.corims[0].cert_chain, nullptr);
+    EXPECT_FALSE(all_certs_trusted(*item.corims[0].cert_chain));
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_EQ(item.corims[0].error.message, "RIM signing chain is not trusted");
+    EXPECT_NE(item.corims[0].error.details.find("unknown"), std::string::npos);
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    EXPECT_TRUE(cmp["mismatched_env"].empty());
+    ASSERT_TRUE(submod.contains("ear_nvidia_error_details"));
+    EXPECT_EQ(submod["ear_nvidia_error_details"][0]["code"].get<int>(),
+              static_cast<int>(Error::CertChainVerificationFailure));
+}
+
+// In the field the RIM and the CoEV are signed by the same chain, so both
+// checks fire on one CorimResult. They share a single `error` field, and only
+// `cert_chain` is serialized into the EAR -- so the CoEV message must not
+// overwrite the RIM one and leave the EAR naming a chain it never shows.
+TEST_F(LocalCorimVerifierCoevTest, SharedUntrustedChainReportsTheRimError) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-both-chained"),
+        Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(V_OCSP_CERTSTATUS_UNKNOWN);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(true);
+    verifier.set_verify_coev_signature(true);
+    ASSERT_EQ(verifier.add_rim_signing_trust_root_pem(test_root_pem), Error::Ok);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+
+    // Both signatures verify; both chains are untrusted for the same reason.
+    EXPECT_TRUE(item.corims[0].signature_verified);
+    EXPECT_TRUE(item.corims[0].coev_signature_verified);
+    ASSERT_NE(item.corims[0].cert_chain, nullptr);
+    ASSERT_NE(item.corims[0].coev_cert_chain, nullptr);
+    EXPECT_FALSE(all_certs_trusted(*item.corims[0].cert_chain));
+    EXPECT_FALSE(all_certs_trusted(*item.corims[0].coev_cert_chain));
+
+    // The RIM check runs first and keeps the field.
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_EQ(item.corims[0].error.message, "RIM signing chain is not trusted");
+    EXPECT_NE(item.corims[0].error.details.find("unknown"), std::string::npos);
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    EXPECT_TRUE(cmp["mismatched_env"].empty());
+    ASSERT_TRUE(submod.contains("ear_nvidia_error_details"));
+    const auto &details = submod["ear_nvidia_error_details"];
+    // One entry for the one CorimResult, naming the chain the EAR serializes.
+    ASSERT_EQ(details.size(), 1U);
+    EXPECT_EQ(details[0]["code"].get<int>(),
+              static_cast<int>(Error::CertChainVerificationFailure));
+    EXPECT_NE(details[0]["message"].get<std::string>().find(
+                  "RIM signing chain is not trusted"),
+              std::string::npos);
+}
+
+// Revoked differs from unknown in what an operator must do about it, so the
+// reason has to survive into the EAR alongside the same kept comparison.
+TEST_F(LocalCorimVerifierCoevTest, RevokedOcspOnRimChainNamesTheReason) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-signed-rim-chained"),
+        Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(V_OCSP_CERTSTATUS_REVOKED);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(true);
+    verifier.set_verify_coev_signature(false);
+    verifier.set_rim_signing_root_for_testing(test_root_pem);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_TRUE(item.corims[0].signature_verified);
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_EQ(item.corims[0].error.message, "RIM signing chain is not trusted");
+    EXPECT_NE(item.corims[0].error.details.find("revoked"), std::string::npos);
+    EXPECT_NE(item.corims[0].error.details.find("keyCompromise"), std::string::npos);
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    EXPECT_TRUE(cmp["mismatched_env"].empty());
+    // The per-cert array must carry the revocation detail too.
+    const auto &chain = submod["ear_verifier_claims"]["ear_nvidia_rims"][0]["cert_chain"];
+    bool saw_revoked = false;
+    for (const auto &cert : chain) {
+        if (cert.value("ocsp_crl_status", std::string()) == "revoked") {
+            saw_revoked = true;
+            EXPECT_EQ(cert.value("revocation_reason", std::string()), "keyCompromise");
+        }
+    }
+    EXPECT_TRUE(saw_revoked);
+}
+
+// A revocation finding is only as good as the response carrying it, so an
+// unusable OCSP response must name itself rather than read as a clean chain.
+class UntrustedRimChainDetail
+    : public LocalCorimVerifierCoevTest,
+      public ::testing::WithParamInterface<
+          std::tuple<const char *, bool, bool, const char *>> {};
+
+TEST_P(UntrustedRimChainDetail, NamesWhyTheChainIsUntrusted) {
+    const bool nonce_matches = std::get<1>(GetParam());
+    const bool response_valid = std::get<2>(GetParam());
+    const std::string expected_detail = std::get<3>(GetParam());
+
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-signed-rim-chained"),
+        Error::Ok);
+
+    auto ocsp = std::make_shared<FixedStatusOcspClient>(
+        V_OCSP_CERTSTATUS_GOOD, nonce_matches, response_valid);
+    LocalCorimVerifier verifier(std::move(store), ocsp);
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(true);
+    verifier.set_verify_coev_signature(false);
+    verifier.set_rim_signing_root_for_testing(test_root_pem);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_NE(item.corims[0].error.details.find(expected_detail),
+              std::string::npos)
+        << "details='" << item.corims[0].error.details << "'";
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    EXPECT_FALSE(
+        submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"]["matched_env"]
+            .empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    OcspResponseUnusable, UntrustedRimChainDetail,
+    ::testing::Values(
+        std::make_tuple("InvalidResponse", true, false, "OCSP response invalid"),
+        std::make_tuple("NonceMismatch", false, true, "OCSP nonce mismatch")),
+    [](const ::testing::TestParamInfo<UntrustedRimChainDetail::ParamType> &info) {
+        return std::string(std::get<0>(info.param));
+    });
+
+// An unreachable responder is an availability failure, not a verdict about the
+// RIM. It must still cost the appraisal nothing but the trusted status.
+TEST_F(LocalCorimVerifierCoevTest, UnreachableOcspKeepsMeasurementComparison) {
+    std::string cmw_json;
+    ASSERT_EQ(readFileIntoString(kBlackwellFspCmwPath, cmw_json), Error::Ok);
+    std::string test_root_pem;
+    ASSERT_EQ(readFileIntoString("testdata/x509_cert_chain/cose_signing_root.crt",
+                                test_root_pem),
+              Error::Ok);
+
+    CorimStore store = make_store();
+    ASSERT_EQ(
+        store.add_url_rewrite(
+            "https://rim.attestation.nvidia.com/v1/rim/"
+            "NV_GPU_VBIOS_GB100_065C_0100000001",
+            server_url() + "rim-service-with-blackwell-fsp-signed-rim-chained"),
+        Error::Ok);
+
+    LocalCorimVerifier verifier(std::move(store),
+                                std::make_shared<UnreachableOcspClient>());
+    verifier.set_verify_revocation(true);
+    verifier.set_verify_rim_signature(true);
+    verifier.set_verify_coev_signature(false);
+    verifier.set_rim_signing_root_for_testing(test_root_pem);
+
+    CorimAttestationResult result;
+    ASSERT_EQ(verifier.verify_cmw(
+                  reinterpret_cast<const uint8_t *>(cmw_json.data()),
+                  cmw_json.size(), CmwFormat::kJson, result),
+              Error::Ok);
+    ASSERT_FALSE(result.items.empty());
+    const auto &item = result.items.front();
+
+    // A failed OCSP query must not end the stage before comparison.
+    EXPECT_FALSE(item.stage_error.has_error()) << item.stage_error.message;
+    ASSERT_EQ(item.corims.size(), 1U);
+    EXPECT_TRUE(item.corims[0].signature_verified);
+    ASSERT_NE(item.corims[0].cert_chain, nullptr);
+    EXPECT_FALSE(all_certs_trusted(*item.corims[0].cert_chain));
+    EXPECT_EQ(item.corims[0].error.code, Error::CertChainVerificationFailure);
+    EXPECT_FALSE(item.match.outcomes.empty());
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    const auto &submod = ear["submods"][item.label];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    const auto &cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    EXPECT_TRUE(cmp["mismatched_env"].empty());
 }
 
 // Without a backup CoEV, a synthesized locator whose RIM has no CoEV is

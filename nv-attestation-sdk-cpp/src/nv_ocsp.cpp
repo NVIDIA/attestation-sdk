@@ -22,6 +22,7 @@
 
 #include "nv_attestation/nv_ocsp.h"
 #include "nv_attestation/nv_cache.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/utils.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/error.h"
@@ -555,7 +556,7 @@ Error NvHttpOcspClient::create(
     out_client.m_http_options = http_options;
     out_client.m_ocsp_default_url = base_url;
     out_client.m_options = options;
-    error = NvHttpClient::create(out_client.m_http_client, service_key, http_options);
+    error = NvHttpClient::create(out_client.m_http_client, service_key, http_options, kServiceOcsp);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to create HTTP client for OCSP request");
         return error;
@@ -643,6 +644,7 @@ Error NvHttpOcspCacheClient::get_ocsp_response(
         }
     }
 
+    notify_cache_lookup(kServiceOcsp, !should_refresh);
     if (should_refresh) {
         LOG_TRACE("Refreshing OCSP response");
         error = m_inner_client->get_ocsp_response(subject_cert, issuer_cert, intermediates, trust_store, out_ocsp_response);

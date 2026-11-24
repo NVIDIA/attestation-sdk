@@ -16,6 +16,7 @@
  */
 
 use crate::error::{NvatError, Result};
+use crate::observer::{cache_lookup_trampoline, http_call_trampoline, Observer};
 use crate::*;
 use std::ffi::CString;
 use std::ptr;
@@ -181,6 +182,28 @@ impl SdkOptions {
         }
         // Note: logger will be properly freed via Drop when it goes out of scope.
         // The C SDK copies the shared_ptr internally, so we must free the wrapper.
+    }
+
+    /// Set an observer for SDK-internal HTTP calls and cache lookups.
+    /// Wraps `nvat_sdk_opts_set_observer`.
+    ///
+    /// The observer is leaked so it outlives every SDK callback; set it once per process.
+    pub fn set_observer<O: Observer>(&mut self, observer: O) -> Result<()> {
+        let user_data = Box::into_raw(Box::new(observer));
+        let mut handle: nvat_observer_t = ptr::null_mut();
+        unsafe {
+            if let Err(err) = NvatError::check(nvat_observer_create(&mut handle, user_data.cast()))
+            {
+                drop(Box::from_raw(user_data));
+                return Err(err);
+            }
+            nvat_observer_set_http_call_callback(handle, Some(http_call_trampoline::<O>));
+            nvat_observer_set_cache_lookup_callback(handle, Some(cache_lookup_trampoline::<O>));
+            // The C SDK copies the observer, so the handle is freed here.
+            nvat_sdk_opts_set_observer(self.inner, handle);
+            nvat_observer_free(&mut handle);
+        }
+        Ok(())
     }
 
     pub(crate) fn as_ptr(&self) -> nvat_sdk_opts_t {
@@ -504,11 +527,23 @@ impl HttpOptionsBuilder {
 #[cfg(feature = "logging")]
 mod log_callbacks {
     use super::*;
+    use crate::util::panic_message;
+    use std::any::Any;
     use std::ffi::CStr;
+    use std::io::Write;
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     /// Log target for messages forwarded from the SDK
     const SDK_LOG_TARGET: &str = "nv_attestation_sdk::c_sdk";
+
+    /// Write a panic caught in a logger callback to stderr.
+    fn report_panic(callback: &str, payload: Box<dyn Any + Send>) {
+        let _ = writeln!(
+            std::io::stderr(),
+            "nv-attestation-sdk: {callback} panicked: {}",
+            panic_message(payload.as_ref())
+        );
+    }
 
     /// Convert C log level to Rust log level
     fn nvat_level_to_log_level(level: nvat_log_level_t) -> log::Level {
@@ -533,14 +568,16 @@ mod log_callbacks {
         _line: std::os::raw::c_int,
         _user_data: *mut std::os::raw::c_void,
     ) -> bool {
-        // Unwinding into C is UB. A panic here is silently swallowed: we cannot
-        // log from inside the logger's own recovery path without risking
-        // re-entry, so we fall back to "logging disabled" for this call.
+        // Unwinding into C is UB. A panic is reported to stderr, since logging it
+        // could re-enter the logger, and this call falls back to "logging disabled".
         catch_unwind(AssertUnwindSafe(|| {
             let rust_level = nvat_level_to_log_level(level);
             log::log_enabled!(target: SDK_LOG_TARGET, rust_level)
         }))
-        .unwrap_or(false)
+        .unwrap_or_else(|payload| {
+            report_panic("rust_should_log_callback", payload);
+            false
+        })
     }
 
     /// Callback to write log messages to the Rust log system
@@ -555,10 +592,9 @@ mod log_callbacks {
         line: std::os::raw::c_int,
         _user_data: *mut std::os::raw::c_void,
     ) {
-        // Unwinding into C is UB. A panic here is silently swallowed (dropping
-        // one log line) rather than aborting the process; the logger backend is
-        // not safe to re-enter from its own panic recovery.
-        let _ = catch_unwind(AssertUnwindSafe(|| {
+        // Unwinding into C is UB. On panic, this log line is dropped and the panic
+        // is reported to stderr; we don't abort.
+        let result = catch_unwind(AssertUnwindSafe(|| {
             if message.is_null() {
                 return;
             }
@@ -602,19 +638,25 @@ mod log_callbacks {
                     .build(),
             );
         }));
+        if let Err(payload) = result {
+            report_panic("rust_log_callback", payload);
+        }
     }
 
     /// Callback to flush buffered log messages
     ///
     /// Called by the C SDK at critical points to ensure logs are persisted.
     pub(super) unsafe extern "C" fn rust_flush_callback(_user_data: *mut std::os::raw::c_void) {
-        // Unwinding into C is UB. A panic in the backend's flush is silently
-        // swallowed for the same re-entry reason as the other callbacks.
-        let _ = catch_unwind(AssertUnwindSafe(|| {
+        // Unwinding into C is UB, so a panic in the backend's flush is caught and
+        // reported to stderr; we don't abort.
+        let result = catch_unwind(AssertUnwindSafe(|| {
             // env_logger and most Rust loggers flush automatically
             // This is a no-op, but we could add explicit flushing if needed
             log::logger().flush();
         }));
+        if let Err(payload) = result {
+            report_panic("rust_flush_callback", payload);
+        }
     }
 }
 

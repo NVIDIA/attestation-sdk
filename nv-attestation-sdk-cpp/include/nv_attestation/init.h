@@ -18,10 +18,12 @@
 #pragma once
 
 #include "log.h"
+#include "observer.h"
 
 namespace nvattestation {
 struct SdkOptions {
     std::shared_ptr<ILogger> logger;
+    Observer observer;
 };
 
 

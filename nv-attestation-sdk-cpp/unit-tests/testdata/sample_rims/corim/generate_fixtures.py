@@ -23,6 +23,7 @@ _HERE = Path(__file__).resolve().parent
 _X509_CHAIN_DIR = _HERE.parent.parent / "x509_cert_chain"
 _LEAF_KEY_PEM = _X509_CHAIN_DIR / "cose_signing_leaf_key.pem"
 _LEAF_CERT_PEM = _X509_CHAIN_DIR / "cose_signing_leaf.crt"
+_LEAF_NO_EKU_CERT_PEM = _X509_CHAIN_DIR / "cose_signing_leaf_missing_eku.crt"
 _ROOT_CERT_PEM = _X509_CHAIN_DIR / "cose_signing_root.crt"
 
 # COSE header labels / algorithm IDs (RFC 9052/9053/9360).
@@ -57,6 +58,11 @@ def _load_signing_material():
     leaf_cert_der = leaf_cert.public_bytes(serialization.Encoding.DER)
     _signing_material_cache = (leaf_key, leaf_cert_der)
     return _signing_material_cache
+
+
+def _load_leaf_without_eku_der():
+    cert = x509.load_pem_x509_certificate(_LEAF_NO_EKU_CERT_PEM.read_bytes())
+    return cert.public_bytes(serialization.Encoding.DER)
 
 
 _root_cert_der_cache = None
@@ -164,6 +170,12 @@ def _sign_cose1(payload, *, alg=ALG_ES384, include_x5chain=True,
 
 def make_signed_full():
     return _sign_cose1(_read_payload("full"))
+
+
+def make_signed_missing_corim_eku():
+    return _sign_cose1(
+        _read_payload("full"),
+        x5chain_cert_override=_load_leaf_without_eku_der())
 
 
 def make_signed_full_chained():
@@ -282,7 +294,8 @@ def make_eat_bare_cose():
 
     Used to prove parse_eat_from_cwt rejects a missing outer tag stack.
     """
-    return _sign_cose1(_read_ocp_payload("full"))
+    return _sign_cose1(_read_ocp_payload("full"),
+                       x5chain_cert_override=_load_leaf_without_eku_der())
 
 
 def make_eat_full_signed():
@@ -291,7 +304,9 @@ def make_eat_full_signed():
     The tag stack is self-described-CBOR (55799) wrapping CWT (61) wrapping
     the COSE_Sign1 tag (18), matching the EAT profile.
     """
-    cose_sign1_tagged = _sign_cose1(_read_ocp_payload("full"))
+    cose_sign1_tagged = _sign_cose1(
+        _read_ocp_payload("full"),
+        x5chain_cert_override=_load_leaf_without_eku_der())
     inner = cbor2.loads(cose_sign1_tagged)  # CBORTag(18, [...])
     cwt = CBORTag(CWT_TAG, inner)
     self_described = CBORTag(SELF_DESCRIBED_CBOR_TAG, cwt)
@@ -328,16 +343,31 @@ def make_signed_coev_blackwell_fsp_bad_sig():
     return _sign_cose1(_read_coev_payload("blackwell_fsp_real"), tamper="bad_sig")
 
 
+def make_signed_coev_blackwell_fsp_chained():
+    # [leaf, root] rather than a bare leaf: OCSP pairs each subject with its
+    # issuer, so a lone leaf has nothing to check.
+    return _sign_cose1(_read_coev_payload("blackwell_fsp_real"), chain_with_root=True)
+
+
 COEV_FIXTURES = [
     ("blackwell_fsp_real",         make_signed_coev_blackwell_fsp),
     ("blackwell_fsp_real_bad_sig", make_signed_coev_blackwell_fsp_bad_sig),
+    ("blackwell_fsp_real_chained", make_signed_coev_blackwell_fsp_chained),
 ]
 
 
 # ---------------- Driver ----------------
 
+def make_signed_corim_blackwell_fsp_chained():
+    # [leaf, root] rather than a bare leaf: OCSP pairs each subject with its
+    # issuer, so a lone leaf has nothing to check.
+    return _sign_cose1(_read_payload("blackwell_fsp_real"), chain_with_root=True)
+
+
 FIXTURES = [
     ("signed_full",                              make_signed_full),
+    ("signed_missing_corim_eku",                 make_signed_missing_corim_eku),
+    ("blackwell_fsp_real_chained",               make_signed_corim_blackwell_fsp_chained),
     ("signed_full_chained",                      make_signed_full_chained),
     ("signed_x5chain_unprotected",               make_signed_x5chain_unprotected),
     ("signed_x5chain_unprotected_sha256",        make_signed_x5chain_unprotected_sha256),

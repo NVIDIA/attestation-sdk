@@ -19,6 +19,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "nvat.h"
 
@@ -80,10 +82,17 @@ struct FakeNvatControl {
     nvat_rc_t corim_store_enable_in_memory_cache_rc = NVAT_RC_OK;
     nvat_rc_t ocsp_create_cached_rc = NVAT_RC_OK;
     nvat_rc_t corim_verifier_create_rc = NVAT_RC_OK;
+    nvat_rc_t add_device_identity_root_rc = NVAT_RC_OK;
+    nvat_rc_t add_rim_signing_root_rc = NVAT_RC_OK;
     nvat_rc_t detached_eat_options_create_rc = NVAT_RC_OK;
     nvat_rc_t verify_cmw_rc = NVAT_RC_OK;
     int ocsp_aia_create_calls = 0;
     int ocsp_cached_create_calls = 0;
+    std::vector<std::pair<std::string, std::string>> corim_url_rewrites;
+    std::vector<std::string> device_identity_root_pems;
+    std::vector<std::string> rim_signing_root_pems;
+    int verify_cmw_calls = 0;
+    std::vector<std::pair<std::string, std::string>> ocsp_aia_url_rewrites;
     // Result JSON handed back by nvat_local_corim_verifier_verify_cmw. Set to
     // an empty string to model a verifier that reports success but yields no
     // usable result.

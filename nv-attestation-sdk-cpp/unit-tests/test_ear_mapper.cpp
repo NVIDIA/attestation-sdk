@@ -352,8 +352,10 @@ TEST(EarMapperTest, PurposeAbsentWhenAppraisalHasNone) {
 // same way, they just were not backed by a reference value.
 TEST(EarMapperTest, UncorroboratedClaimsReachAttesterClaims) {
     CorimAttestationResult result = make_passing_result("gpu_0");
-    result.items[0].match.corroborated_evidence_claims["dbgstat"] = "disabled";
-    result.items[0].match.uncorroborated_evidence_claims["vbios"] = "96.00.9f";
+    result.items[0].match.corroborated_evidence_claims["dbgstat"] =
+        std::make_unique<TextClaimValue>("disabled");
+    result.items[0].match.uncorroborated_evidence_claims["vbios"] =
+        std::make_unique<TextClaimValue>("96.00.9f");
 
     nlohmann::json ear{};
     ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
@@ -362,6 +364,16 @@ TEST(EarMapperTest, UncorroboratedClaimsReachAttesterClaims) {
         ear["submods"]["gpu_0"]["ear_attester_claims"];
     EXPECT_EQ(attester["dbgstat"].get<std::string>(), "disabled");
     EXPECT_EQ(attester["vbios"].get<std::string>(), "96.00.9f");
+}
+
+TEST(EarMapperTest, RawClaimIsBase64urlInAttesterClaims) {
+    CorimAttestationResult result = make_passing_result("gpu_0");
+    result.items[0].match.uncorroborated_evidence_claims["k"] =
+        std::make_unique<RawClaimValue>(ByteString({0xFB, 0xFF, 0xFE, 0x00}));
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+    EXPECT_EQ(ear["submods"]["gpu_0"]["ear_attester_claims"]["k"], "-__-AA");
 }
 
 TEST(EarMapperTest, FailedSignatureProducesContraindicated) {
@@ -465,7 +477,8 @@ TEST(EarMapperTest, AttesterClaimsEmittedFromCorroboratedMap) {
     EvidenceItemAppraisal item{};
     item.label = "gpu_0";
     item.evidence.signature_verified = true;
-    item.match.corroborated_evidence_claims["oemid"] = "5703";
+    item.match.corroborated_evidence_claims["oemid"] =
+        std::make_unique<TextClaimValue>("5703");
     result.items.push_back(std::move(item));
 
     nlohmann::json ear{};
@@ -494,7 +507,8 @@ TEST(EarMapperTest, HwmodelFallsBackToCertificateProduct) {
 TEST(EarMapperTest, EvidenceHwmodelWinsOverCertificate) {
     auto result = make_passing_result("gpu_0");
     result.items[0].hwmodel = "GB100";
-    result.items[0].match.corroborated_evidence_claims["hwmodel"] = "from-evidence";
+    result.items[0].match.corroborated_evidence_claims["hwmodel"] =
+        std::make_unique<TextClaimValue>("from-evidence");
 
     nlohmann::json ear{};
     ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
@@ -543,7 +557,8 @@ TEST(EarMapperTest, PerDeviceIdentifiersNeverReachTheEar) {
     result.items[0].evidence.device_cert_serial = "1215674193163864588919";
     result.items[0].evidence.spdm_end_entity_othername_serial = "48B02DD4C0CB1539";
     result.items[0].evidence.akpub = "-----BEGIN PUBLIC KEY-----\nAAAA\n";
-    result.items[0].match.corroborated_evidence_claims["oemid"] = "5703";
+    result.items[0].match.corroborated_evidence_claims["oemid"] =
+        std::make_unique<TextClaimValue>("5703");
 
     nlohmann::json ear{};
     ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
@@ -710,6 +725,48 @@ TEST(EarMapperTest, EachFailingRimReportsItsOwnReason) {
     EXPECT_EQ(errors[1]["code"].get<int>(), static_cast<int>(Error::RimInvalidSchema));
     EXPECT_EQ(errors[1]["message"].get<std::string>(),
               "CoRIM parse failed: https://rim.example/two");
+}
+
+// An untrusted RIM signing chain must contraindicate without discarding the
+// measurement comparison the relying party needs.
+TEST(EarMapperTest, UntrustedRimChainContraindicatesButKeepsComparison) {
+    auto result = make_passing_result("gpu_0");
+
+    PerCertStatus leaf;
+    leaf.cert_check_status = CertChainStatus::VALID;
+    auto ocsp = std::make_shared<PerCertStatus::OcspInfo>();
+    ocsp->crl_status = OCSPStatus::UNKOWN;
+    ocsp->nonce_matches = true;
+    ocsp->response_valid = true;
+    leaf.ocsp = std::move(ocsp);
+
+    CorimResult cr;
+    cr.locator = "https://rim.example/one";
+    cr.fetched = true;
+    cr.parsed = true;
+    cr.signature_verified = true;
+    cr.cert_chain = std::unique_ptr<std::vector<PerCertStatus>>(
+        new std::vector<PerCertStatus>{std::move(leaf)});
+    cr.error = {Error::CertChainVerificationFailure,
+                "RIM signing chain is not trusted", "certificate 0: unknown"};
+    result.items[0].corims.push_back(std::move(cr));
+
+    nlohmann::json ear{};
+    ASSERT_EQ(map_to_ear_json(result, ear), Error::Ok);
+
+    const auto& submod = ear["submods"]["gpu_0"];
+    EXPECT_EQ(submod["ear_status"].get<std::string>(), "contraindicated");
+    // The appraisal ran, so the comparison claim must survive the verdict.
+    const auto& cmp = submod["ear_verifier_claims"]["ear_nvidia_evidence_rim_cmp"];
+    EXPECT_FALSE(cmp["matched_env"].empty());
+    // and the reason must be stated rather than left in the per-cert array.
+    const auto& errors = submod["ear_nvidia_error_details"];
+    ASSERT_EQ(errors.size(), 1U);
+    EXPECT_EQ(errors[0]["code"].get<int>(),
+              static_cast<int>(Error::CertChainVerificationFailure));
+    EXPECT_NE(errors[0]["message"].get<std::string>().find(
+                  "RIM signing chain is not trusted"), std::string::npos);
+    EXPECT_EQ(errors[0]["details"].get<std::string>(), "certificate 0: unknown");
 }
 
 TEST(EarMapperTest, ErrorDetailsAbsentWhenNothingFailed) {

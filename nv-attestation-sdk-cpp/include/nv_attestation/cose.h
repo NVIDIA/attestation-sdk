@@ -83,6 +83,12 @@ struct CoseSign1VerifyOptions {
      * This must be provided for certificate chain verification.
      */
     std::string root_cert_pem;
+
+    /**
+     * Extra roots accepted alongside root_cert_pem. Empty keeps single-anchor behaviour.
+     */
+    std::vector<std::string> additional_root_cert_pems;
+    bool require_corim_signing_eku = false;
 };
 
 /**

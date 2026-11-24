@@ -42,6 +42,7 @@ static const int DER_BITS_PER_BYTE = 8;
 static const int DER_MAX_BIT_STRING_UINT32_LEN = 5;  // 1 unused-bits byte + 4 value bytes
 static const uint8_t DER_CONTEXT_SPECIFIC_CLASS = 0x80;
 static const uint8_t DER_CONTEXT_SPECIFIC_MASK = 0xC0;
+static const uint8_t DER_CONSTRUCTED = 0x20;
 static const uint8_t DER_TAG_NUMBER_MASK = 0x1F;
 
 // DiceTcbInfo IMPLICIT context-specific tag numbers (per TCG DICE Attestation Architecture v1.2)
@@ -86,8 +87,8 @@ static Error parse_fwid_from_der(const unsigned char* data, long length, FWID& o
         return Error::InternalError;
     }
 
-    if (sk_ASN1_TYPE_num(fwid_seq.get()) < 2) {
-        LOG_AT_LEVEL(err_lvl, "FWID SEQUENCE must have at least 2 elements (OID + OCTET STRING)");
+    if (ptr != data + length || sk_ASN1_TYPE_num(fwid_seq.get()) != 2) {
+        LOG_AT_LEVEL(err_lvl, "FWID must contain exactly an OID and OCTET STRING");
         return Error::InternalError;
     }
 
@@ -169,65 +170,85 @@ static Error get_extension_der_bytes(const void* x509_cert, const std::string& o
 
 // --- CompositeDeviceId ---
 
-Error CompositeDeviceId::parse_from_der(const std::vector<uint8_t>& der, CompositeDeviceId& out) {
+/**
+ * X.509 identifies the extension by extnID. It does not require the OID to
+ * appear again inside extnValue:
+ * https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.9
+ *
+ * The 2018 TCG example includes a second OID in extnValue:
+ * https://trustedcomputinggroup.org/wp-content/uploads/TCG-DICE-Arch-Implicit-Identity-Based-Device-Attestation-v1-rev93.pdf
+ *
+ *   X.509 extension, extnID = 2.23.133.5.4.1
+ *   `-- extnValue (OCTET STRING containing one of these DER values)
+ *       |-- TCG example: SEQUENCE
+ *       |   |-- OID 2.23.133.5.4.1
+ *       |   `-- SEQUENCE { version, SubjectPublicKeyInfo, FWID }
+ *       `-- Hopper: SEQUENCE { version, SubjectPublicKeyInfo, FWID }
+ *
+ * Hopper has no nested OID. Accept both encodings of CompositeDeviceID.
+ */
+Error CompositeDeviceId::parse_from_der(const std::vector<uint8_t>& der,
+                                        CompositeDeviceId& out) {
     if (der.empty()) {
         LOG_DEBUG("CompositeDeviceId DER data is empty");
         return Error::InternalError;
     }
 
-    // CompositeDeviceID is wrapped in: SEQUENCE { OID, SEQUENCE CompositeDeviceID }
-    // The extension value contains this outer wrapper.
     const unsigned char* ptr = der.data();
     nv_unique_ptr<ASN1_SEQUENCE_ANY> outer_seq(d2i_ASN1_SEQUENCE_ANY(nullptr, &ptr, static_cast<long>(der.size())));
     if (!outer_seq) {
         LOG_DEBUG("Failed to parse CompositeDeviceId outer SEQUENCE");
         return Error::InternalError;
     }
-
-    int num_outer = sk_ASN1_TYPE_num(outer_seq.get());
-    if (num_outer < 2) {
-        LOG_DEBUG("CompositeDeviceId outer SEQUENCE must have at least 2 elements (OID + SEQUENCE)");
+    if (ptr != der.data() + der.size()) {
+        LOG_DEBUG("CompositeDeviceId has trailing DER data");
         return Error::InternalError;
     }
 
-    // Element 0: OID (2.23.133.5.4.1)
-    ASN1_TYPE* oid_elem = sk_ASN1_TYPE_value(outer_seq.get(), 0);
-    if (oid_elem == nullptr || oid_elem->type != V_ASN1_OBJECT) {
-        LOG_DEBUG("CompositeDeviceId element 0 is not an OID");
-        return Error::InternalError;
+    ASN1_SEQUENCE_ANY* elements = outer_seq.get();
+    nv_unique_ptr<ASN1_SEQUENCE_ANY> wrapped_inner;
+    ASN1_TYPE* first = sk_ASN1_TYPE_value(outer_seq.get(), 0);
+    if (first != nullptr && first->type == V_ASN1_OBJECT) {
+        nv_unique_ptr<ASN1_OBJECT> expected_oid(
+            OBJ_txt2obj(OID_TCG_DICE_TCB_INFO.c_str(), 1));
+        if (sk_ASN1_TYPE_num(outer_seq.get()) != 2 ||
+                       !expected_oid ||
+                       OBJ_cmp(first->value.object, expected_oid.get()) != 0) {
+            LOG_DEBUG("CompositeDeviceId wrapper has an unexpected OID or element count");
+            return Error::InternalError;
+        }
+        // Deployed device certificates carry CompositeDeviceID directly;
+        // other certificates may wrap it in SEQUENCE { OID, SEQUENCE }.
+        ASN1_TYPE* inner = sk_ASN1_TYPE_value(outer_seq.get(), 1);
+        if (inner == nullptr || inner->type != V_ASN1_SEQUENCE) {
+            LOG_DEBUG("CompositeDeviceId wrapper lacks an inner SEQUENCE");
+            return Error::InternalError;
+        }
+        const unsigned char* inner_data = ASN1_STRING_get0_data(inner->value.sequence);
+        int inner_len = ASN1_STRING_length(inner->value.sequence);
+        if (inner_data == nullptr || inner_len <= 0) {
+            LOG_DEBUG("CompositeDeviceId inner SEQUENCE data is null or empty");
+            return Error::InternalError;
+        }
+        const unsigned char* inner_ptr = inner_data;
+        wrapped_inner.reset(d2i_ASN1_SEQUENCE_ANY(nullptr, &inner_ptr, inner_len));
+        if (!wrapped_inner || inner_ptr != inner_data + inner_len) {
+            LOG_DEBUG("Failed to parse CompositeDeviceId inner SEQUENCE");
+            return Error::InternalError;
+        }
+        elements = wrapped_inner.get();
     }
 
-    // Element 1: SEQUENCE CompositeDeviceID { version, SubjectPublicKeyInfo, FWID }
-    ASN1_TYPE* inner_elem = sk_ASN1_TYPE_value(outer_seq.get(), 1);
-    if (inner_elem == nullptr || inner_elem->type != V_ASN1_SEQUENCE) {
-        LOG_DEBUG("CompositeDeviceId element 1 is not a SEQUENCE");
-        return Error::InternalError;
-    }
-
-    const unsigned char* inner_data = ASN1_STRING_get0_data(inner_elem->value.sequence);
-    int inner_len = ASN1_STRING_length(inner_elem->value.sequence);
-    if (inner_data == nullptr || inner_len <= 0) {
-        LOG_DEBUG("CompositeDeviceId inner SEQUENCE data is null or empty");
-        return Error::InternalError;
-    }
-
-    const unsigned char* qtr = inner_data;
-    nv_unique_ptr<ASN1_SEQUENCE_ANY> inner_seq(d2i_ASN1_SEQUENCE_ANY(nullptr, &qtr, inner_len));
-    if (!inner_seq) {
-        LOG_DEBUG("Failed to parse CompositeDeviceId inner SEQUENCE");
-        return Error::InternalError;
-    }
-
-    int num_inner = sk_ASN1_TYPE_num(inner_seq.get());
-    if (num_inner < 3) {
-        LOG_DEBUG("CompositeDeviceId inner SEQUENCE must have at least 3 elements");
+    int num_inner = sk_ASN1_TYPE_num(elements);
+    if (num_inner != 3) {
+        LOG_DEBUG("CompositeDeviceId body must have exactly 3 elements");
         return Error::InternalError;
     }
 
     CompositeDeviceId result;
 
     // Element 0: version INTEGER
-    ASN1_TYPE* version_elem = sk_ASN1_TYPE_value(inner_seq.get(), 0);
+    ASN1_TYPE* version_elem = sk_ASN1_TYPE_value(elements, 0);
     if (version_elem == nullptr || version_elem->type != V_ASN1_INTEGER) {
         LOG_DEBUG("CompositeDeviceId: version is not an INTEGER");
         return Error::InternalError;
@@ -235,7 +256,7 @@ Error CompositeDeviceId::parse_from_der(const std::vector<uint8_t>& der, Composi
     result.m_version = ASN1_INTEGER_get(version_elem->value.integer);
 
     // Element 1: SubjectPublicKeyInfo SEQUENCE — store as raw DER bytes
-    ASN1_TYPE* spki_elem = sk_ASN1_TYPE_value(inner_seq.get(), 1);
+    ASN1_TYPE* spki_elem = sk_ASN1_TYPE_value(elements, 1);
     if (spki_elem == nullptr || spki_elem->type != V_ASN1_SEQUENCE) {
         LOG_DEBUG("CompositeDeviceId: SubjectPublicKeyInfo is not a SEQUENCE");
         return Error::InternalError;
@@ -247,7 +268,7 @@ Error CompositeDeviceId::parse_from_der(const std::vector<uint8_t>& der, Composi
     }
 
     // Element 2: FWID SEQUENCE { hashAlg OID, digest OCTET STRING }
-    ASN1_TYPE* fwid_elem = sk_ASN1_TYPE_value(inner_seq.get(), 2);
+    ASN1_TYPE* fwid_elem = sk_ASN1_TYPE_value(elements, 2);
     if (fwid_elem == nullptr || fwid_elem->type != V_ASN1_SEQUENCE) {
         LOG_DEBUG("CompositeDeviceId: FWID is not a SEQUENCE");
         return Error::InternalError;
@@ -268,7 +289,8 @@ Error CompositeDeviceId::parse_from_der(const std::vector<uint8_t>& der, Composi
     return Error::Ok;
 }
 
-Error CompositeDeviceId::parse_from_x509_extension(const void* x509_cert, CompositeDeviceId& out) {
+Error CompositeDeviceId::parse_from_x509_extension(const void* x509_cert,
+                                                    CompositeDeviceId& out) {
     std::vector<uint8_t> der_bytes;
     // Note: get_extension_der_bytes logs at LOG_ERROR (canonical path).
     // parse_from_der logs at LOG_DEBUG unconditionally — if this method is ever called from a
@@ -386,13 +408,16 @@ static long parse_der_length(const unsigned char*& ptr, const unsigned char* end
     if (num_bytes == 0 || num_bytes > 4 || ptr + num_bytes > end) {
         return -1;
     }
+    if (*ptr == 0) {
+        return -1;  // Leading zero is not minimal DER.
+    }
     long len = 0;
     for (int i = 0; i < num_bytes; i++) {
         len = (len << DER_BITS_PER_BYTE) | *ptr;
         ptr++;
     }
     // Guard against sign wrap on platforms where long is 32 bits
-    if (len < 0) {
+    if (len < DER_LENGTH_LONG_FORM) {
         return -1;
     }
     return len;
@@ -441,6 +466,7 @@ static Error parse_integrity_register(const unsigned char* data, long length, In
     const unsigned char* ptr = data;
     const unsigned char* reg_end = data + length;
     IntegrityRegister result;
+    uint32_t seen_tags = 0;
 
     while (ptr < reg_end) {
         uint8_t tag_byte = *ptr;
@@ -456,10 +482,19 @@ static Error parse_integrity_register(const unsigned char* data, long length, In
         ptr += content_len;
 
         if ((tag_byte & DER_CONTEXT_SPECIFIC_MASK) != DER_CONTEXT_SPECIFIC_CLASS) {
-            continue;
+            LOG_AT_LEVEL(err_lvl, "IntegrityRegister contains a non-context-specific field");
+            return Error::InternalError;
         }
 
         int tag_number = tag_byte & DER_TAG_NUMBER_MASK;
+        const uint32_t tag_bit = uint32_t{1} << tag_number;
+        const uint8_t expected_tag = static_cast<uint8_t>(DER_CONTEXT_SPECIFIC_CLASS |
+            (tag_number == IR_TAG_REGISTER_DIGESTS ? DER_CONSTRUCTED : 0) | tag_number);
+        if ((seen_tags & tag_bit) != 0U || tag_byte != expected_tag) {
+            LOG_AT_LEVEL(err_lvl, "IntegrityRegister has a duplicate or invalid tag [" << tag_number << "]");
+            return Error::InternalError;
+        }
+        seen_tags |= tag_bit;
 
         switch (tag_number) {
             case IR_TAG_REGISTER_NAME:
@@ -488,8 +523,8 @@ static Error parse_integrity_register(const unsigned char* data, long length, In
             }
 
             default:
-                LOG_INFO("Skipping unsupported IntegrityRegister tag [" << tag_number << "]");
-                break;
+                LOG_AT_LEVEL(err_lvl, "Unsupported IntegrityRegister tag [" << tag_number << "]");
+                return Error::InternalError;
         }
     }
 
@@ -509,7 +544,7 @@ static Error parse_integrity_register(const unsigned char* data, long length, In
 // IntegrityRegister SEQUENCEs (same pattern as parse_fwid_list).
 static Error parse_integrity_register_list(const unsigned char* data, int length,
                                            std::vector<IntegrityRegister>& out, LogLevel err_lvl) {
-    if (length < 0) {
+    if (length <= 0) {
         LOG_AT_LEVEL(err_lvl, "IntegrityRegister list has invalid length");
         return Error::InternalError;
     }
@@ -557,7 +592,8 @@ static Error parse_integrity_register_list(const unsigned char* data, int length
 // definition and compiling it with OpenSSL's ASN1_ITEM machinery, which is significantly
 // more complex than the ~60 lines of TLV walking below.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& out, bool silent) { // NOSONAR cpp:S3776
+Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& out,
+                                  bool silent) { // NOSONAR cpp:S3776
     const LogLevel err_lvl = silent ? LogLevel::DEBUG : LogLevel::ERROR;
 
     if (der.empty()) {
@@ -576,7 +612,7 @@ Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& 
     ptr++;
 
     long seq_len = parse_der_length(ptr, end);
-    if (seq_len < 0 || ptr + seq_len > end) {
+    if (seq_len < 0 || ptr + seq_len != end) {
         LOG_AT_LEVEL(err_lvl, "DiceTcbInfo: invalid SEQUENCE length");
         return Error::InternalError;
     }
@@ -584,6 +620,7 @@ Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& 
     const unsigned char* seq_end = ptr + seq_len;
     DiceTcbInfo result;
     int context_specific_tags_found = 0;
+    uint32_t seen_tags = 0;
 
     // Walk TLV elements inside the SEQUENCE
     while (ptr < seq_end) {
@@ -601,12 +638,21 @@ Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& 
 
         // Check for context-specific class (bits 7-6 = 10)
         if ((tag_byte & DER_CONTEXT_SPECIFIC_MASK) != DER_CONTEXT_SPECIFIC_CLASS) {
-            LOG_AT_LEVEL(err_lvl, "Skipping non-context-specific element with tag 0x" << to_hex_string(tag_byte));
-            continue;
+            LOG_AT_LEVEL(err_lvl, "DiceTcbInfo: non-context-specific element");
+            return Error::InternalError;
         }
 
         context_specific_tags_found++;
         int tag_number = tag_byte & DER_TAG_NUMBER_MASK;
+        const uint32_t tag_bit = uint32_t{1} << tag_number;
+        const bool constructed = tag_number == TAG_FWIDS || tag_number == TAG_INTEGRITY_REGISTERS;
+        const uint8_t expected_tag = static_cast<uint8_t>(DER_CONTEXT_SPECIFIC_CLASS |
+            (constructed ? DER_CONSTRUCTED : 0) | tag_number);
+        if ((seen_tags & tag_bit) != 0U || tag_byte != expected_tag) {
+            LOG_AT_LEVEL(err_lvl, "Duplicate or invalid DiceTcbInfo tag [" << tag_number << "]");
+            return Error::InternalError;
+        }
+        seen_tags |= tag_bit;
 
         switch (tag_number) {
             case TAG_VENDOR:
@@ -696,8 +742,8 @@ Error DiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, DiceTcbInfo& 
             }
 
             default:
-                LOG_INFO("Skipping unsupported DiceTcbInfo tag [" << tag_number << "]");
-                break;
+                LOG_AT_LEVEL(err_lvl, "Unsupported DiceTcbInfo tag [" << tag_number << "]");
+                return Error::InternalError;
         }
     }
 
@@ -789,7 +835,8 @@ bool DiceTcbInfo::operator==(const DiceTcbInfo& other) const {
 
 // --- MultiDiceTcbInfo ---
 
-Error MultiDiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, MultiDiceTcbInfo& out) {
+Error MultiDiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der,
+                                       MultiDiceTcbInfo& out) {
     if (der.empty()) {
         LOG_ERROR("MultiDiceTcbInfo DER data is empty");
         return Error::InternalError;
@@ -801,6 +848,10 @@ Error MultiDiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, MultiDic
     nv_unique_ptr<ASN1_SEQUENCE_ANY> outer_seq(d2i_ASN1_SEQUENCE_ANY(nullptr, &ptr, static_cast<long>(der.size())));
     if (!outer_seq) {
         LOG_ERROR("Failed to parse MultiDiceTcbInfo outer SEQUENCE from DER");
+        return Error::InternalError;
+    }
+    if (ptr != der.data() + der.size()) {
+        LOG_ERROR("MultiDiceTcbInfo has trailing DER data");
         return Error::InternalError;
     }
 
@@ -841,7 +892,9 @@ Error MultiDiceTcbInfo::parse_from_der(const std::vector<uint8_t>& der, MultiDic
     return Error::Ok;
 }
 
-Error MultiDiceTcbInfo::parse_from_x509_extension(const void* x509_cert, MultiDiceTcbInfo& out, bool silent) {
+Error MultiDiceTcbInfo::parse_from_x509_extension(const void* x509_cert,
+                                                  MultiDiceTcbInfo& out,
+                                                  bool silent) {
     std::vector<uint8_t> der_bytes;
     Error err = get_extension_der_bytes(x509_cert, OID_TCG_DICE_MULTI_TCB_INFO, der_bytes, silent);
     if (err != Error::Ok) {
@@ -870,8 +923,8 @@ Error parse_dice_ueid_from_x509_extension(const void* x509_cert,
         LOG_AT_LEVEL(err_lvl, "DiceUeid: long-form length not supported");
         return Error::InternalError;
     }
-    if (der_bytes.size() < inner_off + outer_len) {
-        LOG_AT_LEVEL(err_lvl, "DiceUeid: outer length exceeds buffer");
+    if (der_bytes.size() != inner_off + outer_len) {
+        LOG_AT_LEVEL(err_lvl, "DiceUeid: outer length does not match buffer");
         return Error::InternalError;
     }
     if (der_bytes[inner_off] != 0x04) {
@@ -883,8 +936,8 @@ Error parse_dice_ueid_from_x509_extension(const void* x509_cert,
         LOG_AT_LEVEL(err_lvl, "DiceUeid: inner long-form length not supported");
         return Error::InternalError;
     }
-    if (inner_off + 2 + inner_len > der_bytes.size()) {
-        LOG_AT_LEVEL(err_lvl, "DiceUeid: inner length exceeds buffer");
+    if (inner_off + 2 + inner_len != der_bytes.size()) {
+        LOG_AT_LEVEL(err_lvl, "DiceUeid: inner length does not match buffer");
         return Error::InternalError;
     }
     const auto inner_data_off = static_cast<std::ptrdiff_t>(inner_off + 2);

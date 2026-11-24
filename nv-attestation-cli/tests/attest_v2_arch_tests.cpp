@@ -18,13 +18,10 @@
 // Integration tests for attest-v2 --evidence-source nvml on live GPU machines.
 //
 // attest-v2 is intended for Rubin machines only:
-//   - Rubin: must pass.
+//   - Rubin: policy affirmation depends on the independently confirmed CC mode.
 //   - Hopper/Blackwell: must fail, their evidence carries no CoEV.
 //
-// Required env per label:
-//   rubin-nvml    → TEST_MODE=integration
-//   hopper-nvml   → TEST_MODE=integration
-//   blackwell-nvml→ TEST_MODE=integration
+// Rubin runs use TEST_EXPECTED_MODE=spt|mpt|tdisp under either label.
 
 #include <string>
 
@@ -36,19 +33,73 @@
 
 namespace {
 
-std::string base_attest_v2_cmd() {
+std::string base_attest_v2_cmd(const std::string& policy) {
     return g_cli_env->nvattest_bin +
-           " attest-v2 --evidence-source nvml --format json --no-verify-revocation";
+           " attest-v2 --evidence-source nvml --format json"
+           " --relying-party-policy " + policy +
+           " --verify-revocation"
+           " --service-key " + g_cli_env->service_key;
 }
 
 class RubinAttestV2Test : public ::testing::Test {
 protected:
+    std::string expected_purpose_;
+    std::string matching_policy_;
+    std::string opposite_policy_;
+
     void SetUp() override {
-        if (g_cli_env->test_label != "rubin-nvml") {
-            GTEST_SKIP() << "Skipping: requires NVAT_CLI_TEST_LABEL=rubin-nvml";
+        if (!g_cli_env->expects_gpu_v2_attestation()) {
+            GTEST_SKIP() << "Skipping: v2 GPU tests not selected for this run";
         }
-        if (g_cli_env->test_mode != "integration") {
-            GTEST_SKIP() << "Skipping: requires TEST_MODE=integration";
+        const std::string& mode = g_cli_env->expected_mode;
+        const bool tdisp = mode == "tdisp";
+        expected_purpose_ = tdisp ? "TDISP" : (mode == "spt" ? "CC SPT" : "CC MPT");
+        matching_policy_ = tdisp ? "builtin:cc-tdisp" : "builtin:cc-bounce-buffer";
+        opposite_policy_ = tdisp ? "builtin:cc-bounce-buffer" : "builtin:cc-tdisp";
+    }
+
+    void assert_rubin_appraisal(const std::string& policy, int expected_exit,
+                                const std::string& expected_purpose) {
+        int exit_code = 0;
+        std::string output = exec_and_capture_output(base_attest_v2_cmd(policy), exit_code);
+        ASSERT_EQ(exit_code, expected_exit) << "attest-v2 on Rubin:\n" << output;
+
+        std::string json_str;
+        ASSERT_TRUE(extract_json_object(output, json_str)) << "No JSON in output:\n" << output;
+        nlohmann::json response;
+        ASSERT_NO_THROW(response = nlohmann::json::parse(json_str));
+        ASSERT_TRUE(response.is_object()) << response.dump(2);
+
+        ASSERT_TRUE(response.contains("ear_status")) << response.dump(2);
+        EXPECT_EQ(response["ear_status"], "affirming") << response.dump(2);
+        ASSERT_TRUE(response.contains("submods")) << response.dump(2);
+        const auto& submods = response["submods"];
+        ASSERT_TRUE(submods.is_object()) << response.dump(2);
+        ASSERT_FALSE(submods.empty()) << "No GPU submods in EAR";
+        for (const auto& submod_entry : submods.items()) {
+            EXPECT_EQ(submod_entry.key().rfind("gpu_", 0), 0U) << submod_entry.key();
+            const auto& submod = submod_entry.value();
+            ASSERT_TRUE(submod.is_object()) << submod.dump(2);
+            ASSERT_TRUE(submod.contains("ear_status")) << submod.dump(2);
+            EXPECT_EQ(submod["ear_status"], "affirming") << submod.dump(2);
+            ASSERT_TRUE(submod.contains("ear_nvidia_purpose")) << submod.dump(2);
+            EXPECT_EQ(submod["ear_nvidia_purpose"], expected_purpose) << submod.dump(2);
+            ASSERT_TRUE(submod.contains("ear_verifier_claims")) << submod.dump(2);
+            const auto& claims = submod["ear_verifier_claims"];
+            ASSERT_TRUE(claims.is_object()) << submod.dump(2);
+            ASSERT_TRUE(claims.contains("ear_nvidia_evidence")) << submod.dump(2);
+            const auto& evidence = claims["ear_nvidia_evidence"];
+            ASSERT_TRUE(evidence.is_object()) << submod.dump(2);
+            EXPECT_TRUE(evidence.value("signature_verified", false)) << submod.dump(2);
+            ASSERT_TRUE(evidence.contains("nonce_match")) << submod.dump(2);
+            EXPECT_EQ(evidence["nonce_match"], true) << submod.dump(2);
+            ASSERT_TRUE(claims.contains("ear_nvidia_rims")) << "No RIMs located:\n" << submod.dump(2);
+            const auto& rims = claims["ear_nvidia_rims"];
+            ASSERT_TRUE(rims.is_array()) << submod.dump(2);
+            ASSERT_FALSE(rims.empty()) << "No RIMs located:\n" << submod.dump(2);
+            for (const auto& rim : rims) {
+                EXPECT_TRUE(rim.value("fetched", false)) << rim.dump(2);
+            }
         }
     }
 };
@@ -81,7 +132,8 @@ protected:
 // Exit 1 is "ran, did not affirm"; exit 2 would be "could not collect or parse".
 void assert_no_reference_values(const std::string& arch_label) {
     int exit_code = 0;
-    std::string output = exec_and_capture_output(base_attest_v2_cmd(), exit_code);
+    std::string output = exec_and_capture_output(
+        base_attest_v2_cmd("builtin:cc-bounce-buffer"), exit_code);
     ASSERT_EQ(exit_code, 1)
         << "attest-v2 did not report a failed appraisal on " << arch_label
         << ":\n" << output;
@@ -107,29 +159,11 @@ void assert_no_reference_values(const std::string& arch_label) {
 } // namespace
 
 TEST_F(RubinAttestV2Test, Passes) {
-    int exit_code = 0;
-    std::string output = exec_and_capture_output(base_attest_v2_cmd(), exit_code);
-    ASSERT_EQ(exit_code, 0) << "attest-v2 failed on Rubin:\n" << output;
+    assert_rubin_appraisal(matching_policy_, 0, expected_purpose_);
+}
 
-    std::string json_str;
-    ASSERT_TRUE(extract_json_object(output, json_str)) << "No JSON in output:\n" << output;
-    nlohmann::json response;
-    ASSERT_NO_THROW(response = nlohmann::json::parse(json_str));
-    ASSERT_TRUE(response.contains("evidence_items")) << response.dump(2);
-
-    const auto& items = response["evidence_items"];
-    ASSERT_TRUE(items.is_array());
-    ASSERT_FALSE(items.empty()) << "No evidence items in result";
-
-    for (const auto& item : items) {
-        ASSERT_TRUE(item.contains("evidence")) << item.dump(2);
-        EXPECT_TRUE(item["evidence"].value("signature_verified", false)) << item.dump(2);
-
-        ASSERT_TRUE(item.contains("corims")) << "No RIMs located:\n" << item.dump(2);
-        for (const auto& corim : item["corims"]) {
-            EXPECT_TRUE(corim.value("fetched", false)) << corim.dump(2);
-        }
-    }
+TEST_F(RubinAttestV2Test, RejectsOppositeModePolicy) {
+    assert_rubin_appraisal(opposite_policy_, 1, expected_purpose_);
 }
 
 TEST_F(HopperAttestV2Test, Fails) {

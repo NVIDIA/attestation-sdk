@@ -39,6 +39,7 @@ public:
     explicit ByteString(std::vector<uint8_t> data) : m_data(std::move(data)) {}
     std::string toBase64() const;
     std::vector<uint8_t> toVector() const;
+    const std::vector<uint8_t>& bytes() const { return m_data; }
     const uint8_t* data() const { return m_data.data(); }
     size_t size() const { return m_data.size(); }
     bool empty() const { return m_data.empty(); }
@@ -142,8 +143,7 @@ public:
     Digest() = default;
     Digest(int32_t algorithm, ByteString value)
         : m_alg_kind(AlgKind::kInt), m_alg_int(algorithm), m_value(std::move(value)) {}
-    Digest(std::string algorithm, ByteString value)
-        : m_alg_kind(AlgKind::kString), m_alg_str(std::move(algorithm)), m_value(std::move(value)) {}
+    Digest(std::string algorithm, ByteString value);
     bool getAlgorithm(int32_t& out) const;
     bool getAlgorithm(std::string& out) const;
     ByteString getValue() const { return m_value; }
@@ -168,6 +168,7 @@ class FlagsMap {
     std::unique_ptr<bool> m_immutable;
     std::unique_ptr<bool> m_tcb;
     std::unique_ptr<bool> m_confidentiality_protected;
+    std::unique_ptr<bool> m_runtime_updatable;
 
     static bool ptrEq(const std::unique_ptr<bool>& a, const std::unique_ptr<bool>& b) {
         if (!a && !b) { return true; }
@@ -189,6 +190,7 @@ public:
         if (o.m_immutable)                 { setImmutable(*o.m_immutable); }
         if (o.m_tcb)                       { setTcb(*o.m_tcb); }
         if (o.m_confidentiality_protected) { setConfidentialityProtected(*o.m_confidentiality_protected); }
+        if (o.m_runtime_updatable)          { setRuntimeUpdatable(*o.m_runtime_updatable); }
     }
     FlagsMap& operator=(const FlagsMap& o) {
         if (this != &o) { FlagsMap tmp(o); *this = std::move(tmp); }
@@ -205,6 +207,7 @@ public:
     void setImmutable(bool v)               { m_immutable.reset(new bool(v)); }
     void setTcb(bool v)                     { m_tcb.reset(new bool(v)); }
     void setConfidentialityProtected(bool v){ m_confidentiality_protected.reset(new bool(v)); }
+    void setRuntimeUpdatable(bool v)        { m_runtime_updatable.reset(new bool(v)); }
 
     const bool* getConfigured() const              { return m_configured.get(); }
     const bool* getSecure() const                  { return m_secure.get(); }
@@ -216,11 +219,13 @@ public:
     const bool* getImmutable() const               { return m_immutable.get(); }
     const bool* getTcb() const                     { return m_tcb.get(); }
     const bool* getConfidentialityProtected() const{ return m_confidentiality_protected.get(); }
+    const bool* getRuntimeUpdatable() const       { return m_runtime_updatable.get(); }
 
     bool empty() const {
         return !m_configured && !m_secure && !m_recovery && !m_debug
             && !m_replay_protected && !m_integrity_protected && !m_runtime_meas
-            && !m_immutable && !m_tcb && !m_confidentiality_protected;
+            && !m_immutable && !m_tcb && !m_confidentiality_protected
+            && !m_runtime_updatable;
     }
 
     bool operator==(const FlagsMap& o) const {
@@ -230,7 +235,8 @@ public:
             && ptrEq(m_integrity_protected, o.m_integrity_protected)
             && ptrEq(m_runtime_meas, o.m_runtime_meas)
             && ptrEq(m_immutable, o.m_immutable) && ptrEq(m_tcb, o.m_tcb)
-            && ptrEq(m_confidentiality_protected, o.m_confidentiality_protected);
+            && ptrEq(m_confidentiality_protected, o.m_confidentiality_protected)
+            && ptrEq(m_runtime_updatable, o.m_runtime_updatable);
     }
     bool operator!=(const FlagsMap& o) const { return !(*this == o); }
 };

@@ -116,6 +116,22 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_EAR_SIGNING_FAILED             (20)
 /// @brief Indicates the selected verifier JWKS was unavailable or unusable.
 #define NVAT_RC_VERIFIER_JWKS_ERROR            (21)
+/// @brief Indicates the CMW input is not valid JSON.
+#define NVAT_RC_CMW_JSON_INVALID               (22)
+/// @brief Indicates the CMW collection or an evidence item is not a JSON object.
+#define NVAT_RC_CMW_STRUCTURE_INVALID          (23)
+/// @brief Indicates a CMW collection or evidence item has a missing, non-string, or unsupported __cmwc_t profile.
+#define NVAT_RC_CMW_PROFILE_INVALID            (24)
+/// @brief Indicates the CMW collection has no evidence items or an item is missing its evidence record.
+#define NVAT_RC_CMW_EVIDENCE_MISSING           (25)
+/// @brief Indicates a CMW record is not a two-element array of strings.
+#define NVAT_RC_CMW_RECORD_INVALID             (26)
+/// @brief Indicates a CMW record contains invalid unpadded base64url data.
+#define NVAT_RC_CMW_ENCODING_INVALID           (27)
+/// @brief Indicates a CMW nonce, certificate, hints, or appraisal-settings record has an unsupported media type.
+#define NVAT_RC_CMW_MEDIA_TYPE_UNSUPPORTED     (28)
+/// @brief Indicates a nonce supplied in the CMW is shorter than 32 bytes.
+#define NVAT_RC_CMW_NONCE_INVALID              (29)
 /// @brief Indicates the client is not authorized to call the NVIDIA RIM service.
 #define NVAT_RC_RIM_FORBIDDEN                  (101)
 /// @brief Indicates an HTTP internal error occurred when calling the NVIDIA RIM service.
@@ -132,6 +148,8 @@ const char* nvat_rc_to_string(nvat_rc_t rc);
 #define NVAT_RC_RIM_MEASUREMENT_NOT_FOUND      (107)
 /// @brief Indicates a measurement conflict occurred when validating a RIM.
 #define NVAT_RC_RIM_MEASUREMENT_CONFLICT       (108)
+/// @brief Indicates no RIM locator is available after evidence discovery and configured fallbacks.
+#define NVAT_RC_RIM_LOCATOR_UNAVAILABLE        (109)
 /// @brief Indicates a non-recoverable error was encountered when calling the configured OCSP server.
 #define NVAT_RC_OCSP_INVALID_RESPONSE          (201)
 /// @brief Indicates the configured OCSP server responded with a code indicating an internal error.
@@ -270,6 +288,11 @@ typedef struct nvat_sdk_opts_st* nvat_sdk_opts_t;
 typedef struct nvat_logger_st* nvat_logger_t;
 
 /**
+ * @brief Observer that reports SDK-internal HTTP calls and cache lookups.
+ */
+typedef struct nvat_observer_st* nvat_observer_t;
+
+/**
  * @brief Common configuration for HTTP clients.
  */
 typedef struct nvat_http_options_st* nvat_http_options_t;
@@ -308,6 +331,71 @@ void nvat_sdk_opts_free(nvat_sdk_opts_t* sdk_opts);
  *        is called.
  */
 void nvat_sdk_opts_set_logger(nvat_sdk_opts_t opts, nvat_logger_t logger);
+
+/**
+ * @brief Observer callback invoked after each outbound HTTP attempt, e.g. a RIM or OCSP fetch.
+ * Each retry is reported as its own attempt.
+ * If the SDK is used across multiple threads, the implementation of this callback must be thread safe.
+ * @param service The service called: "rim", "ocsp", "jwks", "nras" or "unknown"
+ * @param method The HTTP method, e.g. "GET"
+ * @param url The request URL
+ * @param status The HTTP status code, or 0 if no response was received
+ * @param error NULL if a response was received, otherwise "timeout", "connect" or "other"
+ * @param duration_ms Time taken by the attempt in milliseconds
+ * @param request_size Size of the request body in bytes
+ * @param response_size Size of the response body received in bytes
+ * @param user_data Pointer to user-defined data
+ */
+typedef void (*nvat_http_call_callback_t)(
+    const char* service,
+    const char* method,
+    const char* url,
+    long status,
+    const char* error,
+    long duration_ms,
+    size_t request_size,
+    size_t response_size,
+    void* user_data
+);
+
+/**
+ * @brief Observer callback invoked after each in-memory cache lookup.
+ * If the SDK is used across multiple threads, the implementation of this callback must be thread safe.
+ * @param cache The cache looked up: "rim" or "ocsp"
+ * @param hit Whether the lookup returned a usable entry
+ * @param user_data Pointer to user-defined data
+ */
+typedef void (*nvat_cache_lookup_callback_t)(
+    const char* cache,
+    bool hit,
+    void* user_data
+);
+
+/**
+ * @brief Create an observer to pass to @ref nvat_sdk_opts_set_observer.
+ *        `user_data` must remain valid until @ref nvat_sdk_shutdown.
+ * @param user_data Nullable pointer passed to each callback invocation
+ */
+nvat_rc_t nvat_observer_create(nvat_observer_t* out_observer, void* user_data);
+
+/**
+ * @brief Sets the callback for outbound HTTP attempts.
+ */
+void nvat_observer_set_http_call_callback(nvat_observer_t observer, nvat_http_call_callback_t callback);
+
+/**
+ * @brief Sets the callback for cache lookups.
+ */
+void nvat_observer_set_cache_lookup_callback(nvat_observer_t observer, nvat_cache_lookup_callback_t callback);
+
+void nvat_observer_free(nvat_observer_t* observer);
+
+/**
+ * @brief Sets the observer in the given options, so the caller can turn
+ *        SDK-internal HTTP calls and cache lookups into metrics.
+ *        Note that the observer is not installed until @ref nvat_sdk_init is called.
+ */
+void nvat_sdk_opts_set_observer(nvat_sdk_opts_t opts, nvat_observer_t observer);
 
 /**
  * @brief Initialize the NVIDIA Attestation SDK with the given options.
@@ -1858,6 +1946,32 @@ nvat_rc_t nvat_corim_store_enable_in_memory_cache(
     time_t             ttl_seconds
 );
 
+/**
+ * @brief Enable a separate cache for missing CoRIMs.
+ *
+ * Negative caching is disabled by default. Only completed HTTP 404 responses
+ * are cached, using the effective URL after authorization and rewrites as the
+ * key. Requests for a cached URL return NVAT_RC_RIM_NOT_FOUND without a network
+ * request. Transport failures, other HTTP errors and local file failures are
+ * not cached. A newly published CoRIM may remain unavailable until its cached
+ * 404 expires. Configure the cache before calling nvat_local_corim_verifier_create,
+ * which takes ownership of the store.
+ *
+ * @param store          Store to configure. Must not be NULL.
+ * @param max_size_bytes Capacity for one URL and a boolean marker per entry;
+ *                       excludes cache bookkeeping. Must be > 0, including
+ *                       when disabling the cache.
+ * @param ttl_seconds    Lifetime in seconds; 0 disables and clears the cache.
+ *                       Must be >= 0. Hits do not extend the lifetime.
+ * @return NVAT_RC_OK on success; NVAT_RC_BAD_ARGUMENT for a NULL store,
+ *         zero capacity or negative TTL. Invalid settings leave caches intact.
+ */
+nvat_rc_t nvat_corim_store_enable_negative_cache(
+    nvat_corim_store_t store,
+    uint64_t           max_size_bytes,
+    time_t             ttl_seconds
+);
+
 void nvat_corim_store_free(nvat_corim_store_t* store);
 
 /** @} corim_store */
@@ -1894,12 +2008,72 @@ nvat_rc_t nvat_local_corim_verifier_create(
 );
 
 /**
+ * @brief Add a device identity root CA certificate to this verifier.
+ *
+ * The PEM must contain one root CA certificate. The verifier copies it and
+ * continues to trust its built-in device root and previously added roots.
+ * Empty, malformed, or non-CA certificates return NVAT_RC_BAD_ARGUMENT.
+ */
+nvat_rc_t nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+    nvat_local_corim_verifier_t verifier,
+    const char* root_cert_pem
+);
+
+/**
+ * @brief Add a root CA certificate for CoRIM and fetched CoEV signatures.
+ *
+ * The verifier copies the PEM and keeps its built-in production RIM root.
+ * Empty, malformed, or non-CA certificates return NVAT_RC_BAD_ARGUMENT.
+ */
+nvat_rc_t nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+    nvat_local_corim_verifier_t verifier,
+    const char* root_cert_pem
+);
+
+/**
+ * @brief Per-call options for @ref nvat_local_corim_verifier_verify_cmw.
+ */
+typedef struct nvat_verify_cmw_options_st* nvat_verify_cmw_options_t;
+
+/**
+ * @brief Create empty per-call verify options.
+ *
+ * @param out_options On success, receives the options handle. Free with
+ *        @ref nvat_verify_cmw_options_free.
+ */
+nvat_rc_t nvat_verify_cmw_options_create(nvat_verify_cmw_options_t* out_options);
+
+/**
+ * @brief Set the request id for one appraisal.
+ *
+ * Every RIM and OCSP request made by the appraisal sends it as
+ * `x-request-id`, and SDK logs written during the appraisal carry it, so a
+ * caller's request can be traced through downstream services. Without one,
+ * each outbound request gets its own random id.
+ *
+ * @param options Handle from @ref nvat_verify_cmw_options_create.
+ * @param request_id 1–128 printable ASCII characters, no spaces. Anything
+ *        else returns @ref NVAT_RC_BAD_ARGUMENT.
+ */
+nvat_rc_t nvat_verify_cmw_options_set_request_id(
+    nvat_verify_cmw_options_t options,
+    const char* request_id
+);
+
+void nvat_verify_cmw_options_free(nvat_verify_cmw_options_t* options);
+
+/**
  * @brief Verify a CMW input collection and emit a signed EAR.
  *
  * Appraisal findings — cert chain status, OCSP, evidence signature, and the
  * measurement match — are collected per evidence item rather than enforced.
  * The return code reflects only whether the input could be processed; the
  * pass/fail verdict is derived from @p out_ear_jwt by the caller.
+ *
+ * CMW parse failures return one of the NVAT_RC_CMW_* codes (22–29),
+ * identifying invalid JSON, structure, profile, missing evidence, record
+ * shape, encoding, media type, or nonce length. No EAR is produced on a
+ * parse failure. Use @ref nvat_rc_to_string for a readable description.
  *
  * @param verifier Handle from @ref nvat_local_corim_verifier_create.
  * @param cmw_data CMW collection bytes.
@@ -1910,6 +2084,8 @@ nvat_rc_t nvat_local_corim_verifier_create(
  *        NULL, or an options handle with an empty private key, yields an
  *        unsigned EAR (alg=none) — for tests only; production callers must
  *        supply a key.
+ * @param verify_cmw_options Per-call options (request id), from
+ *        @ref nvat_verify_cmw_options_create. May be NULL.
  * @param out_ear_jwt On success, set to a newly allocated string holding
  *        the EAR (Entity Attestation Result) JWT for this appraisal. Free
  *        with @ref nvat_str_free. May be NULL to discard the result.
@@ -1926,6 +2102,7 @@ nvat_rc_t nvat_local_corim_verifier_verify_cmw(
     size_t cmw_len,
     nvat_cmw_format_t format,
     nvat_ear_signing_options_t ear_signing_options,
+    nvat_verify_cmw_options_t verify_cmw_options,
     nvat_str_t* out_ear_jwt,
     nvat_str_t* out_ear_json
 );

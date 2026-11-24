@@ -704,6 +704,13 @@ const char* to_algorithm_name(HashAlgorithm alg);
 // sha-512 = 8), as used by CoRIM/CoEV digest records.
 int32_t to_ni_algorithm_id(HashAlgorithm alg);
 
+// Resolves a case-sensitive IANA NI name to its assigned numeric ID.
+// Names without a known numeric assignment return Error::BadArgument.
+Error ni_algorithm_id_from_name(const std::string& name, int32_t& out_id);
+
+// Resolves an NI numeric ID to its registered name; unknown IDs return BadArgument.
+Error ni_algorithm_name_from_id(int32_t id, const char*& out_name);
+
 // Maps an IANA NI registry ID (1, 7, 8) to the hash algorithm.
 Error hash_algorithm_from_ni_id(int32_t ni_id, HashAlgorithm& out_alg);
 

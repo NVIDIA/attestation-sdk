@@ -30,6 +30,8 @@
 #include "nv_attestation/cose.h"
 #include "nv_attestation/error.h"
 #include "nv_attestation/nv_x509.h"
+#include "nv_attestation/spdm/spdm_req.hpp"
+#include "nv_attestation/spdm/utils.h"
 #include "nv_attestation/utils.h"
 
 namespace nvattestation {
@@ -43,6 +45,18 @@ std::vector<uint8_t> read_coev_fixture_bytes(const std::string &name) {
         return {};
     }
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+}
+
+std::vector<uint8_t> load_captured_spdm12_transcript() {
+    const std::string path =
+        "testdata/sample_attestation_data/spdm/cx9Spdm12Transcript.bin";
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        ADD_FAILURE() << "Failed to open fixture: " << path;
+        return {};
+    }
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)),
                                 std::istreambuf_iterator<char>());
 }
 
@@ -204,6 +218,65 @@ TEST(SpdmHandler, VerifyAndExtractRejectsShortTranscript) {
     EXPECT_FALSE(verification.signature_valid);
     EXPECT_FALSE(verification.nonce_matches);
     EXPECT_TRUE(verification.ects.empty());
+}
+
+TEST(SpdmHandler, ParsesCapturedSpdm12TranscriptWithInvalidSignature) {
+    const IEvidenceHandler *handler =
+        find_evidence_handler(kCmwMediaSpdmTranscript);
+    ASSERT_NE(handler, nullptr);
+
+    std::vector<uint8_t> transcript = load_captured_spdm12_transcript();
+    ASSERT_FALSE(transcript.empty());
+    // Corrupt only the final signature byte. With verification disabled, the
+    // handler should still parse the genuine SPDM 1.2 measurement exchange.
+    transcript.back() ^= 0x01;
+
+    const std::string cert_chain_pem =
+        read_text_file("testdata/sample_attestation_data/spdm/cx9CertChain.crt");
+    ASSERT_FALSE(cert_chain_pem.empty());
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GENERIC, cert_chain_pem,
+                  cert_chain_pem, chain),
+              Error::Ok);
+
+    CmwEvidenceItem item = spdm_item(std::move(transcript), /*with_cert=*/false);
+    EvidenceHandlerSettings settings;
+    settings.m_verify_evidence_signature = false;
+    EvidenceVerification verification;
+
+    ASSERT_EQ(handler->verify_and_extract_ects(item, chain, settings,
+                                               verification),
+              Error::Ok);
+    EXPECT_TRUE(verification.signature_checked);
+    EXPECT_FALSE(verification.signature_valid);
+    EXPECT_TRUE(verification.parsed);
+    ASSERT_NE(verification.measurement_records, nullptr);
+}
+
+TEST(SpdmHandler, RejectsMalformedSpdm12Vca) {
+    const IEvidenceHandler *handler =
+        find_evidence_handler(kCmwMediaSpdmTranscript);
+    ASSERT_NE(handler, nullptr);
+
+    std::vector<uint8_t> transcript = load_captured_spdm12_transcript();
+    ASSERT_GT(transcript.size(), 92u);
+
+    // The ALGORITHMS response starts at offset 86; force its declared size
+    // beyond the available transcript bytes.
+    transcript[86 + 4] = 0xFF;
+    transcript[86 + 5] = 0xFF;
+
+    CmwEvidenceItem item = spdm_item(std::move(transcript), /*with_cert=*/false);
+    EvidenceHandlerSettings settings;
+    settings.m_verify_evidence_signature = false;
+    X509CertChain chain;
+    EvidenceVerification verification;
+
+    EXPECT_EQ(handler->verify_and_extract_ects(item, chain, settings,
+                                               verification),
+              Error::EvidenceMalformed);
+    EXPECT_FALSE(verification.parsed);
 }
 
 TEST(SpdmHandler, ExposesDeviceIdentifierMeasurementAndRecords) {
@@ -553,6 +626,37 @@ TEST(EatHandler, VerifyAndExtractRejectsMalformedPayload) {
     EvidenceVerification verification;
     EXPECT_NE(handler->verify_and_extract_ects(item, chain, settings, verification),
               Error::Ok);
+}
+
+TEST(SpdmHandler, VerifiesCapturedSpdm12Signature) {
+    const IEvidenceHandler *handler =
+        find_evidence_handler(kCmwMediaSpdmTranscript);
+    ASSERT_NE(handler, nullptr);
+
+    std::vector<uint8_t> transcript = load_captured_spdm12_transcript();
+    ASSERT_FALSE(transcript.empty());
+
+    const std::string cert_chain_path =
+        "testdata/sample_attestation_data/spdm/cx9CertChain.crt";
+    const std::string cert_chain_pem = read_text_file(cert_chain_path);
+    ASSERT_FALSE(cert_chain_pem.empty());
+
+    X509CertChain chain;
+    ASSERT_EQ(X509CertChain::create_from_cert_chain_str(
+                  CertificateChainType::GENERIC, cert_chain_pem,
+                  cert_chain_pem, chain),
+              Error::Ok);
+
+    CmwEvidenceItem item = spdm_item(std::move(transcript), /*with_cert=*/false);
+    EvidenceHandlerSettings settings;
+    EvidenceVerification verification;
+    ASSERT_EQ(handler->verify_and_extract_ects(item, chain, settings,
+                                               verification),
+              Error::Ok);
+    EXPECT_TRUE(verification.signature_checked);
+    EXPECT_TRUE(verification.signature_valid);
+    EXPECT_TRUE(verification.parsed);
+    ASSERT_NE(verification.measurement_records, nullptr);
 }
 
 } // namespace

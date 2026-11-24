@@ -56,17 +56,17 @@ Error read_record(const nlohmann::json &node, const std::string &field_name,
     if (!node.is_array() || node.size() != 2) {
         LOG_ERROR("CMW field '" << field_name
                                 << "' must be a 2-element array");
-        return Error::EvidenceMalformed;
+        return Error::CmwRecordInvalid;
     }
     if (!node[0].is_string() || !node[1].is_string()) {
         LOG_ERROR("CMW field '" << field_name
                                 << "' must contain string entries");
-        return Error::EvidenceMalformed;
+        return Error::CmwRecordInvalid;
     }
     out.media_type = node[0].get<std::string>();
     if (decode_base64url(node[1].get<std::string>(), out.value) != Error::Ok) {
         LOG_ERROR("CMW field '" << field_name << "' has invalid base64url");
-        return Error::EvidenceMalformed;
+        return Error::CmwEncodingInvalid;
     }
     return Error::Ok;
 }
@@ -93,12 +93,12 @@ Error read_nonce(const nlohmann::json &node, const std::string &field_name,
     if (record.media_type != kCmwMediaOctetStream) {
         LOG_ERROR("CMW " << field_name
                          << " media type must be application/octet-stream");
-        return Error::EvidenceMalformed;
+        return Error::CmwMediaTypeUnsupported;
     }
     if (record.value.size() < MIN_VALID_NONCE_LEN) {
         LOG_ERROR("CMW " << field_name << " is too short: "
                          << record.value.size() << " bytes");
-        return Error::EvidenceMalformed;
+        return Error::CmwNonceInvalid;
     }
     out_nonce = std::move(record.value);
     return Error::Ok;
@@ -109,20 +109,20 @@ Error parse_evidence_item(const nlohmann::json &node,
     if (!node.is_object()) {
         LOG_ERROR("CMW evidence item '" << label
                                         << "' must be a JSON object");
-        return Error::EvidenceMalformed;
+        return Error::CmwStructureInvalid;
     }
     auto cmwc = node.find(kFieldCmwc);
     if (cmwc == node.end() || !cmwc->is_string() ||
         cmwc->get<std::string>() != kCmwEvidenceItemProfile) {
         LOG_ERROR("CMW evidence item '" << label << "' has wrong "
                                         << kFieldCmwc);
-        return Error::EvidenceMalformed;
+        return Error::CmwProfileInvalid;
     }
 
     auto evidence = node.find(kFieldEvidence);
     if (evidence == node.end()) {
         LOG_ERROR("CMW evidence item '" << label << "' missing evidence");
-        return Error::EvidenceMalformed;
+        return Error::CmwEvidenceMissing;
     }
     Error err = read_record(*evidence, "evidence", out.evidence);
     if (err != Error::Ok) {
@@ -151,7 +151,7 @@ Error parse_evidence_item(const nlohmann::json &node,
             LOG_ERROR("CMW evidence item '"
                       << label << "' has unsupported certificate media type: "
                       << record->media_type);
-            return Error::EvidenceMalformed;
+            return Error::CmwMediaTypeUnsupported;
         }
         out.certificate = std::move(record);
     }
@@ -169,7 +169,7 @@ Error parse_evidence_item(const nlohmann::json &node,
             LOG_ERROR("CMW evidence item '"
                       << label << "' has unsupported hints media type: "
                       << record->media_type);
-            return Error::EvidenceMalformed;
+            return Error::CmwMediaTypeUnsupported;
         }
         out.hints = std::move(record);
     }
@@ -183,19 +183,19 @@ Error parse_json(const uint8_t *data, std::size_t length,
                                                 /*allow_exceptions=*/false);
     if (root.is_discarded()) {
         LOG_ERROR("CMW JSON parse failed");
-        return Error::EvidenceMalformed;
+        return Error::CmwJsonInvalid;
     }
 
     if (!root.is_object()) {
         LOG_ERROR("CMW root must be a JSON object");
-        return Error::EvidenceMalformed;
+        return Error::CmwStructureInvalid;
     }
 
     auto cmwc = root.find(kFieldCmwc);
     if (cmwc == root.end() || !cmwc->is_string() ||
         cmwc->get<std::string>() != kCmwInputProfile) {
         LOG_ERROR("CMW root has wrong " << kFieldCmwc);
-        return Error::EvidenceMalformed;
+        return Error::CmwProfileInvalid;
     }
 
     auto nonce_it = root.find(kFieldNonce);
@@ -218,7 +218,7 @@ Error parse_json(const uint8_t *data, std::size_t length,
         if (settings.media_type != kCmwMediaJson) {
             LOG_ERROR("CMW appraisal-settings media type must be "
                       << kCmwMediaJson);
-            return Error::EvidenceMalformed;
+            return Error::CmwMediaTypeUnsupported;
         }
         out_collection.set_appraisal_settings(std::move(settings.value));
     }
@@ -240,7 +240,7 @@ Error parse_json(const uint8_t *data, std::size_t length,
     }
     if (!any_evidence_item) {
         LOG_ERROR("CMW collection has no evidence items");
-        return Error::EvidenceMalformed;
+        return Error::CmwEvidenceMissing;
     }
     return Error::Ok;
 }

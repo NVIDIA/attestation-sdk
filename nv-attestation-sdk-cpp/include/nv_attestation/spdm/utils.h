@@ -29,8 +29,16 @@
 namespace nvattestation {
 
 constexpr uint8_t SPDM_VERSION_1_1 = 0x11;
+constexpr uint8_t SPDM_VERSION_1_2 = 0x12;
 constexpr uint8_t SPDM_REQ_CODE_GET_MEASUREMENTS = 0xe0;
 constexpr uint8_t SPDM_RES_CODE_MEASUREMENTS = 0x60;
+// Messages that make up the SPDM 1.2 VCA (version, capabilities, algorithms) prefix.
+constexpr uint8_t SPDM_REQ_CODE_GET_VERSION = 0x84;
+constexpr uint8_t SPDM_RES_CODE_VERSION = 0x04;
+constexpr uint8_t SPDM_REQ_CODE_GET_CAPABILITIES = 0xe1;
+constexpr uint8_t SPDM_RES_CODE_CAPABILITIES = 0x61;
+constexpr uint8_t SPDM_REQ_CODE_NEGOTIATE_ALGORITHMS = 0xe3;
+constexpr uint8_t SPDM_RES_CODE_ALGORITHMS = 0x63;
 constexpr size_t SPDM_NONCE_SIZE = 32;
 constexpr size_t SPDM_CERT_DIGEST_SIZE = 52; // 48 (Cert digest) + 2 (length of chain) + (2) reserved bytes
 

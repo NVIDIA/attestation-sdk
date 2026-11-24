@@ -62,6 +62,19 @@ std::vector<uint8_t> device_id_measurement_with_apsku(uint8_t low, uint8_t high)
     return {0x00, 0x01, 'A', 'P', 'S', 'K', 'U', low, high, 0xFF};
 }
 
+// Real captured GB202 identity chain where the leaf cert reports "GB20X";
+// the real SKU only appears on the Provisioner ICA (index 2).
+Error load_gb20x_fsp_chain(X509CertChain &out_chain) {
+    std::string chain_pem;
+    Error err = readFileIntoString(
+        "testdata/sample_attestation_data/gpu/gb20xFspCertChain.txt", chain_pem);
+    if (err != Error::Ok) {
+        return err;
+    }
+    return X509CertChain::create_from_cert_chain_str(
+        CertificateChainType::GENERIC, chain_pem, chain_pem, out_chain);
+}
+
 }  // namespace
 
 TEST(BlackwellFspTest, ValidFirmwareVersionAccepted) {
@@ -176,4 +189,40 @@ TEST(BlackwellFspTest, DoesNotFireForNonBlackwellHwModel) {
     ASSERT_EQ(load_test_chain("leaf_cert_fsp_cn", fsp_chain), Error::Ok);
     EXPECT_FALSE(is_blackwell_fsp_responder(fsp_chain, "GH100"));
     EXPECT_FALSE(is_blackwell_fsp_responder(fsp_chain, ""));
+}
+
+TEST(BlackwellFspTest, CorrectsGB20XUsingRealGB202Chain) {
+    X509CertChain chain;
+    ASSERT_EQ(load_gb20x_fsp_chain(chain), Error::Ok);
+
+    std::string hw_model = "GB20X";
+    correct_gb20x_hwmodel_for_fsp(chain, hw_model);
+    EXPECT_EQ(hw_model, "GB202");
+}
+
+TEST(BlackwellFspTest, LeavesNonGB20XHwModelUnchanged) {
+    X509CertChain chain;
+    ASSERT_EQ(load_gb20x_fsp_chain(chain), Error::Ok);
+
+    std::string hw_model = "GB100";
+    correct_gb20x_hwmodel_for_fsp(chain, hw_model);
+    EXPECT_EQ(hw_model, "GB100");
+}
+
+TEST(BlackwellFspTest, LeavesGB20XUnchangedForNonFspLeaf) {
+    X509CertChain gsp_chain;
+    ASSERT_EQ(load_test_chain("leaf_cert_gsp_cn", gsp_chain), Error::Ok);
+
+    std::string hw_model = "GB20X";
+    correct_gb20x_hwmodel_for_fsp(gsp_chain, hw_model);
+    EXPECT_EQ(hw_model, "GB20X");
+}
+
+TEST(BlackwellFspTest, LeavesGB20XUnchangedWhenNoSkuFoundInChain) {
+    X509CertChain fsp_chain;
+    ASSERT_EQ(load_test_chain("leaf_cert_fsp_cn", fsp_chain), Error::Ok);
+
+    std::string hw_model = "GB20X";
+    correct_gb20x_hwmodel_for_fsp(fsp_chain, hw_model);
+    EXPECT_EQ(hw_model, "GB20X");
 }

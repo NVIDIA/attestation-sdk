@@ -37,8 +37,8 @@ Error SpdmMeasurementRequestMessage11::parse(const std::vector<uint8_t>& request
     m_spdm_version = request_data[offset];
     offset += kSpdmVersionSize;
 
-    if (m_spdm_version != SPDM_VERSION_1_1) {
-        LOG_ERROR("SPDMVersion is not " << to_hex_string(SPDM_VERSION_1_1) << " (1.1). Actual version: " << to_hex_string(m_spdm_version));
+    if (m_spdm_version != SPDM_VERSION_1_1 && m_spdm_version != SPDM_VERSION_1_2) {
+        LOG_ERROR("SPDMVersion is not " << to_hex_string(SPDM_VERSION_1_1) << " (1.1) or " << to_hex_string(SPDM_VERSION_1_2) << " (1.2). Actual version: " << to_hex_string(m_spdm_version));
         return Error::SpdmRequestParseError;
     }
 

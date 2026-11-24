@@ -20,7 +20,8 @@
 // collect-evidence-v2 with the NVML source has no architecture filter and should
 // succeed on Rubin, Hopper, and Blackwell. The output is a CMW JSON collection.
 //
-// Required env (TEST_MODE=integration throughout; the label selects the arch):
+// Required env (TEST_MODE=integration throughout; Rubin also runs under
+// requires-working-driver with TEST_EXPECTED_GPU_ARCH=rubin):
 //   NVAT_CLI_TEST_LABEL=rubin-nvml
 //   NVAT_CLI_TEST_LABEL=hopper-nvml
 //   NVAT_CLI_TEST_LABEL=blackwell-nvml
@@ -62,11 +63,8 @@ void assert_nvml_collection_succeeds(const std::string& arch_label) {
 class RubinCollectV2Test : public ::testing::Test {
 protected:
     void SetUp() override {
-        if (g_cli_env->test_label != "rubin-nvml") {
-            GTEST_SKIP() << "Skipping: requires NVAT_CLI_TEST_LABEL=rubin-nvml";
-        }
-        if (g_cli_env->test_mode != "integration") {
-            GTEST_SKIP() << "Skipping: requires TEST_MODE=integration";
+        if (!g_cli_env->expects_gpu_v2_attestation()) {
+            GTEST_SKIP() << "Skipping: v2 GPU tests not selected for this run";
         }
     }
 };

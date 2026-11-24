@@ -26,6 +26,8 @@
 #include "nv_attestation/error.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/nv_types.h"
+#include "nv_attestation/observer.h"
+#include "nv_attestation/request_id.h"
 #include "nv_attestation/utils.h"
 
 namespace nvattestation {
@@ -61,11 +63,25 @@ bool is_safe_service_key_target(const std::string& url) {
            (host_str == "nvidia.com" || ends_with(host_str, ".nvidia.com"));
 }
 
+// Coarse failure kind for observer events when no response was received.
+const char* curl_error_kind(CURLcode curl_code) {
+    switch (curl_code) {
+        case CURLE_OPERATION_TIMEDOUT:
+            return "timeout";
+        case CURLE_COULDNT_CONNECT:
+        case CURLE_COULDNT_RESOLVE_HOST:
+            return "connect";
+        default:
+            return "other";
+    }
+}
+
 } // namespace
 
-    Error NvHttpClient::create(NvHttpClient& out_client, std::string service_key, HttpOptions options) {
+    Error NvHttpClient::create(NvHttpClient& out_client, std::string service_key, HttpOptions options, std::string service) {
         out_client.m_service_key = std::move(service_key);
         out_client.m_options = std::move(options);
+        out_client.m_service = std::move(service);
 
         return Error::Ok;
     }
@@ -135,9 +151,17 @@ bool is_safe_service_key_target(const std::string& url) {
         }
         curl_easy_setopt(curl_handle.get(), CURLOPT_CUSTOMREQUEST, method_str);
 
-        std::string request_id;
-        if (generate_request_id(request_id) != Error::Ok) {
-            return Error::InternalError;
+        // Reuse the caller's request id so its RIM and OCSP calls correlate;
+        // otherwise each request gets its own.
+        std::string request_id = current_request_id();
+        // A caller's id is already on every log line, so only a generated
+        // one is appended to the error logs below.
+        std::string request_id_suffix;
+        if (request_id.empty()) {
+            if (generate_request_id(request_id) != Error::Ok) {
+                return Error::InternalError;
+            }
+            request_id_suffix = " (x-request-id: " + request_id + ")";
         }
 
         curl_slist* headers_list_raw = nullptr;
@@ -184,8 +208,12 @@ bool is_safe_service_key_target(const std::string& url) {
                 backoff_ms = std::min(backoff_ms, m_options.max_backoff_ms);
             }
             cur_try++;
+            auto attempt_start = std::chrono::steady_clock::now();
             CURLcode curl_code = curl_easy_perform(curl_handle.get());
+            auto elapsed = std::chrono::steady_clock::now() - attempt_start;
+            long attempt_ms = static_cast<long>(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
             if (curl_code != CURLE_OK) {
+                notify_http_call(m_service.c_str(), method_str, request.url.c_str(), 0, curl_error_kind(curl_code), attempt_ms, request.payload.size(), out_response.size());
                 std::string curl_error = curl_easy_strerror(curl_code);
                 if (curl_error_buffer[0] != '\0') {
                     curl_error += ": ";
@@ -205,6 +233,7 @@ bool is_safe_service_key_target(const std::string& url) {
             }
 
             curl_easy_getinfo(curl_handle.get(), CURLINFO_RESPONSE_CODE, &out_status);
+            notify_http_call(m_service.c_str(), method_str, request.url.c_str(), out_status, nullptr, attempt_ms, request.payload.size(), out_response.size());
             if (out_content_type != nullptr) {
                 out_content_type->clear();
                 char* content_type = nullptr;
@@ -217,7 +246,7 @@ bool is_safe_service_key_target(const std::string& url) {
                 return Error::Ok; // true success, exit early
             }
             if (!is_http_retryable(out_status)) {
-                LOG_ERROR("Non-retryable HTTP response code: " << out_status << " (x-request-id: " << request_id << ")");
+                LOG_ERROR("Non-retryable HTTP response code: " << out_status << request_id_suffix);
                 return Error::Ok; // bad code, but cannot retry
             }
             // Technically OK because HTTP request succeeded.
@@ -227,13 +256,13 @@ bool is_safe_service_key_target(const std::string& url) {
                 last_error = Error::RateLimited;
             }
             if (is_last_attempt) {
-                LOG_ERROR("Final HTTP status after retries for " << method_str << " " << request.url << ": " << out_status << " (x-request-id: " << request_id << ")");
+                LOG_ERROR("Final HTTP status after retries for " << method_str << " " << request.url << ": " << out_status << request_id_suffix);
             } else {
                 LOG_DEBUG("Retryable HTTP response code from server for " << method_str << " " << request.url << ": " << out_status);
                 LOG_DEBUG("Failed HTTP response body: " << out_response);
             }
         } while (cur_try <= m_options.max_retry_count);
-        LOG_ERROR("Gave up HTTP request after " << cur_try << " attempts for " << method_str << " " << request.url << " (x-request-id: " << request_id << ")");
+        LOG_ERROR("Gave up HTTP request after " << cur_try << " attempts for " << method_str << " " << request.url << request_id_suffix);
         return last_error;
     }
 

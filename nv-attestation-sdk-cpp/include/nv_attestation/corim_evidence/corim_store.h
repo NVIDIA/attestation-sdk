@@ -53,6 +53,11 @@ class CorimStore {
     // Injects any INvCache implementation (useful for testing or custom backends).
     void set_cache(std::shared_ptr<INvCache> cache);
 
+    // Separate capacity and TTL for completed HTTP 404 responses; zero TTL
+    // disables.
+    void enable_negative_cache(uint64_t max_size_bytes, time_t ttl_seconds);
+    void set_negative_cache(std::shared_ptr<INvCache> cache);
+
     // out_effective_url (optional) receives the post-rewrite URL, even on error.
     // A thin wrapper over fetch_impl() that discards any CoEV payload.
     Error fetch(const std::string &url,
@@ -90,6 +95,7 @@ class CorimStore {
     HttpOptions m_http_options;
     NvHttpClient m_http_client;
     std::shared_ptr<INvCache> m_cache;
+    std::shared_ptr<INvCache> m_negative_cache;
 };
 
 } // namespace nvattestation

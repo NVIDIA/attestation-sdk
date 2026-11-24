@@ -120,6 +120,7 @@ NVAT_PTR_CONVERSION_FUNCTIONS(str, std::string);
 // === Core SDK ===
 NVAT_PTR_CONVERSION_FUNCTIONS(sdk_opts, std::shared_ptr<SdkOptions>);
 NVAT_PTR_CONVERSION_FUNCTIONS(logger, std::shared_ptr<ILogger>);
+NVAT_PTR_CONVERSION_FUNCTIONS(observer, Observer);
 NVAT_PTR_CONVERSION_FUNCTIONS(http_options, HttpOptions);
 
 // === Attestation ===
@@ -162,5 +163,6 @@ NVAT_PTR_CONVERSION_FUNCTIONS(switch_nras_verifier,  NvRemoteSwitchVerifier);
 NVAT_PTR_CONVERSION_FUNCTIONS(cmw_collection, CmwCollection);
 NVAT_PTR_CONVERSION_FUNCTIONS(corim_store, CorimStore);
 NVAT_PTR_CONVERSION_FUNCTIONS(local_corim_verifier, LocalCorimVerifier);
+NVAT_PTR_CONVERSION_FUNCTIONS(verify_cmw_options, VerifyCmwOptions);
 
 } // extern "C"

@@ -15,12 +15,15 @@
  * limitations under the License.
  */
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -175,6 +178,55 @@ TEST(CorimStoreTest, FirstMatchWins) {
     ASSERT_EQ(store.fetch(std::string(kNvidiaRimPrefix) + "a", body),
               Error::Ok);
     EXPECT_EQ(std::string(body.begin(), body.end()), winner_contents);
+}
+
+TEST(CorimStoreTest, RubinVbiosLocatorFixPrecedesConfiguredRewrite) {
+    const std::string contents = "RUBIN-RIM-BYTES";
+    TempFile tmp(contents);
+    const std::string rim_prefix = std::string(kNvidiaRimPrefix) + "v1/rim/";
+    const std::string canonical = rim_prefix + "GR100_081D_9900230000";
+    const std::string legacy =
+        rim_prefix + "NV_GPU_VBIOS_GR100_081D_9900230000";
+    const std::string file_url = "file://" + tmp.path();
+    const std::string fallback = "file:///definitely/not/here/";
+
+    CorimStore store;
+    ASSERT_EQ(store.add_url_rewrite(canonical, file_url), Error::Ok);
+    ASSERT_EQ(store.add_url_rewrite(rim_prefix, fallback), Error::Ok);
+
+    std::vector<uint8_t> corim_bytes, coev_bytes;
+    bool coev_present = true;
+    std::string coev_sha256 = "not-yet-set";
+    std::string effective;
+    ASSERT_EQ(store.fetch_with_coev(legacy, corim_bytes, coev_bytes,
+                                    coev_present, coev_sha256, &effective),
+              Error::Ok);
+    EXPECT_EQ(std::string(corim_bytes.begin(), corim_bytes.end()), contents);
+    EXPECT_FALSE(coev_present);
+    EXPECT_TRUE(coev_bytes.empty());
+    EXPECT_TRUE(coev_sha256.empty());
+    EXPECT_EQ(effective, file_url);
+
+    std::vector<uint8_t> body;
+    ASSERT_EQ(store.fetch(canonical, body, &effective), Error::Ok);
+    EXPECT_EQ(std::string(body.begin(), body.end()), contents);
+    EXPECT_EQ(effective, file_url);
+
+    const std::string driver = "NV_GPU_DRIVER_GR100_081D_9900230000";
+    EXPECT_EQ(store.fetch(rim_prefix + driver, body, &effective),
+              Error::RimNotFound);
+    EXPECT_EQ(effective, fallback + driver);
+
+    const std::string blackwell = "NV_GPU_VBIOS_GB100_081D_9900230000";
+    EXPECT_EQ(store.fetch(rim_prefix + blackwell, body, &effective),
+              Error::RimNotFound);
+    EXPECT_EQ(effective, fallback + blackwell);
+
+    const std::string off_allowlist =
+        "https://other.example.com/v1/rim/NV_GPU_VBIOS_GR100_081D_9900230000";
+    EXPECT_EQ(store.fetch(off_allowlist, body, &effective),
+              Error::BadArgument);
+    EXPECT_EQ(effective, off_allowlist);
 }
 
 TEST(CorimStoreTest, NonMatchingRulesLeaveSchemeIntact) {
@@ -413,3 +465,342 @@ TEST_F(CorimStoreHttpsTest, ServiceKeyNotSentToNonNvidiaDomain) {
 
 } // namespace
 } // namespace nvattestation
+
+// Wrap the real cache to observe writes and simulate backend failures.
+class RecordingNegativeCache : public nvattestation::INvCache {
+  public:
+    nvattestation::NvCache cache{
+        std::make_shared<nvattestation::NvCacheOptions>(1048576, 600)};
+    int puts = 0;
+    uint64_t charge = 0;
+    bool fail_put = false;
+    bool fail_get = false;
+    bool nonnull = false;
+
+    nvattestation::Error put(const std::string &key,
+                             std::shared_ptr<void> value,
+                             uint64_t size_bytes) override {
+        ++puts;
+        charge = size_bytes;
+        nonnull = value != nullptr;
+        return fail_put ? nvattestation::Error::InternalError
+                        : cache.put(key, std::move(value), size_bytes);
+    }
+    nvattestation::Error get(const std::string &key,
+                             std::shared_ptr<void> &value) override {
+        if (fail_get) {
+            return nvattestation::Error::InternalError;
+        }
+        return cache.get(key, value);
+    }
+    void remove(const std::string &key) override {
+        cache.remove(key);
+    }
+    void clear() override { cache.clear(); }
+};
+
+// Use real HTTPS requests: each /rim fixture returns 404 once, then fixture bytes.
+// A request counter reveals whether a fetch reached the server or used the cache.
+class CorimNegativeCacheTest : public ::testing::Test {
+  protected:
+    static LocalHttpsTestServer server;
+    static bool ready;
+    static void SetUpTestSuite() { ready = server.start(); }
+    static void TearDownTestSuite() { server.stop(); }
+    void SetUp() override { ASSERT_TRUE(ready); }
+
+    nvattestation::HttpOptions options() const {
+        nvattestation::HttpOptions result;
+        result.set_tls_ca_cert(server.cert_path("tls_ca_cert.pem"));
+        // Keep request counts independent of retries and fail connection errors quickly.
+        result.set_max_retry_count(0);
+        result.set_connection_timeout_ms(500);
+        result.set_request_timeout_ms(1000);
+        return result;
+    }
+    nvattestation::CorimStore store() const {
+        nvattestation::CorimStore result(options());
+        EXPECT_EQ(result.add_allowed_url_prefix(server.url()),
+                  nvattestation::Error::Ok);
+        return result;
+    }
+    std::string fixture(const std::string &suffix = "") const {
+        // Isolate counters by test name while sharing one server across the suite.
+        return server.url() + "negative-cache/" +
+               ::testing::UnitTest::GetInstance()->current_test_info()->name() +
+               suffix;
+    }
+    int count(const std::string &url) const {
+        // The /count endpoint reports fixture requests without incrementing the count.
+        nvattestation::NvHttpClient client;
+        EXPECT_EQ(nvattestation::NvHttpClient::create(client, "", options()),
+                  nvattestation::Error::Ok);
+        nvattestation::NvRequest request(
+            url + "/count", nvattestation::NvHttpMethod::HTTP_METHOD_GET);
+        long status = 0;
+        std::string body;
+        EXPECT_EQ(client.do_request_as_string(request, status, body),
+                  nvattestation::Error::Ok);
+        EXPECT_EQ(status, 200);
+        return nlohmann::json::parse(body).at("count").get<int>();
+    }
+};
+
+LocalHttpsTestServer CorimNegativeCacheTest::server;
+bool CorimNegativeCacheTest::ready = false;
+
+TEST_F(CorimNegativeCacheTest, NegativeCacheSuppressesRepeated404) {
+    // Two not-found results must come from one HTTP request; a second would return 200.
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 600);
+    std::vector<uint8_t> bytes{42};
+    std::string effective;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes, &effective),
+              nvattestation::Error::RimNotFound);
+    EXPECT_TRUE(bytes.empty());
+    bytes = {42};
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes, &effective),
+              nvattestation::Error::RimNotFound);
+    EXPECT_TRUE(bytes.empty());
+    EXPECT_EQ(effective, fixture() + "/rim");
+    EXPECT_EQ(count(fixture()), 1);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeCacheDisabledByDefault) {
+    // Without opting in, the second fetch reaches the server and sees the available RIM.
+    auto subject = store();
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeHitClearsAllOutputs) {
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 600);
+    // Seed stale outputs before both the live 404 and the cached result.
+    for (int i = 0; i < 2; ++i) {
+        std::vector<uint8_t> bytes{1}, coev{2};
+        bool present = true;
+        std::string digest = "stale", effective;
+        EXPECT_EQ(subject.fetch_with_coev(fixture() + "/rim", bytes, coev,
+                                          present, digest, &effective),
+                  nvattestation::Error::RimNotFound);
+        EXPECT_TRUE(bytes.empty());
+        EXPECT_TRUE(coev.empty());
+        EXPECT_FALSE(present);
+        EXPECT_TRUE(digest.empty());
+        EXPECT_EQ(effective, fixture() + "/rim");
+    }
+    EXPECT_EQ(count(fixture()), 1);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeMarkerIsNotReinsertedOnHit) {
+    // Observe cache writes directly: a hit must reuse the marker without reinserting it.
+    auto subject = store();
+    auto cache = std::make_shared<RecordingNegativeCache>();
+    subject.set_negative_cache(cache);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(cache->puts, 1);
+    EXPECT_TRUE(cache->nonnull);
+    EXPECT_GT(cache->charge, (fixture() + "/rim").size());
+    // Removing the marker must let the next fetch discover the server's 200 response.
+    cache->clear();
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeCacheDoesNotSlideExpiry) {
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 4);
+    std::vector<uint8_t> bytes;
+    ASSERT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    const auto inserted = std::chrono::steady_clock::now();
+    // NvCache uses whole-second timestamps; leave room on both sides of expiry.
+    std::this_thread::sleep_until(inserted + std::chrono::milliseconds(2100));
+    ASSERT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    ASSERT_EQ(count(fixture()), 1);
+    // Cross the original expiry; extending the TTL on the earlier hit would hide the RIM.
+    std::this_thread::sleep_until(inserted + std::chrono::milliseconds(4100));
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(std::string(bytes.begin(), bytes.end()), "CORIM-BYTES-CBOR");
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeCacheExpiryAllowsPublishedRim) {
+    // After a short TTL, fetch again and verify the returned bytes as well as request count.
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 1);
+    std::vector<uint8_t> bytes;
+    ASSERT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(std::string(bytes.begin(), bytes.end()), "CORIM-BYTES-CBOR");
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest,
+       NegativeCacheUsesEffectiveUrlAndAuthorizesRawUrl) {
+    // Two allowed locators share one destination; an untrusted locator must still fail.
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 600);
+    ASSERT_EQ(subject.add_url_rewrite("https://rim.attestation.nvidia.com/a",
+                                      fixture() + "/rim"),
+              nvattestation::Error::Ok);
+    ASSERT_EQ(subject.add_url_rewrite("https://rim.attestation.nvidia.com/b",
+                                      fixture() + "/rim"),
+              nvattestation::Error::Ok);
+    ASSERT_EQ(subject.add_url_rewrite("https://untrusted.example/a",
+                                      fixture() + "/rim"),
+              nvattestation::Error::Ok);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch("https://rim.attestation.nvidia.com/a", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch("https://rim.attestation.nvidia.com/b", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch("https://untrusted.example/a", bytes),
+              nvattestation::Error::BadArgument);
+    EXPECT_EQ(count(fixture()), 1);
+}
+
+TEST_F(CorimNegativeCacheTest, OtherHttpErrorsRemainUncached) {
+    // Each status is requested twice; neither response may suppress the next request.
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 600);
+    for (int status : {401, 403, 408, 429, 500, 502, 503, 504}) {
+        const auto base = fixture(std::to_string(status));
+        std::vector<uint8_t> bytes;
+        for (int i = 0; i < 2; ++i) {
+            EXPECT_NE(subject.fetch(base + "/status/" + std::to_string(status),
+                                    bytes),
+                      nvattestation::Error::Ok);
+        }
+        EXPECT_EQ(count(base), 2);
+    }
+}
+
+TEST_F(CorimNegativeCacheTest, Non404FailuresDoNotInsertNegativeEntries) {
+    // Invalid JSON, a missing file and a failed connection must produce no cache writes.
+    // The missing file also returns RimNotFound, so the error code alone is insufficient.
+    auto subject = store();
+    auto cache = std::make_shared<RecordingNegativeCache>();
+    subject.set_negative_cache(cache);
+    std::vector<uint8_t> bytes;
+    EXPECT_NE(subject.fetch(fixture() + "/malformed", bytes),
+              nvattestation::Error::Ok);
+    ASSERT_EQ(
+        subject.add_url_rewrite("https://rim.attestation.nvidia.com/local",
+                                "file:///nonexistent/rim.cbor"),
+        nvattestation::Error::Ok);
+    EXPECT_EQ(subject.fetch("https://rim.attestation.nvidia.com/local", bytes),
+              nvattestation::Error::RimNotFound);
+    ASSERT_EQ(
+        subject.add_url_rewrite("https://rim.attestation.nvidia.com/network",
+                                "http://127.0.0.1:9/rim"),
+        nvattestation::Error::Ok);
+    EXPECT_NE(
+        subject.fetch("https://rim.attestation.nvidia.com/network", bytes),
+        nvattestation::Error::Ok);
+    EXPECT_EQ(cache->puts, 0);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeCapacityEvictsMarkers) {
+    auto subject = store();
+    std::vector<uint8_t> bytes;
+    const auto a = fixture("a") + "/rim", b = fixture("b") + "/rim";
+    // Fit exactly one marker: A must hit initially, then be evicted when B is inserted.
+    subject.enable_negative_cache(a.size() + sizeof(bool), 600);
+    EXPECT_EQ(subject.fetch(a, bytes), nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(a, bytes), nvattestation::Error::RimNotFound);
+    EXPECT_EQ(count(fixture("a")), 1);
+    EXPECT_EQ(subject.fetch(b, bytes), nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(a, bytes), nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture("a")), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, OversizedNegativeEntryIsNotCached) {
+    // A one-byte budget cannot hold the URL and marker; the second fetch must reach the server.
+    auto subject = store();
+    subject.enable_negative_cache(1, 600);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeCacheReconfigureClearsEntries) {
+    // Disabling the cache and replacing it must both discard old not-found markers.
+    auto subject = store();
+    subject.enable_negative_cache(1048576, 600);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    subject.enable_negative_cache(1048576, 0);
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture()), 2);
+    subject.enable_negative_cache(1048576, 600);
+    EXPECT_EQ(subject.fetch(fixture("again") + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    subject.enable_negative_cache(1048576, 600);
+    EXPECT_EQ(subject.fetch(fixture("again") + "/rim", bytes),
+              nvattestation::Error::Ok);
+}
+
+TEST_F(CorimNegativeCacheTest, NegativeBackendFailuresPreserveFetchResults) {
+    // Failed cache reads/writes must leave the live 404 and subsequent 200 unchanged.
+    auto subject = store();
+    auto cache = std::make_shared<RecordingNegativeCache>();
+    cache->fail_put = true;
+    cache->fail_get = true;
+    subject.set_negative_cache(cache);
+    std::vector<uint8_t> bytes;
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::RimNotFound);
+    EXPECT_EQ(subject.fetch(fixture() + "/rim", bytes),
+              nvattestation::Error::Ok);
+    EXPECT_EQ(count(fixture()), 2);
+}
+
+TEST_F(CorimNegativeCacheTest, PositiveCacheIndependentOfNegativeCache) {
+    // Try both setup orders, then make the caches disagree about a previously fetched RIM.
+    for (bool negative_first : {false, true}) {
+        auto subject = store();
+        auto negative = std::make_shared<RecordingNegativeCache>();
+        if (negative_first) {
+            subject.set_negative_cache(negative);
+        }
+        subject.enable_in_memory_cache(1048576, 3600);
+        if (!negative_first) {
+            subject.set_negative_cache(negative);
+        }
+        const auto url = server.url() + "rim-service-with-coev";
+        std::vector<uint8_t> bytes, coev;
+        bool present = false;
+        std::string digest;
+        ASSERT_EQ(subject.fetch_with_coev(url, bytes, coev, present, digest),
+                  nvattestation::Error::Ok);
+        ASSERT_TRUE(present);
+        // The positive entry must win over this injected 404 and retain its CoEV data.
+        negative->put(url, std::make_shared<bool>(true), 512);
+        EXPECT_EQ(subject.fetch_with_coev(url, bytes, coev, present, digest),
+                  nvattestation::Error::Ok);
+        EXPECT_EQ(bytes, (std::vector<uint8_t>{1, 2, 3}));
+        EXPECT_EQ(coev, (std::vector<uint8_t>{0xaa, 0xbb}));
+        EXPECT_TRUE(present);
+    }
+}

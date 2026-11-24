@@ -30,7 +30,8 @@
 namespace nvattest {
     void add_evidence_collection_options(CLI::App* app, EvidenceCollectionOptions& options);
     void add_evidence_policy_options(CLI::App* app, EvidencePolicyOptions& options);
-    void add_evidence_verification_options(CLI::App* app, EvidenceVerificationOptions& options);
+    void add_evidence_verification_options(CLI::App* app, EvidenceVerificationOptions& options,
+                                           bool allow_builtin = false);
     void add_ocsp_cert_id_hash_option(CLI::App* app, std::string& value);
     void add_common_options(CLI::App& app, CommonOptions& options);
 
@@ -69,6 +70,12 @@ namespace nvattest {
     nvat_rc_t load_relying_party_policy(
         const std::string& path,
         nvat_relying_party_policy_t& out_raw_policy);
+    /** Loads a registered built-in preset or a user-supplied Rego file. */
+    nvat_rc_t load_relying_party_policy_v2(
+        const std::string& selector,
+        nvat_relying_party_policy_t& out_raw_policy);
+    /** Accepts an existing file or a registered built-in policy selector. */
+    CLI::Validator relying_party_policy_v2_validator();
 
     /** Removes ASCII whitespace from both ends of a CLI input string. */
     void trim_ascii_whitespace(std::string& value);

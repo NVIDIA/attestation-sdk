@@ -104,6 +104,7 @@
 	bool(*)(zcbor_state_t *, struct flags_map_is_immutable_r *):                 ((zcbor_decoder_t *)func), \
 	bool(*)(zcbor_state_t *, struct flags_map_is_tcb_r *):                       ((zcbor_decoder_t *)func), \
 	bool(*)(zcbor_state_t *, struct flags_map_is_confidentiality_protected_r *): ((zcbor_decoder_t *)func), \
+	bool(*)(zcbor_state_t *, struct flags_map_is_runtime_updatable_r *):         ((zcbor_decoder_t *)func), \
 	bool(*)(zcbor_state_t *, struct flags_map *):                                ((zcbor_decoder_t *)func), \
 	bool(*)(zcbor_state_t *, struct measurement_values_map_flags_r *):           ((zcbor_decoder_t *)func), \
 	bool(*)(zcbor_state_t *, struct tagged_masked_raw_value *):                  ((zcbor_decoder_t *)func), \
@@ -243,6 +244,7 @@ static bool decode_repeated_flags_map_is_runtime_meas(zcbor_state_t *state, stru
 static bool decode_repeated_flags_map_is_immutable(zcbor_state_t *state, struct flags_map_is_immutable_r *result);
 static bool decode_repeated_flags_map_is_tcb(zcbor_state_t *state, struct flags_map_is_tcb_r *result);
 static bool decode_repeated_flags_map_is_confidentiality_protected(zcbor_state_t *state, struct flags_map_is_confidentiality_protected_r *result);
+static bool decode_repeated_flags_map_is_runtime_updatable(zcbor_state_t *state, struct flags_map_is_runtime_updatable_r *result);
 static bool decode_flags_map(zcbor_state_t *state, struct flags_map *result);
 static bool decode_repeated_measurement_values_map_flags(zcbor_state_t *state, struct measurement_values_map_flags_r *result);
 static bool decode_tagged_masked_raw_value(zcbor_state_t *state, struct tagged_masked_raw_value *result);
@@ -1930,6 +1932,26 @@ static bool decode_repeated_flags_map_is_confidentiality_protected(
 	return res;
 }
 
+static bool decode_repeated_flags_map_is_runtime_updatable(
+		zcbor_state_t *state, struct flags_map_is_runtime_updatable_r *result)
+{
+	zcbor_log("%s\r\n", __func__);
+
+	bool res = ((zcbor_unordered_map_search(ZCBOR_CUSTOM_CAST_FP(zcbor_uint8_pexpect), state, (&(uint8_t){10}))
+	&& (zcbor_bool_decode(state, (&(*result).flags_map_is_runtime_updatable)))
+	&& zcbor_elem_processed(state)));
+
+	if (false) {
+		/* For testing that the types of the arguments are correct.
+		 * A compiler error here means a bug in zcbor.
+		 */
+		zcbor_uint8_pexpect(state, (&(uint8_t){10}));
+	}
+
+	log_result(state, res, __func__);
+	return res;
+}
+
 static bool decode_flags_map(
 		zcbor_state_t *state, struct flags_map *result)
 {
@@ -1944,7 +1966,8 @@ static bool decode_flags_map(
 	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_runtime_meas_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_runtime_meas), state, (&(*result).flags_map_is_runtime_meas)))
 	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_immutable_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_immutable), state, (&(*result).flags_map_is_immutable)))
 	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_tcb_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_tcb), state, (&(*result).flags_map_is_tcb)))
-	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_confidentiality_protected_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_confidentiality_protected), state, (&(*result).flags_map_is_confidentiality_protected)))) || (zcbor_list_map_end_force_decode(state), false)) && zcbor_unordered_map_end_decode(state, true))));
+	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_confidentiality_protected_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_confidentiality_protected), state, (&(*result).flags_map_is_confidentiality_protected)))
+	&& (zcbor_present_decode_w_backup(&((*result).flags_map_is_runtime_updatable_present), ZCBOR_CUSTOM_CAST_FP(decode_repeated_flags_map_is_runtime_updatable), state, (&(*result).flags_map_is_runtime_updatable)))) || (zcbor_list_map_end_force_decode(state), false)) && zcbor_unordered_map_end_decode(state, true))));
 
 	if (false) {
 		/* For testing that the types of the arguments are correct.
@@ -1960,6 +1983,7 @@ static bool decode_flags_map(
 		decode_repeated_flags_map_is_immutable(state, (&(*result).flags_map_is_immutable));
 		decode_repeated_flags_map_is_tcb(state, (&(*result).flags_map_is_tcb));
 		decode_repeated_flags_map_is_confidentiality_protected(state, (&(*result).flags_map_is_confidentiality_protected));
+		decode_repeated_flags_map_is_runtime_updatable(state, (&(*result).flags_map_is_runtime_updatable));
 	}
 
 	log_result(state, res, __func__);

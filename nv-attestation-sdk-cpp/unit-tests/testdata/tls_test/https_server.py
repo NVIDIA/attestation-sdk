@@ -26,6 +26,7 @@ JWKS_REDIRECT_URL = sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] else None
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    negative_cache_counts = {}
     # HTTP/1.1 with Content-Length avoids OpenSSL 3.x "unexpected eof" errors
     # that occur when HTTP/1.0 closes the connection without TLS close_notify.
     protocol_version = "HTTP/1.1"
@@ -42,6 +43,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/negative-cache/"):
+            # Each test has its own counter; /rim returns 404 once, then fixture bytes.
+            parts = self.path.split("/")
+            if len(parts) < 4:
+                self.send_error(400)
+                return
+            fixture_id, action = parts[2:4]
+            count = self.negative_cache_counts.get(fixture_id, 0)
+            if action == "count":
+                # Observing the counter must not change the simulated RIM's availability.
+                self._send_json({"count": count})
+                return
+            self.negative_cache_counts[fixture_id] = count + 1
+            if action == "rim" and count > 0:
+                self._send_bytes(CORIM_CBOR_BYTES, "application/rim+cbor")
+                return
+            if action == "malformed":
+                # A successful HTTP response can still fail RIM parsing and must stay uncached.
+                self._send_bytes(b"not-json", "application/json")
+                return
+            status = int(parts[4]) if action == "status" else 404
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            return
         if self.path == "/.well-known/jwks.json":
             if CAPTURE_HEADERS_FILE is not None:
                 try:
@@ -198,6 +225,69 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._send_json({
                 "id": "test-rim-id-blackwell-fsp-with-profile",
+                "rim": base64.b64encode(rim_bytes).decode(),
+                "request_id": "test-request-id",
+                "sha256": "unused",
+                "coev": base64.b64encode(coev_bytes).decode(),
+                "coev_sha256": hashlib.sha256(coev_bytes).hexdigest(),
+            })
+            return
+        if self.path == "/rim-service-with-blackwell-fsp-signed-rim-chained":
+            try:
+                with open("testdata/sample_rims/corim_signed/blackwell_fsp_real_chained.cbor", "rb") as f:
+                    rim_bytes = f.read()
+                with open("testdata/sample_rims/coev/blackwell_fsp_real.cbor", "rb") as f:
+                    coev_bytes = f.read()
+            except OSError:
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            self._send_json({
+                "id": "test-rim-id-blackwell-fsp",
+                "rim": base64.b64encode(rim_bytes).decode(),
+                "request_id": "test-request-id",
+                "sha256": "unused",
+                "coev": base64.b64encode(coev_bytes).decode(),
+                "coev_sha256": hashlib.sha256(coev_bytes).hexdigest(),
+            })
+            return
+        if self.path == "/rim-service-with-blackwell-fsp-both-chained":
+            try:
+                with open("testdata/sample_rims/corim_signed/blackwell_fsp_real_chained.cbor", "rb") as f:
+                    rim_bytes = f.read()
+                with open("testdata/sample_rims/coev_signed/blackwell_fsp_real_chained.cbor", "rb") as f:
+                    coev_bytes = f.read()
+            except OSError:
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            self._send_json({
+                "id": "test-rim-id-blackwell-fsp",
+                "rim": base64.b64encode(rim_bytes).decode(),
+                "request_id": "test-request-id",
+                "sha256": "unused",
+                "coev": base64.b64encode(coev_bytes).decode(),
+                "coev_sha256": hashlib.sha256(coev_bytes).hexdigest(),
+            })
+            return
+        if self.path == "/rim-service-with-blackwell-fsp-signed-coev-chained":
+            try:
+                with open("testdata/sample_rims/corim/blackwell_fsp_real.cbor", "rb") as f:
+                    rim_bytes = f.read()
+                with open("testdata/sample_rims/coev_signed/blackwell_fsp_real_chained.cbor", "rb") as f:
+                    coev_bytes = f.read()
+            except OSError:
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            self._send_json({
+                "id": "test-rim-id-blackwell-fsp",
                 "rim": base64.b64encode(rim_bytes).decode(),
                 "request_id": "test-request-id",
                 "sha256": "unused",

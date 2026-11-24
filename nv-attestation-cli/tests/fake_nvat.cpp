@@ -515,8 +515,9 @@ nvat_rc_t nvat_corim_store_create(nvat_corim_store_t* out_store,
 }
 
 nvat_rc_t nvat_corim_store_add_url_rewrite(nvat_corim_store_t /*store*/,
-                                           const char* /*pattern*/,
-                                           const char* /*replacement*/) {
+                                           const char* pattern,
+                                           const char* replacement) {
+    g_fake_nvat.corim_url_rewrites.emplace_back(pattern, replacement);
     return NVAT_RC_OK;
 }
 
@@ -538,6 +539,18 @@ nvat_rc_t nvat_local_corim_verifier_create(nvat_local_corim_verifier_t* out_veri
     }
     *out_verifier = new nvat_local_corim_verifier_st{};
     return NVAT_RC_OK;
+}
+
+nvat_rc_t nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+    nvat_local_corim_verifier_t /*verifier*/, const char* root_ca_pem) {
+    g_fake_nvat.device_identity_root_pems.emplace_back(root_ca_pem);
+    return g_fake_nvat.add_device_identity_root_rc;
+}
+
+nvat_rc_t nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+    nvat_local_corim_verifier_t /*verifier*/, const char* root_ca_pem) {
+    g_fake_nvat.rim_signing_root_pems.emplace_back(root_ca_pem);
+    return g_fake_nvat.add_rim_signing_root_rc;
 }
 
 nvat_rc_t nvat_local_corim_verifier_set_verify_rim_signature(
@@ -593,7 +606,9 @@ nvat_rc_t nvat_local_corim_verifier_verify_cmw(
     const nvat_local_corim_verifier_t /*verifier*/, const uint8_t* /*cmw_data*/,
     size_t /*cmw_len*/, nvat_cmw_format_t /*format*/,
     nvat_detached_eat_options_t /*ear_signing_options*/,
+    nvat_verify_cmw_options_t /*verify_cmw_options*/,
     nvat_str_t* out_result_jwt, nvat_str_t* out_result_json) {
+    ++g_fake_nvat.verify_cmw_calls;
     if (g_fake_nvat.verify_cmw_rc == NVAT_RC_OK &&
         !g_fake_nvat.verify_cmw_result_json.empty()) {
         if (out_result_jwt != nullptr) {
@@ -621,11 +636,15 @@ nvat_rc_t nvat_ocsp_client_create_aia(nvat_ocsp_client_t* out_client,
                                       const char* /*base_url*/,
                                       const char* /*service_key*/,
                                       const nvat_http_options_t /*http_options*/,
-                                      const char* const* /*rewrite_patterns*/,
-                                      const char* const* /*rewrite_replacements*/,
-                                      size_t /*num_rewrites*/,
+                                      const char* const* rewrite_patterns,
+                                      const char* const* rewrite_replacements,
+                                      size_t num_rewrites,
                                       const nvat_ocsp_client_options_t options) {
     ++g_fake_nvat.ocsp_aia_create_calls;
+    for (size_t i = 0; i < num_rewrites; ++i) {
+        g_fake_nvat.ocsp_aia_url_rewrites.emplace_back(
+            rewrite_patterns[i], rewrite_replacements[i]);
+    }
     if (options != nullptr) {
         g_fake_nvat.last_ocsp_cert_id_hash = options->algorithm;
     }

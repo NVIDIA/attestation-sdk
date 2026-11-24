@@ -30,6 +30,7 @@
 #include "nv_attestation/log.h"
 #include <nlohmann/json.hpp>
 #include "nv_attestation/nv_types.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/utils.h"
 
 namespace nvattestation {
@@ -129,7 +130,8 @@ namespace nvattestation {
 
     class NvHttpClient {
         public: 
-            static Error create(NvHttpClient& out_client, std::string service_key, HttpOptions options = HttpOptions());
+            // service is the server this client calls, e.g. "rim" or "ocsp". It is reported to the observer.
+            static Error create(NvHttpClient& out_client, std::string service_key, HttpOptions options = HttpOptions(), std::string service = kServiceUnknown);
 
             Error do_request_as_string(const NvRequest& request, long& out_status, std::string& out_response, std::string* out_content_type = nullptr) const;
             template<typename T>
@@ -140,6 +142,7 @@ namespace nvattestation {
         private: 
             HttpOptions m_options;
             std::string m_service_key;
+            std::string m_service = kServiceUnknown;
 
             static size_t curl_write_callback(void *contents, size_t size, size_t nmemb, void *userp);
     };

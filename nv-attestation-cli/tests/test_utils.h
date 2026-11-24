@@ -36,10 +36,11 @@ protected:
     }
 };
 
-inline std::string exec_and_capture_output(const std::string& command, int& exit_code) {
+inline std::string exec_and_capture_output(const std::string& command, int& exit_code,
+                                           bool capture_stderr = true) {
     std::array<char, 4096> buffer{};
     std::string result;
-    FILE* pipe = popen((command + " 2>&1").c_str(), "r");
+    FILE* pipe = popen((command + (capture_stderr ? " 2>&1" : "")).c_str(), "r");
     if (!pipe) {
         exit_code = -1;
         return result;

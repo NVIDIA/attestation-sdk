@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nvattest VERSION 2.0.0)
+project(nvattest VERSION 2.1.0)
 
 option(BUILD_TESTING "Build tests" OFF)
 option(USE_SYSTEM_NVAT "Compile and link to the system nvat library. If OFF, nvat will be built from source." OFF)
@@ -42,7 +42,7 @@ add_executable(nvattest
     src/version.cpp
     src/attest.cpp
     src/attest_v2.cpp
-    src/ear_status.cpp
+    src/relying_party_policy_v2.cpp
     src/collect_evidence.cpp
     src/verify_token.cpp
     src/verify_token_output.cpp

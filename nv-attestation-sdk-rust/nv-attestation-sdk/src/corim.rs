@@ -75,6 +75,49 @@ impl From<HashAlgorithm> for nvat_hash_algorithm_t {
 /// Options for signing the EAR a CoRIM verification produces.
 pub type EarSigningOptions = DetachedEatOptions;
 
+/// Per-call options for [`LocalCorimVerifier::verify_cmw`].
+/// Wraps `nvat_verify_cmw_options_t`.
+pub struct VerifyCmwOptions {
+    inner: nvat_verify_cmw_options_t,
+}
+
+// SAFETY: the native options object is one owned string, mutated only through
+// `&mut self` and read by `verify_cmw` through `&self`. It holds no
+// thread-local or shared mutable state.
+unsafe impl Send for VerifyCmwOptions {}
+unsafe impl Sync for VerifyCmwOptions {}
+
+impl VerifyCmwOptions {
+    /// Empty options; same as passing `None` to `verify_cmw`.
+    pub fn new() -> Result<Self> {
+        let mut inner = ptr::null_mut();
+        unsafe {
+            NvatError::check(nvat_verify_cmw_options_create(&mut inner))?;
+        }
+        Ok(VerifyCmwOptions { inner })
+    }
+
+    /// Request id for this appraisal; 1–128 printable ASCII characters
+    /// without spaces.
+    pub fn set_request_id(&mut self, request_id: &str) -> Result<()> {
+        let request_id = required_cstring(request_id)?;
+        unsafe {
+            NvatError::check(nvat_verify_cmw_options_set_request_id(
+                self.inner,
+                request_id.as_ptr(),
+            ))
+        }
+    }
+}
+
+impl Drop for VerifyCmwOptions {
+    fn drop(&mut self) {
+        unsafe {
+            nvat_verify_cmw_options_free(&mut self.inner);
+        }
+    }
+}
+
 /// The EAR (Entity Attestation Result) produced by a CoRIM verification.
 ///
 /// Two forms of one appraisal: `jwt` to hand a relying party, `json` to read
@@ -238,6 +281,29 @@ impl CorimStore {
         }
     }
 
+    /// Enable a separate cache for missing CoRIMs.
+    ///
+    /// Negative caching is disabled by default. Only completed HTTP 404 responses
+    /// are cached, using the effective URL after authorization and rewrites as
+    /// the key. Requests for a cached URL return `NVAT_RC_RIM_NOT_FOUND` without
+    /// a network call. Other HTTP errors, transport failures and file failures
+    /// are not cached. A newly published CoRIM may remain unavailable until its
+    /// cached 404 expires.
+    ///
+    /// Capacity must be positive and counts one URL and boolean marker per entry.
+    /// Cache bookkeeping is excluded. TTL must be non-negative; zero disables
+    /// and clears this cache. Invalid settings leave caches unchanged.
+    /// Configure before [`LocalCorimVerifier::new`].
+    pub fn enable_negative_cache(&mut self, max_size_bytes: u64, ttl_seconds: i64) -> Result<()> {
+        unsafe {
+            NvatError::check(nvat_corim_store_enable_negative_cache(
+                self.inner,
+                max_size_bytes,
+                ttl_seconds,
+            ))
+        }
+    }
+
     /// Release the handle without freeing it, for the ownership transfer in
     /// [`LocalCorimVerifier::new`].
     fn into_raw(self) -> nvat_corim_store_t {
@@ -283,6 +349,32 @@ impl LocalCorimVerifier {
             return Err(err);
         }
         Ok(LocalCorimVerifier { inner: verifier })
+    }
+
+    /// Add a PEM root CA certificate for device AK chains. Built-in and
+    /// previously added device roots remain trusted.
+    pub fn add_device_identity_trust_root_pem(&mut self, pem: &str) -> Result<()> {
+        let pem = required_cstring(pem)?;
+        unsafe {
+            NvatError::check(
+                nvat_local_corim_verifier_add_device_identity_trust_root_pem(
+                    self.inner,
+                    pem.as_ptr(),
+                ),
+            )
+        }
+    }
+
+    /// Add a PEM root CA certificate for CoRIM and fetched CoEV signatures.
+    /// Built-in and previously added RIM roots remain trusted.
+    pub fn add_rim_signing_trust_root_pem(&mut self, pem: &str) -> Result<()> {
+        let pem = required_cstring(pem)?;
+        unsafe {
+            NvatError::check(nvat_local_corim_verifier_add_rim_signing_trust_root_pem(
+                self.inner,
+                pem.as_ptr(),
+            ))
+        }
     }
 
     /// Toggle CoRIM signature verification, on by default.
@@ -355,20 +447,27 @@ impl LocalCorimVerifier {
     ///
     /// Findings are collected: `Ok` means the input was processable; the
     /// verdict is `ear_status` in the returned [`EarResult`].
+    /// CMW parse failures return an error with an `NVAT_RC_CMW_*` code and
+    /// a readable [`NvatError::message`]; no EAR is produced.
     ///
     /// `signing_options` signs the JWT. `None`, or options with an empty key,
-    /// leaves it unsigned.
+    /// leaves it unsigned. `verify_cmw_options` carries per-call settings such as
+    /// the request id.
     pub fn verify_cmw(
         &self,
         cmw_data: &[u8],
         format: CmwFormat,
         signing_options: Option<&EarSigningOptions>,
+        verify_cmw_options: Option<&VerifyCmwOptions>,
     ) -> Result<EarResult> {
         if cmw_data.is_empty() {
             return Err(NvatError::new(NVAT_RC_BAD_ARGUMENT as u16));
         }
         let options_ptr = signing_options
             .map(|o| o.as_ptr())
+            .unwrap_or(ptr::null_mut());
+        let verify_cmw_options_ptr = verify_cmw_options
+            .map(|o| o.inner)
             .unwrap_or(ptr::null_mut());
 
         let mut jwt_ptr = ptr::null_mut();
@@ -380,6 +479,7 @@ impl LocalCorimVerifier {
                 cmw_data.len(),
                 format.into(),
                 options_ptr,
+                verify_cmw_options_ptr,
                 &mut jwt_ptr,
                 &mut json_ptr,
             ))?;
@@ -399,9 +499,15 @@ impl LocalCorimVerifier {
         cmw: &CmwCollection,
         format: CmwFormat,
         signing_options: Option<&EarSigningOptions>,
+        verify_cmw_options: Option<&VerifyCmwOptions>,
     ) -> Result<EarResult> {
         let serialized = cmw.serialize(format)?;
-        self.verify_cmw(serialized.as_bytes(), format, signing_options)
+        self.verify_cmw(
+            serialized.as_bytes(),
+            format,
+            signing_options,
+            verify_cmw_options,
+        )
     }
 }
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.11)
-project(nv-attestation VERSION 2.0.0)
+project(nv-attestation VERSION 2.1.0)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING
   "The C++ standard whose features are requested to build this target."
@@ -548,6 +548,8 @@ add_library(nvat
   src/nv_ocsp.cpp
   src/utils.cpp
   src/nv_cache.cpp
+  src/observer.cpp
+  src/request_id.cpp
   src/dice_tcb_info.cpp
   src/zcbor_logger.cpp
 )

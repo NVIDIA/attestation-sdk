@@ -42,6 +42,7 @@
 #include "nv_attestation/rim.h"
 #include "nv_attestation/error.h"
 #include "nv_attestation/nv_x509.h"
+#include "nv_attestation/observer.h"
 #include "nv_attestation/log.h"
 #include "nv_attestation/utils.h"
 #include <nlohmann/json.hpp>
@@ -465,7 +466,7 @@ Error NvRemoteRimStoreImpl::init_from_env(NvRemoteRimStoreImpl& out_rim_store, c
     } else {
         out_rim_store.m_base_url = std::string(base_url);
     }
-    Error error = NvHttpClient::create(out_rim_store.m_http_client, service_key, http_options);
+    Error error = NvHttpClient::create(out_rim_store.m_http_client, service_key, http_options, kServiceRim);
     if (error != Error::Ok) {
         LOG_ERROR("Failed to create NvHttpClient");
         return error;
@@ -602,6 +603,7 @@ InMemoryCachingRimStoreImpl::InMemoryCachingRimStoreImpl(std::shared_ptr<IRimSto
 Error InMemoryCachingRimStoreImpl::get_rim(const std::string &rim_id, RimDocument& out_rim_document) {
     std::shared_ptr<void> rim_document_data;
     Error error = m_cache->get(rim_id, rim_document_data);
+    notify_cache_lookup(kServiceRim, error == Error::Ok);
     if (error == Error::CacheObjectNotFound) {
         LOG_TRACE("RIM with id " << rim_id << " not found in cache, getting from inner client");
         error = m_inner_client->get_rim(rim_id, out_rim_document);

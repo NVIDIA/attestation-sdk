@@ -22,6 +22,7 @@
 #include "nv_attestation/switch/evidence.h"
 #include "nv_attestation/verify.h"
 #include "nv_attestation/utils.h"
+#include "nv_attestation/observer.h"
 #include "internal/debug.hpp"
 #include "nvat.h.in"
 
@@ -245,7 +246,7 @@ Error NvRemoteSwitchVerifier::init_from_env(NvRemoteSwitchVerifier& out_verifier
     out_verifier.m_nras_url = nras_url_str + "/v4/attest/switch";
     out_verifier.m_eat_issuer = nras_url_str;
 
-    Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options);
+    Error err = NvHttpClient::create(out_verifier.m_http_client, service_key, http_options, kServiceNras);
     if (err != Error::Ok) {
         return err;
     }

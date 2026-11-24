@@ -33,6 +33,8 @@ struct AttestV2Options {
     std::string cert_chain_file;                 // required when source=spdm-files
     std::string eat_file;                        // required when source=eat-file
     std::vector<std::string> rim_url_rewrites;   // flattened [pattern, replacement] pairs
+    std::vector<std::string> device_identity_root_files;
+    std::vector<std::string> rim_signing_root_files;
     bool verify_rim_signature = true;            // false accepts unsigned CoRIMs too
     bool verify_evidence_signature = true;       // false parses unauthenticated evidence
     bool verify_revocation = true;               // OCSP revocation check (on by default)

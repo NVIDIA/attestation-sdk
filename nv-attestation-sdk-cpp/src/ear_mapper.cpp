@@ -28,6 +28,7 @@
 
 #include "nv_attestation/corim.h"
 #include "nv_attestation/log.h"
+#include "nv_attestation/nv_x509.h"
 #include "nv_attestation/corim_verify.h"
 #include "nv_attestation/utils.h"
 #include "nvat.h"
@@ -64,6 +65,16 @@ std::string derive_ear_status(const EvidenceItemAppraisal& item) {
     }
     if (!item.evidence.signature_verified) {
         return kStatusContraindicated;
+    }
+    // A RIM signed by an untrusted chain cannot vouch for measurements, but the
+    // comparison still ran so a relying party can see what matched.
+    for (const auto& corim : item.corims) {
+        if (corim.cert_chain && !all_certs_trusted(*corim.cert_chain)) {
+            return kStatusContraindicated;
+        }
+        if (corim.coev_cert_chain && !all_certs_trusted(*corim.coev_cert_chain)) {
+            return kStatusContraindicated;
+        }
     }
     // Warning-severity diagnostics must not fail the item; only errors do.
     if (std::any_of(item.match.diagnostics.begin(), item.match.diagnostics.end(),
@@ -170,10 +181,10 @@ Error build_submod(const EvidenceItemAppraisal& item, nlohmann::json& out_submod
     // TODO(P1): oemid unsourced; dbgstat and driver/vbios are pass-through.
     nlohmann::json attester = nlohmann::json::object();
     for (const auto& kv : item.match.corroborated_evidence_claims) {
-        attester[kv.first] = kv.second;
+        attester[kv.first] = *kv.second;
     }
     for (const auto& kv : item.match.uncorroborated_evidence_claims) {
-        attester[kv.first] = kv.second;
+        attester[kv.first] = *kv.second;
     }
     if (!item.hwmodel.empty() && !attester.contains("hwmodel")) {
         attester["hwmodel"] = item.hwmodel;
