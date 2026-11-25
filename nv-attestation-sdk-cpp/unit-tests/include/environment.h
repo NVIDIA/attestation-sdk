@@ -71,7 +71,9 @@ class Environment : public ::testing::Environment {
 
     
     service_key = get_env_or_default("NVAT_C_SDK_TEST_SERVICE_KEY", "");
-    if (service_key.empty()) {
+    const bool require_service_key =
+        get_env_or_default("NVAT_TEST_REQUIRE_SERVICE_KEY", "1") != "0";
+    if (require_service_key && service_key.empty()) {
       std::cerr << "Service key is empty, please set NVAT_C_SDK_TEST_SERVICE_KEY environment variable" << std::endl;
       exit(1);
     }
