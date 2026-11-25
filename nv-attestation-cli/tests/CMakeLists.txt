@@ -92,9 +92,11 @@ target_link_libraries(nv-attestation-cli-tests PRIVATE
 
 # spdlog/fmt headers needed for compilation (nvat has them statically linked, no need to link again)
 target_include_directories(nv-attestation-cli-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_include_directories(nv-attestation-cli-tests SYSTEM PRIVATE
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
 
 # nvat.h is needed for result codes used by the tests, but the test executable must not link to libnvat.

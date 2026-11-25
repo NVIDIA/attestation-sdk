@@ -127,6 +127,8 @@ target_link_libraries(nvattest PRIVATE
 target_include_directories(nvattest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
+)
+target_include_directories(nvattest SYSTEM PRIVATE
     ${spdlog_SOURCE_DIR}/include
     ${fmt_SOURCE_DIR}/include
 )
